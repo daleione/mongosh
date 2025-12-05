@@ -1,0 +1,524 @@
+//! REPL (Read-Eval-Print Loop) engine for mongosh
+//!
+//! This module provides an interactive shell interface with features:
+//! - Command line editing with rustyline
+//! - Command history management
+//! - Auto-completion for commands and collections
+//! - Syntax highlighting
+//! - Multi-line input support
+//! - Contextual prompts
+
+use rustyline::completion::{Completer, Pair};
+use rustyline::error::ReadlineError;
+use rustyline::highlight::Highlighter;
+use rustyline::hint::Hinter;
+use rustyline::history::DefaultHistory;
+use rustyline::validate::Validator;
+use rustyline::{Config, Editor, Helper};
+use std::borrow::Cow;
+use std::path::PathBuf;
+
+use crate::config::HistoryConfig;
+use crate::error::Result;
+use crate::parser::Parser;
+
+/// REPL engine for interactive command execution
+pub struct ReplEngine {
+    /// Line editor for command input
+    editor: Editor<ReplHelper, DefaultHistory>,
+
+    /// Current REPL context
+    context: ReplContext,
+
+    /// Parser for command parsing
+    parser: Parser,
+
+    /// Whether to continue running
+    running: bool,
+}
+
+/// REPL context holding state information
+#[derive(Debug, Clone)]
+pub struct ReplContext {
+    /// Current database name
+    pub current_database: String,
+
+    /// Current connection URI
+    pub connection_uri: String,
+
+    /// Whether connected to server
+    pub connected: bool,
+
+    /// Server version
+    pub server_version: Option<String>,
+
+    /// Enable colored output
+    pub color_enabled: bool,
+
+    /// Enable syntax highlighting
+    pub highlighting_enabled: bool,
+}
+
+/// Helper for rustyline providing completion, hints, and highlighting
+pub struct ReplHelper {
+    /// Context for contextual completion
+    context: ReplContext,
+
+    /// Available commands for completion
+    commands: Vec<String>,
+
+    /// Available collections for completion
+    collections: Vec<String>,
+}
+
+/// Command completer for auto-completion
+pub struct CommandCompleter {
+    /// Available commands
+    commands: Vec<String>,
+}
+
+/// Prompt configuration and generation
+pub struct PromptGenerator {
+    /// Current context
+    context: ReplContext,
+}
+
+impl ReplEngine {
+    /// Create a new REPL engine
+    ///
+    /// # Arguments
+    /// * `context` - Initial REPL context
+    /// * `history_config` - History configuration
+    ///
+    /// # Returns
+    /// * `Result<Self>` - New REPL engine or error
+    pub fn new(context: ReplContext, history_config: HistoryConfig) -> Result<Self> {
+        let config = Config::builder()
+            .max_history_size(history_config.max_size)?
+            .history_ignore_space(true)
+            .auto_add_history(true)
+            .build();
+
+        let helper = ReplHelper::new(context.clone());
+        let mut editor = Editor::<ReplHelper, DefaultHistory>::with_config(config)?;
+        editor.set_helper(Some(helper));
+
+        // Load history if persistent
+        if history_config.persist {
+            let _ = editor.load_history(&history_config.file_path);
+        }
+
+        Ok(Self {
+            editor,
+            context,
+            parser: Parser::new(),
+            running: true,
+        })
+    }
+
+    /// Start the REPL loop
+    ///
+    /// Continuously reads input, parses commands, and returns them for execution.
+    ///
+    /// # Returns
+    /// * `Result<()>` - Ok when REPL exits normally, error on failure
+    pub async fn run(&mut self) -> Result<()> {
+        todo!("Main REPL loop: read input, parse, and yield commands")
+    }
+
+    /// Read a single line of input
+    ///
+    /// # Returns
+    /// * `Result<Option<String>>` - Input line or None on EOF
+    pub fn read_line(&mut self) -> Result<Option<String>> {
+        todo!("Read single line with prompt")
+    }
+
+    /// Read multi-line input (for complex commands)
+    ///
+    /// # Returns
+    /// * `Result<String>` - Complete multi-line input
+    pub fn read_multiline(&mut self) -> Result<String> {
+        todo!("Read multi-line input until complete statement")
+    }
+
+    /// Process user input and parse into command
+    ///
+    /// # Arguments
+    /// * `input` - User input string
+    ///
+    /// # Returns
+    /// * `Result<crate::parser::Command>` - Parsed command or error
+    pub fn process_input(&mut self, input: &str) -> Result<crate::parser::Command> {
+        self.parser.parse(input)
+    }
+
+    /// Update REPL context
+    ///
+    /// # Arguments
+    /// * `context` - New context
+    pub fn update_context(&mut self, context: ReplContext) {
+        self.context = context.clone();
+        if let Some(helper) = self.editor.helper_mut() {
+            helper.update_context(context);
+        }
+    }
+
+    /// Add collection name for auto-completion
+    ///
+    /// # Arguments
+    /// * `collection` - Collection name
+    pub fn add_collection(&mut self, collection: String) {
+        if let Some(helper) = self.editor.helper_mut() {
+            helper.add_collection(collection);
+        }
+    }
+
+    /// Set available collections for completion
+    ///
+    /// # Arguments
+    /// * `collections` - List of collection names
+    pub fn set_collections(&mut self, collections: Vec<String>) {
+        if let Some(helper) = self.editor.helper_mut() {
+            helper.set_collections(collections);
+        }
+    }
+
+    /// Save history to file
+    ///
+    /// # Arguments
+    /// * `path` - Path to history file
+    ///
+    /// # Returns
+    /// * `Result<()>` - Success or error
+    pub fn save_history(&mut self, path: &PathBuf) -> Result<()> {
+        self.editor.save_history(path)?;
+        Ok(())
+    }
+
+    /// Stop the REPL
+    pub fn stop(&mut self) {
+        self.running = false;
+    }
+
+    /// Check if REPL is still running
+    ///
+    /// # Returns
+    /// * `bool` - True if running
+    pub fn is_running(&self) -> bool {
+        self.running
+    }
+
+    /// Generate prompt string based on context
+    ///
+    /// # Returns
+    /// * `String` - Prompt string
+    fn generate_prompt(&self) -> String {
+        PromptGenerator::new(self.context.clone()).generate()
+    }
+
+    /// Check if input is a complete statement
+    ///
+    /// # Arguments
+    /// * `input` - Input string to check
+    ///
+    /// # Returns
+    /// * `bool` - True if complete
+    fn is_complete_statement(&self, input: &str) -> bool {
+        todo!("Check if input is a complete statement (balanced braces, etc.)")
+    }
+}
+
+impl ReplContext {
+    /// Create a new REPL context
+    ///
+    /// # Arguments
+    /// * `database` - Initial database name
+    /// * `uri` - Connection URI
+    ///
+    /// # Returns
+    /// * `Self` - New context
+    pub fn new(database: String, uri: String) -> Self {
+        Self {
+            current_database: database,
+            connection_uri: uri,
+            connected: false,
+            server_version: None,
+            color_enabled: true,
+            highlighting_enabled: true,
+        }
+    }
+
+    /// Mark as connected
+    ///
+    /// # Arguments
+    /// * `version` - Server version
+    pub fn set_connected(&mut self, version: Option<String>) {
+        self.connected = true;
+        self.server_version = version;
+    }
+
+    /// Mark as disconnected
+    pub fn set_disconnected(&mut self) {
+        self.connected = false;
+        self.server_version = None;
+    }
+
+    /// Change current database
+    ///
+    /// # Arguments
+    /// * `database` - New database name
+    pub fn set_database(&mut self, database: String) {
+        self.current_database = database;
+    }
+}
+
+impl ReplHelper {
+    /// Create a new REPL helper
+    ///
+    /// # Arguments
+    /// * `context` - REPL context
+    ///
+    /// # Returns
+    /// * `Self` - New helper
+    pub fn new(context: ReplContext) -> Self {
+        let commands = vec![
+            "show".to_string(),
+            "use".to_string(),
+            "exit".to_string(),
+            "quit".to_string(),
+            "help".to_string(),
+            "db".to_string(),
+        ];
+
+        Self {
+            context,
+            commands,
+            collections: Vec::new(),
+        }
+    }
+
+    /// Update context
+    ///
+    /// # Arguments
+    /// * `context` - New context
+    pub fn update_context(&mut self, context: ReplContext) {
+        self.context = context;
+    }
+
+    /// Add collection for completion
+    ///
+    /// # Arguments
+    /// * `collection` - Collection name
+    pub fn add_collection(&mut self, collection: String) {
+        if !self.collections.contains(&collection) {
+            self.collections.push(collection);
+        }
+    }
+
+    /// Set collections for completion
+    ///
+    /// # Arguments
+    /// * `collections` - List of collection names
+    pub fn set_collections(&mut self, collections: Vec<String>) {
+        self.collections = collections;
+    }
+}
+
+impl Helper for ReplHelper {}
+
+impl Completer for ReplHelper {
+    type Candidate = Pair;
+
+    /// Complete input at given position
+    ///
+    /// # Arguments
+    /// * `line` - Current line
+    /// * `pos` - Cursor position
+    /// * `ctx` - Readline context
+    ///
+    /// # Returns
+    /// * `Result<(usize, Vec<Pair>)>` - Completion position and candidates
+    fn complete(
+        &self,
+        _line: &str,
+        _pos: usize,
+        _ctx: &rustyline::Context<'_>,
+    ) -> rustyline::Result<(usize, Vec<Pair>)> {
+        todo!("Implement auto-completion for commands and collections")
+    }
+}
+
+impl Hinter for ReplHelper {
+    type Hint = String;
+
+    /// Provide hints for current input
+    ///
+    /// # Arguments
+    /// * `line` - Current line
+    /// * `pos` - Cursor position
+    /// * `ctx` - Readline context
+    ///
+    /// # Returns
+    /// * `Option<String>` - Hint text
+    fn hint(&self, _line: &str, _pos: usize, _ctx: &rustyline::Context<'_>) -> Option<String> {
+        todo!("Provide command hints based on partial input")
+    }
+}
+
+impl Highlighter for ReplHelper {
+    /// Highlight input text
+    ///
+    /// # Arguments
+    /// * `line` - Line to highlight
+    /// * `pos` - Cursor position
+    ///
+    /// # Returns
+    /// * `Cow<str>` - Highlighted text
+    fn highlight<'l>(&self, line: &'l str, _pos: usize) -> Cow<'l, str> {
+        if !self.context.highlighting_enabled {
+            return Cow::Borrowed(line);
+        }
+        todo!("Implement syntax highlighting for MongoDB commands")
+    }
+
+    /// Highlight character at position
+    ///
+    /// # Arguments
+    /// * `line` - Current line
+    /// * `pos` - Character position
+    ///
+    /// # Returns
+    /// * `bool` - Whether to highlight
+    fn highlight_char(&self, _line: &str, _pos: usize, _ctx: bool) -> bool {
+        self.context.highlighting_enabled && _ctx
+    }
+}
+
+impl Validator for ReplHelper {
+    /// Validate input for completeness
+    ///
+    /// # Arguments
+    /// * `ctx` - Validation context
+    ///
+    /// # Returns
+    /// * `Result<ValidationResult>` - Validation result
+    fn validate(
+        &self,
+        _ctx: &mut rustyline::validate::ValidationContext,
+    ) -> rustyline::Result<rustyline::validate::ValidationResult> {
+        todo!("Validate if input is complete or needs continuation")
+    }
+}
+
+impl PromptGenerator {
+    /// Create a new prompt generator
+    ///
+    /// # Arguments
+    /// * `context` - REPL context
+    ///
+    /// # Returns
+    /// * `Self` - New generator
+    pub fn new(context: ReplContext) -> Self {
+        Self { context }
+    }
+
+    /// Generate prompt string
+    ///
+    /// Format: "database> " or "database (disconnected)> "
+    ///
+    /// # Returns
+    /// * `String` - Formatted prompt
+    pub fn generate(&self) -> String {
+        if self.context.connected {
+            format!("{}> ", self.context.current_database)
+        } else {
+            format!("{} (disconnected)> ", self.context.current_database)
+        }
+    }
+
+    /// Generate continuation prompt for multi-line input
+    ///
+    /// # Returns
+    /// * `String` - Continuation prompt
+    pub fn generate_continuation(&self) -> String {
+        "... ".to_string()
+    }
+}
+
+impl CommandCompleter {
+    /// Create a new command completer
+    ///
+    /// # Returns
+    /// * `Self` - New completer
+    pub fn new() -> Self {
+        Self {
+            commands: vec![
+                "show dbs".to_string(),
+                "show databases".to_string(),
+                "show collections".to_string(),
+                "show users".to_string(),
+                "use".to_string(),
+                "exit".to_string(),
+                "quit".to_string(),
+                "help".to_string(),
+            ],
+        }
+    }
+
+    /// Get completions for partial input
+    ///
+    /// # Arguments
+    /// * `partial` - Partial input string
+    ///
+    /// # Returns
+    /// * `Vec<String>` - Matching completions
+    pub fn get_completions(&self, partial: &str) -> Vec<String> {
+        self.commands
+            .iter()
+            .filter(|cmd| cmd.starts_with(partial))
+            .cloned()
+            .collect()
+    }
+}
+
+impl Default for CommandCompleter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_repl_context_creation() {
+        let context = ReplContext::new("test".to_string(), "mongodb://localhost".to_string());
+        assert_eq!(context.current_database, "test");
+        assert!(!context.connected);
+    }
+
+    #[test]
+    fn test_repl_context_connection() {
+        let mut context = ReplContext::new("test".to_string(), "mongodb://localhost".to_string());
+        context.set_connected(Some("5.0.0".to_string()));
+        assert!(context.connected);
+        assert_eq!(context.server_version, Some("5.0.0".to_string()));
+    }
+
+    #[test]
+    fn test_prompt_generation() {
+        let context = ReplContext::new("mydb".to_string(), "mongodb://localhost".to_string());
+        let prompt = PromptGenerator::new(context).generate();
+        assert!(prompt.contains("mydb"));
+    }
+
+    #[test]
+    fn test_command_completer() {
+        let completer = CommandCompleter::new();
+        let completions = completer.get_completions("show");
+        assert!(!completions.is_empty());
+        assert!(completions.iter().all(|c| c.starts_with("show")));
+    }
+}
