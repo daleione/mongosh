@@ -8,13 +8,11 @@
 //! - Result collection and formatting
 
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::path::Path;
 
 use mongodb::Client;
 
 use crate::error::{Result, ScriptError};
-use crate::executor::ExecutionResult;
 
 /// Script executor for running JavaScript files and code
 pub struct ScriptExecutor {

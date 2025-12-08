@@ -13,6 +13,31 @@ use std::path::PathBuf;
 use crate::config::Config;
 use crate::error::Result;
 
+/// Extract database name from MongoDB connection URI
+///
+/// # Arguments
+/// * `uri` - MongoDB connection URI
+///
+/// # Returns
+/// * `Option<String>` - Database name if found in URI
+fn extract_database_from_uri(uri: &str) -> Option<String> {
+    // Parse URI to extract database name
+    // Format: mongodb://[username:password@]host[:port][/database][?options]
+
+    // Find the part after the last '/' and before '?'
+    if let Some(after_slash) = uri.split("://").nth(1) {
+        // Find the database part: after host/port and before query params
+        if let Some(path_part) = after_slash.split('/').nth(1) {
+            // Remove query parameters if any
+            let db_name = path_part.split('?').next().unwrap_or("");
+            if !db_name.is_empty() {
+                return Some(db_name.to_string());
+            }
+        }
+    }
+    None
+}
+
 /// MongoDB Shell - A high-performance Rust implementation
 #[derive(Parser, Debug)]
 #[command(
@@ -167,8 +192,10 @@ impl CliInterface {
     ///
     /// # Returns
     /// * `Result<Config>` - Loaded configuration or error
-    fn load_config(args: &CliArgs) -> Result<Config> {
-        todo!("Load config from file, environment, and merge with CLI args")
+    fn load_config(_args: &CliArgs) -> Result<Config> {
+        // For now, just return default config
+        // TODO: Load from file and environment in future
+        Ok(Config::default())
     }
 
     /// Run the CLI application
@@ -206,13 +233,28 @@ impl CliInterface {
 
     /// Get the database name to use
     ///
+    /// Priority:
+    /// 1. --database/-d command line argument
+    /// 2. Database name from connection URI
+    /// 3. Default to "test"
+    ///
     /// # Returns
     /// * `String` - Database name
     pub fn get_database(&self) -> String {
-        self.args
-            .database
-            .clone()
-            .unwrap_or_else(|| "test".to_string())
+        // First check if database is explicitly provided via CLI argument
+        if let Some(db) = &self.args.database {
+            return db.clone();
+        }
+
+        // Then try to extract from URI if provided
+        if let Some(uri) = &self.args.uri {
+            if let Some(db) = extract_database_from_uri(uri) {
+                return db;
+            }
+        }
+
+        // Finally, fall back to default
+        "test".to_string()
     }
 
     /// Check if running in interactive mode
@@ -382,5 +424,55 @@ mod tests {
         let cli = CliInterface { args, config };
         assert!(cli.is_interactive());
         assert!(!cli.is_script_mode());
+    }
+
+    #[test]
+    fn test_extract_database_from_uri() {
+        assert_eq!(
+            extract_database_from_uri("mongodb://localhost:27017/mydb"),
+            Some("mydb".to_string())
+        );
+        assert_eq!(
+            extract_database_from_uri("mongodb://localhost:27017/mydb?retryWrites=true"),
+            Some("mydb".to_string())
+        );
+        assert_eq!(
+            extract_database_from_uri("mongodb://user:pass@localhost:27017/admin"),
+            Some("admin".to_string())
+        );
+        assert_eq!(extract_database_from_uri("mongodb://localhost:27017"), None);
+        assert_eq!(
+            extract_database_from_uri("mongodb://localhost:27017/"),
+            None
+        );
+    }
+
+    #[test]
+    fn test_get_database_priority() {
+        // Test with explicit database argument
+        let args = CliArgs::try_parse_from(vec!["mongosh", "-d", "mydb"]).unwrap();
+        let config = Config::default();
+        let cli = CliInterface { args, config };
+        assert_eq!(cli.get_database(), "mydb");
+
+        // Test with database in URI
+        let args = CliArgs::try_parse_from(vec!["mongosh", "mongodb://localhost/admin"]).unwrap();
+        let config = Config::default();
+        let cli = CliInterface { args, config };
+        assert_eq!(cli.get_database(), "admin");
+
+        // Test explicit argument overrides URI
+        let args =
+            CliArgs::try_parse_from(vec!["mongosh", "mongodb://localhost/admin", "-d", "mydb"])
+                .unwrap();
+        let config = Config::default();
+        let cli = CliInterface { args, config };
+        assert_eq!(cli.get_database(), "mydb");
+
+        // Test default
+        let args = CliArgs::try_parse_from(vec!["mongosh"]).unwrap();
+        let config = Config::default();
+        let cli = CliInterface { args, config };
+        assert_eq!(cli.get_database(), "test");
     }
 }

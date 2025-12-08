@@ -9,7 +9,7 @@
 //! - Contextual prompts
 
 use rustyline::completion::{Completer, Pair};
-use rustyline::error::ReadlineError;
+
 use rustyline::highlight::Highlighter;
 use rustyline::hint::Hinter;
 use rustyline::history::DefaultHistory;
@@ -69,6 +69,42 @@ pub struct ReplHelper {
 
     /// Available collections for completion
     collections: Vec<String>,
+}
+
+impl ReplHelper {
+    /// Check if input is a complete statement
+    ///
+    /// # Arguments
+    /// * `input` - Input string to check
+    ///
+    /// # Returns
+    /// * `bool` - True if complete
+    fn is_complete_statement(&self, input: &str) -> bool {
+        // Simple check: balanced braces and parentheses
+        let mut brace_count = 0;
+        let mut paren_count = 0;
+        let mut in_string = false;
+        let mut escape_next = false;
+
+        for ch in input.chars() {
+            if escape_next {
+                escape_next = false;
+                continue;
+            }
+
+            match ch {
+                '\\' => escape_next = true,
+                '"' | '\'' => in_string = !in_string,
+                '{' if !in_string => brace_count += 1,
+                '}' if !in_string => brace_count -= 1,
+                '(' if !in_string => paren_count += 1,
+                ')' if !in_string => paren_count -= 1,
+                _ => {}
+            }
+        }
+
+        brace_count == 0 && paren_count == 0
+    }
 }
 
 /// Command completer for auto-completion
@@ -131,7 +167,26 @@ impl ReplEngine {
     /// # Returns
     /// * `Result<Option<String>>` - Input line or None on EOF
     pub fn read_line(&mut self) -> Result<Option<String>> {
-        todo!("Read single line with prompt")
+        let prompt = self.generate_prompt();
+        match self.editor.readline(&prompt) {
+            Ok(line) => {
+                // Add to history
+                let _ = self.editor.add_history_entry(line.as_str());
+                Ok(Some(line))
+            }
+            Err(rustyline::error::ReadlineError::Interrupted) => {
+                // Ctrl-C
+                Ok(None)
+            }
+            Err(rustyline::error::ReadlineError::Eof) => {
+                // Ctrl-D
+                Ok(None)
+            }
+            Err(err) => Err(crate::error::MongoshError::Generic(format!(
+                "Read error: {}",
+                err
+            ))),
+        }
     }
 
     /// Read multi-line input (for complex commands)
@@ -139,7 +194,36 @@ impl ReplEngine {
     /// # Returns
     /// * `Result<String>` - Complete multi-line input
     pub fn read_multiline(&mut self) -> Result<String> {
-        todo!("Read multi-line input until complete statement")
+        let mut lines = Vec::new();
+        let mut complete = false;
+
+        while !complete {
+            let prompt = if lines.is_empty() {
+                self.generate_prompt()
+            } else {
+                "... ".to_string()
+            };
+
+            match self.editor.readline(&prompt) {
+                Ok(line) => {
+                    lines.push(line.clone());
+                    let combined = lines.join("\n");
+
+                    // Check if statement is complete
+                    if self.is_complete_statement(&combined) {
+                        complete = true;
+                        let _ = self.editor.add_history_entry(combined.as_str());
+                    }
+                }
+                Err(_) => {
+                    return Err(crate::error::MongoshError::Generic(
+                        "Multi-line input interrupted".to_string(),
+                    ));
+                }
+            }
+        }
+
+        Ok(lines.join("\n"))
     }
 
     /// Process user input and parse into command
@@ -217,7 +301,7 @@ impl ReplEngine {
         PromptGenerator::new(self.context.clone()).generate()
     }
 
-    /// Check if input is a complete statement
+    /// Check if input is a complete statement (delegate to helper)
     ///
     /// # Arguments
     /// * `input` - Input string to check
@@ -225,7 +309,9 @@ impl ReplEngine {
     /// # Returns
     /// * `bool` - True if complete
     fn is_complete_statement(&self, input: &str) -> bool {
-        todo!("Check if input is a complete statement (balanced braces, etc.)")
+        self.editor
+            .helper()
+            .map_or(true, |h| h.is_complete_statement(input))
     }
 }
 
@@ -362,7 +448,8 @@ impl Hinter for ReplHelper {
     /// # Returns
     /// * `Option<String>` - Hint text
     fn hint(&self, _line: &str, _pos: usize, _ctx: &rustyline::Context<'_>) -> Option<String> {
-        todo!("Provide command hints based on partial input")
+        // TODO: Implement command hints based on partial input
+        None
     }
 }
 
@@ -376,10 +463,9 @@ impl Highlighter for ReplHelper {
     /// # Returns
     /// * `Cow<str>` - Highlighted text
     fn highlight<'l>(&self, line: &'l str, _pos: usize) -> Cow<'l, str> {
-        if !self.context.highlighting_enabled {
-            return Cow::Borrowed(line);
-        }
-        todo!("Implement syntax highlighting for MongoDB commands")
+        // TODO: Implement syntax highlighting for MongoDB commands
+        // For now, just return the line as-is
+        Cow::Borrowed(line)
     }
 
     /// Highlight character at position
@@ -405,9 +491,18 @@ impl Validator for ReplHelper {
     /// * `Result<ValidationResult>` - Validation result
     fn validate(
         &self,
-        _ctx: &mut rustyline::validate::ValidationContext,
+        ctx: &mut rustyline::validate::ValidationContext,
     ) -> rustyline::Result<rustyline::validate::ValidationResult> {
-        todo!("Validate if input is complete or needs continuation")
+        use rustyline::validate::ValidationResult;
+
+        let input = ctx.input();
+
+        // Check if input is a complete statement
+        if self.is_complete_statement(input) {
+            Ok(ValidationResult::Valid(None))
+        } else {
+            Ok(ValidationResult::Incomplete)
+        }
     }
 }
 

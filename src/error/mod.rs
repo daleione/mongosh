@@ -42,6 +42,9 @@ pub enum MongoshError {
 
     /// Generic error with message
     Generic(String),
+
+    /// Feature not yet implemented
+    NotImplemented(String),
 }
 
 /// Connection-specific errors
@@ -61,6 +64,21 @@ pub enum ConnectionError {
 
     /// Pool exhausted
     PoolExhausted,
+
+    /// Not connected to MongoDB
+    NotConnected,
+
+    /// Ping command failed
+    PingFailed(String),
+
+    /// Command execution failed
+    CommandFailed(String),
+
+    /// Session operation failed
+    SessionFailed(String),
+
+    /// Transaction operation failed
+    TransactionFailed(String),
 }
 
 /// Parsing-specific errors
@@ -181,6 +199,7 @@ impl fmt::Display for MongoshError {
             MongoshError::Plugin(e) => write!(f, "Plugin error: {}", e),
             MongoshError::Script(e) => write!(f, "Script error: {}", e),
             MongoshError::Generic(msg) => write!(f, "{}", msg),
+            MongoshError::NotImplemented(msg) => write!(f, "Not implemented: {}", msg),
         }
     }
 }
@@ -193,6 +212,13 @@ impl fmt::Display for ConnectionError {
             ConnectionError::InvalidUri(uri) => write!(f, "Invalid connection URI: {}", uri),
             ConnectionError::Disconnected => write!(f, "Connection lost"),
             ConnectionError::PoolExhausted => write!(f, "Connection pool exhausted"),
+            ConnectionError::NotConnected => write!(f, "Not connected to MongoDB"),
+            ConnectionError::PingFailed(msg) => write!(f, "Ping failed: {}", msg),
+            ConnectionError::CommandFailed(msg) => write!(f, "Command failed: {}", msg),
+            ConnectionError::SessionFailed(msg) => write!(f, "Session operation failed: {}", msg),
+            ConnectionError::TransactionFailed(msg) => {
+                write!(f, "Transaction operation failed: {}", msg)
+            }
         }
     }
 }

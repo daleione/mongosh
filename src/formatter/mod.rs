@@ -7,9 +7,7 @@
 //! - Color highlighting for improved readability
 //! - Custom formatters for specific result types
 
-use mongodb::bson::{Bson, Document};
-use serde_json::{json, Value};
-use std::fmt;
+use mongodb::bson::Document;
 
 use crate::config::OutputFormat;
 use crate::error::Result;
@@ -471,9 +469,15 @@ impl JsonFormatter {
             ResultData::Documents(docs) => self.format_documents(docs),
             ResultData::Document(doc) => self.format_document(doc),
             ResultData::Message(msg) => Ok(format!("\"{}\"", msg)),
-            ResultData::InsertOne(id) => Ok(format!("{{ \"insertedId\": \"{}\" }}", id)),
-            ResultData::InsertMany(ids) => {
-                let ids_json = ids
+            ResultData::List(items) => {
+                let list_str = items.join("\n");
+                Ok(list_str)
+            }
+            ResultData::InsertOne { inserted_id } => {
+                Ok(format!("{{ \"insertedId\": \"{}\" }}", inserted_id))
+            }
+            ResultData::InsertMany { inserted_ids } => {
+                let ids_json = inserted_ids
                     .iter()
                     .map(|id| format!("\"{}\"", id))
                     .collect::<Vec<_>>()
@@ -547,13 +551,16 @@ impl StatsFormatter {
     pub fn format(&self, result: &ExecutionResult) -> String {
         let mut parts = Vec::new();
 
-        if self.show_time && result.execution_time_ms > 0 {
-            parts.push(format!("Execution time: {}ms", result.execution_time_ms));
+        if self.show_time && result.stats.execution_time_ms > 0 {
+            parts.push(format!(
+                "Execution time: {}ms",
+                result.stats.execution_time_ms
+            ));
         }
 
         if self.show_count {
-            if let Some(count) = result.affected_count {
-                parts.push(format!("Affected: {} document(s)", count));
+            if let Some(count) = result.stats.documents_affected {
+                parts.push(format!("Documents affected: {}", count));
             }
         }
 

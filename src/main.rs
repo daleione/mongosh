@@ -28,7 +28,7 @@
 //! ```
 
 use tokio;
-use tracing::{Level, error, info};
+use tracing::{info, Level};
 use tracing_subscriber;
 
 mod cli;
@@ -44,12 +44,12 @@ mod script;
 mod utils;
 
 use cli::CliInterface;
-use config::Config;
+
 use connection::ConnectionManager;
 use error::Result;
-use executor::CommandRouter;
+use executor::{CommandRouter, ExecutionContext};
 use formatter::Formatter;
-use parser::Parser;
+
 use repl::{ReplContext, ReplEngine};
 
 /// Application entry point
@@ -118,14 +118,15 @@ async fn run_interactive_mode(cli: &CliInterface) -> Result<()> {
         info!("Connected successfully");
     }
 
-    // Get MongoDB client
-    let client = conn_manager.get_client()?.clone();
+    // Create execution context
+    let exec_context = ExecutionContext::new(conn_manager, database.clone());
 
     // Create command router
-    let router = CommandRouter::new(client.clone());
+    let _router = CommandRouter::new(exec_context.clone()).await?;
 
-    // Create REPL context
-    let context = ReplContext::new(database.clone(), uri);
+    // Create REPL context and mark as connected
+    let mut repl_context = ReplContext::new(database.clone(), uri);
+    repl_context.set_connected(None); // Mark as connected (version detection is optional)
 
     // Create and configure formatter
     let format = cli.config().display.format;
@@ -133,7 +134,7 @@ async fn run_interactive_mode(cli: &CliInterface) -> Result<()> {
     let formatter = Formatter::new(format, use_colors);
 
     // Create REPL engine
-    let mut repl = ReplEngine::new(context, cli.config().history.clone())?;
+    let mut repl = ReplEngine::new(repl_context, cli.config().history.clone())?;
 
     // Main REPL loop
     info!("Starting REPL loop");
@@ -167,7 +168,7 @@ async fn run_interactive_mode(cli: &CliInterface) -> Result<()> {
         }
 
         // Execute command
-        match router.route(command).await {
+        match exec_context.execute(command).await {
             Ok(result) => {
                 // Format and display result
                 match formatter.format(&result) {
@@ -185,9 +186,7 @@ async fn run_interactive_mode(cli: &CliInterface) -> Result<()> {
     let history_path = &cli.config().history.file_path;
     let _ = repl.save_history(history_path);
 
-    // Disconnect
-    conn_manager.disconnect().await?;
-
+    // ConnectionManager will be disconnected automatically when ExecutionContext is dropped
     println!("Goodbye!");
     Ok(())
 }
