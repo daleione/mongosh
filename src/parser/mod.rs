@@ -989,7 +989,7 @@ mod tests {
                 options: _,
             }) => {
                 assert_eq!(collection, "users");
-                assert_eq!(filter.get_i32("age"), Ok(25));
+                assert_eq!(filter.get_i64("age"), Ok(25));
             }
             _ => panic!("Expected Find command"),
         }
@@ -1008,7 +1008,7 @@ mod tests {
                 options,
             }) => {
                 assert_eq!(collection, "users");
-                assert_eq!(filter.get_i32("age"), Ok(25));
+                assert_eq!(filter.get_i64("age"), Ok(25));
                 assert!(options.projection.is_some());
             }
             _ => panic!("Expected Find command"),
@@ -1029,7 +1029,7 @@ mod tests {
             .parse_document(r#"{"name": "Alice", "age": 30}"#)
             .unwrap();
         assert_eq!(doc.get_str("name"), Ok("Alice"));
-        assert_eq!(doc.get_i32("age"), Ok(30));
+        assert_eq!(doc.get_i64("age"), Ok(30));
     }
 
     #[test]

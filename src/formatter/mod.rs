@@ -11,7 +11,7 @@ use mongodb::bson::Document;
 
 use crate::config::OutputFormat;
 use crate::error::Result;
-use crate::executor::{ExecutionResult, ResultData};
+use crate::executor::{ExecutionResult, ExecutionStats, ResultData};
 
 /// Main formatter for execution results
 pub struct Formatter {
@@ -631,13 +631,16 @@ mod tests {
         let result = ExecutionResult {
             success: true,
             data: ResultData::None,
-            execution_time_ms: 150,
-            affected_count: Some(5),
+            stats: ExecutionStats {
+                execution_time_ms: 150,
+                documents_returned: 0,
+                documents_affected: Some(5),
+            },
             error: None,
         };
         let stats = formatter.format(&result);
         assert!(stats.contains("150ms"));
-        assert!(stats.contains("5 document(s)"));
+        assert!(stats.contains("Documents affected: 5"));
     }
 
     #[test]
