@@ -34,10 +34,10 @@ cargo build --release
 ./target/release/mongosh
 ```
 
-### Install via Cargo (Coming Soon)
+### Install via Cargo
 
 ```bash
-cargo install mongosh-rs
+cargo install mongosh
 ```
 
 ## 🚀 Quick Start
