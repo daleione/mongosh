@@ -54,6 +54,14 @@ pub struct CliArgs {
     #[arg(value_name = "URI")]
     pub uri: Option<String>,
 
+    /// Server to connect to
+    #[arg(long, value_name = "HOST")]
+    pub host: Option<String>,
+
+    /// Port to connect to
+    #[arg(long, value_name = "PORT")]
+    pub port: Option<u16>,
+
     /// Database name to use
     #[arg(short = 'd', long, value_name = "NAME")]
     pub database: Option<String>,
@@ -225,10 +233,84 @@ impl CliInterface {
 
     /// Build connection URI from individual arguments
     ///
+    /// Constructs a MongoDB connection URI from CLI arguments including:
+    /// - Authentication credentials (username/password)
+    /// - Host and port (defaults to localhost:27017)
+    /// - Database name
+    /// - Authentication database (via authSource parameter)
+    /// - TLS/SSL options
+    ///
     /// # Returns
-    /// * `String` - Constructed connection URI
+    /// * `String` - Constructed connection URI in the format:
+    ///   `mongodb://[username:password@]host:port[/database][?options]`
+    ///
+    /// # Examples
+    /// ```
+    /// // Default: mongodb://localhost:27017
+    /// // With auth: mongodb://user:pass@localhost:27017/?authSource=admin
+    /// // Full: mongodb://user:pass@host:port/db?authSource=admin&tls=true
+    /// ```
     fn build_connection_uri(&self) -> String {
-        todo!("Build MongoDB connection URI from individual arguments")
+        let mut uri = String::from("mongodb://");
+
+        // Add authentication credentials if provided
+        if let Some(username) = &self.args.username {
+            uri.push_str(username);
+            if let Some(password) = &self.args.password {
+                uri.push(':');
+                uri.push_str(password);
+            }
+            uri.push('@');
+        }
+
+        // Add host (default to localhost if not provided)
+        let host = self.args.host.as_deref().unwrap_or("localhost");
+        uri.push_str(host);
+
+        // Add port (default to 27017 if not provided)
+        let port = self.args.port.unwrap_or(27017);
+        uri.push(':');
+        uri.push_str(&port.to_string());
+
+        // Add database if provided
+        if let Some(db) = &self.args.database {
+            uri.push('/');
+            uri.push_str(db);
+        }
+
+        // Add authentication database as query parameter if username is provided
+        // and auth_database is not the default or different from database
+        if self.args.username.is_some() {
+            let needs_auth_db_param = if let Some(db) = &self.args.database {
+                // If database is specified, add authSource only if different
+                &self.args.auth_database != db
+            } else {
+                // If no database specified, add authSource if not default "admin"
+                true
+            };
+
+            if needs_auth_db_param {
+                if self.args.database.is_some() {
+                    uri.push_str("?authSource=");
+                } else {
+                    uri.push_str("/?authSource=");
+                }
+                uri.push_str(&self.args.auth_database);
+            }
+        }
+
+        // Add TLS options if enabled
+        if self.args.tls {
+            let separator = if uri.contains('?') { "&" } else { "?" };
+            uri.push_str(separator);
+            uri.push_str("tls=true");
+
+            if self.args.tls_insecure {
+                uri.push_str("&tlsAllowInvalidCertificates=true");
+            }
+        }
+
+        uri
     }
 
     /// Get the database name to use
@@ -376,10 +458,7 @@ impl CliInterface {
     /// Print banner with version and connection info
     pub fn print_banner(&self) {
         if !self.args.quiet {
-            println!(
-                "MongoDB Shell - Rust Edition v{}",
-                env!("CARGO_PKG_VERSION")
-            );
+            println!("MongoDB Shell v{}", env!("CARGO_PKG_VERSION"));
             println!("Connecting to: {}", self.get_connection_uri());
             println!();
         }
@@ -474,5 +553,170 @@ mod tests {
         let config = Config::default();
         let cli = CliInterface { args, config };
         assert_eq!(cli.get_database(), "test");
+    }
+
+    #[test]
+    fn test_build_connection_uri_defaults() {
+        // Test with no arguments - should use default host and port
+        let args = CliArgs::try_parse_from(vec!["mongosh"]).unwrap();
+        let config = Config::default();
+        let cli = CliInterface { args, config };
+        assert_eq!(cli.build_connection_uri(), "mongodb://localhost:27017");
+    }
+
+    #[test]
+    fn test_build_connection_uri_with_host() {
+        // Test with custom host
+        let args = CliArgs::try_parse_from(vec!["mongosh", "--host", "192.168.0.5"]).unwrap();
+        let config = Config::default();
+        let cli = CliInterface { args, config };
+        assert_eq!(cli.build_connection_uri(), "mongodb://192.168.0.5:27017");
+    }
+
+    #[test]
+    fn test_build_connection_uri_with_host_and_port() {
+        // Test with custom host and port
+        let args =
+            CliArgs::try_parse_from(vec!["mongosh", "--host", "192.168.0.5", "--port", "9999"])
+                .unwrap();
+        let config = Config::default();
+        let cli = CliInterface { args, config };
+        assert_eq!(cli.build_connection_uri(), "mongodb://192.168.0.5:9999");
+    }
+
+    #[test]
+    fn test_build_connection_uri_with_database() {
+        // Test with database
+        let args = CliArgs::try_parse_from(vec!["mongosh", "-d", "mydb"]).unwrap();
+        let config = Config::default();
+        let cli = CliInterface { args, config };
+        assert_eq!(cli.build_connection_uri(), "mongodb://localhost:27017/mydb");
+    }
+
+    #[test]
+    fn test_build_connection_uri_with_auth() {
+        // Test with username and password
+        let args =
+            CliArgs::try_parse_from(vec!["mongosh", "-u", "admin", "-p", "password123"]).unwrap();
+        let config = Config::default();
+        let cli = CliInterface { args, config };
+        assert_eq!(
+            cli.build_connection_uri(),
+            "mongodb://admin:password123@localhost:27017/?authSource=admin"
+        );
+    }
+
+    #[test]
+    fn test_build_connection_uri_with_auth_and_database() {
+        // Test with username, password, and database
+        let args =
+            CliArgs::try_parse_from(vec!["mongosh", "-u", "user", "-p", "pass", "-d", "mydb"])
+                .unwrap();
+        let config = Config::default();
+        let cli = CliInterface { args, config };
+        assert_eq!(
+            cli.build_connection_uri(),
+            "mongodb://user:pass@localhost:27017/mydb?authSource=admin"
+        );
+    }
+
+    #[test]
+    fn test_build_connection_uri_with_auth_database() {
+        // Test with custom auth database
+        let args = CliArgs::try_parse_from(vec![
+            "mongosh",
+            "-u",
+            "user",
+            "-p",
+            "pass",
+            "-d",
+            "mydb",
+            "--auth-database",
+            "auth_db",
+        ])
+        .unwrap();
+        let config = Config::default();
+        let cli = CliInterface { args, config };
+        assert_eq!(
+            cli.build_connection_uri(),
+            "mongodb://user:pass@localhost:27017/mydb?authSource=auth_db"
+        );
+    }
+
+    #[test]
+    fn test_build_connection_uri_with_tls() {
+        // Test with TLS enabled
+        let args = CliArgs::try_parse_from(vec!["mongosh", "--tls"]).unwrap();
+        let config = Config::default();
+        let cli = CliInterface { args, config };
+        assert_eq!(
+            cli.build_connection_uri(),
+            "mongodb://localhost:27017?tls=true"
+        );
+    }
+
+    #[test]
+    fn test_build_connection_uri_with_tls_insecure() {
+        // Test with TLS and insecure option
+        let args = CliArgs::try_parse_from(vec!["mongosh", "--tls", "--tls-insecure"]).unwrap();
+        let config = Config::default();
+        let cli = CliInterface { args, config };
+        assert_eq!(
+            cli.build_connection_uri(),
+            "mongodb://localhost:27017?tls=true&tlsAllowInvalidCertificates=true"
+        );
+    }
+
+    #[test]
+    fn test_build_connection_uri_complete() {
+        // Test with all parameters
+        let args = CliArgs::try_parse_from(vec![
+            "mongosh",
+            "--host",
+            "192.168.0.5",
+            "--port",
+            "9999",
+            "-u",
+            "admin",
+            "-p",
+            "secret",
+            "-d",
+            "testdb",
+            "--tls",
+        ])
+        .unwrap();
+        let config = Config::default();
+        let cli = CliInterface { args, config };
+        assert_eq!(
+            cli.build_connection_uri(),
+            "mongodb://admin:secret@192.168.0.5:9999/testdb?authSource=admin&tls=true"
+        );
+    }
+
+    #[test]
+    fn test_build_connection_uri_username_only() {
+        // Test with username but no password
+        let args = CliArgs::try_parse_from(vec!["mongosh", "-u", "admin"]).unwrap();
+        let config = Config::default();
+        let cli = CliInterface { args, config };
+        assert_eq!(
+            cli.build_connection_uri(),
+            "mongodb://admin@localhost:27017/?authSource=admin"
+        );
+    }
+
+    #[test]
+    fn test_get_connection_uri_prefers_explicit_uri() {
+        // Test that explicit URI takes precedence
+        let args = CliArgs::try_parse_from(vec![
+            "mongosh",
+            "mongodb://example.com:27017/db",
+            "--host",
+            "localhost",
+        ])
+        .unwrap();
+        let config = Config::default();
+        let cli = CliInterface { args, config };
+        assert_eq!(cli.get_connection_uri(), "mongodb://example.com:27017/db");
     }
 }
