@@ -18,14 +18,18 @@ use tracing::{debug, info};
 use crate::connection::ConnectionManager;
 use crate::error::{ExecutionError, MongoshError, Result};
 use crate::parser::{AdminCommand, Command, FindOptions, QueryCommand, UtilityCommand};
+use crate::repl::SharedState;
 
 /// Execution context that maintains state across commands
 pub struct ExecutionContext {
     /// Connection manager
     connection: Arc<RwLock<ConnectionManager>>,
 
-    /// Current database name
-    current_database: Arc<RwLock<String>>,
+    /// Shared state with REPL
+    shared_state: SharedState,
+
+    /// Command execution history
+    history: Arc<RwLock<Vec<String>>>,
 }
 
 impl ExecutionContext {
@@ -33,14 +37,15 @@ impl ExecutionContext {
     ///
     /// # Arguments
     /// * `connection` - Connection manager
-    /// * `default_database` - Default database name
+    /// * `shared_state` - Shared state with REPL
     ///
     /// # Returns
     /// * `Self` - New execution context
-    pub fn new(connection: ConnectionManager, default_database: String) -> Self {
+    pub fn new(connection: ConnectionManager, shared_state: SharedState) -> Self {
         Self {
             connection: Arc::new(RwLock::new(connection)),
-            current_database: Arc::new(RwLock::new(default_database)),
+            shared_state,
+            history: Arc::new(RwLock::new(Vec::new())),
         }
     }
 
@@ -49,15 +54,17 @@ impl ExecutionContext {
     /// # Returns
     /// * `String` - Current database name
     pub async fn get_current_database(&self) -> String {
-        self.current_database.read().await.clone()
+        self.shared_state.get_database()
     }
 
-    /// Set current database
+    /// Set current database name
     ///
     /// # Arguments
-    /// * `name` - Database name
-    pub async fn set_current_database(&self, name: String) {
-        *self.current_database.write().await = name;
+    /// * `database` - New database name
+    pub async fn set_current_database(&self, database: String) {
+        // Clone to get mutable access
+        let mut state = self.shared_state.clone();
+        state.set_database(database);
     }
 
     /// Get database handle
@@ -66,7 +73,7 @@ impl ExecutionContext {
     /// * `Result<Database>` - Database handle or error
     pub async fn get_database(&self) -> Result<Database> {
         let conn = self.connection.read().await;
-        let db_name = self.current_database.read().await;
+        let db_name = self.shared_state.get_database();
         conn.get_database(&db_name)
     }
 
@@ -96,7 +103,8 @@ impl Clone for ExecutionContext {
     fn clone(&self) -> Self {
         Self {
             connection: Arc::clone(&self.connection),
-            current_database: Arc::clone(&self.current_database),
+            shared_state: self.shared_state.clone(),
+            history: Arc::clone(&self.history),
         }
     }
 }
@@ -701,9 +709,12 @@ mod tests {
     #[tokio::test]
     async fn test_execution_context_creation() {
         use crate::config::ConnectionConfig;
+        use crate::repl::SharedState;
         let config = ConnectionConfig::default();
         let conn = ConnectionManager::new("mongodb://localhost:27017".to_string(), config);
-        let context = ExecutionContext::new(conn, "test".to_string());
+        let shared_state =
+            SharedState::new("test".to_string(), "mongodb://localhost:27017".to_string());
+        let context = ExecutionContext::new(conn, shared_state);
 
         assert_eq!(context.get_current_database().await, "test");
     }
@@ -711,9 +722,12 @@ mod tests {
     #[tokio::test]
     async fn test_execution_context_set_database() {
         use crate::config::ConnectionConfig;
+        use crate::repl::SharedState;
         let config = ConnectionConfig::default();
         let conn = ConnectionManager::new("mongodb://localhost:27017".to_string(), config);
-        let context = ExecutionContext::new(conn, "test".to_string());
+        let shared_state =
+            SharedState::new("test".to_string(), "mongodb://localhost:27017".to_string());
+        let context = ExecutionContext::new(conn, shared_state);
 
         context.set_current_database("newdb".to_string()).await;
         assert_eq!(context.get_current_database().await, "newdb");

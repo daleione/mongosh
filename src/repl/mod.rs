@@ -17,27 +17,108 @@ use rustyline::validate::Validator;
 use rustyline::{Config, Editor, Helper};
 use std::borrow::Cow;
 use std::path::PathBuf;
+use std::sync::{Arc, RwLock};
 
 use crate::config::HistoryConfig;
 use crate::error::Result;
 use crate::parser::Parser;
+
+/// Shared state between REPL and execution context
+#[derive(Debug, Clone)]
+pub struct SharedState {
+    /// Current database name
+    pub current_database: Arc<RwLock<String>>,
+
+    /// Current connection URI
+    pub connection_uri: String,
+
+    /// Whether connected to server
+    pub connected: Arc<RwLock<bool>>,
+
+    /// Server version
+    pub server_version: Arc<RwLock<Option<String>>>,
+}
+
+impl SharedState {
+    /// Create a new shared state
+    ///
+    /// # Arguments
+    /// * `database` - Initial database name
+    /// * `uri` - Connection URI
+    ///
+    /// # Returns
+    /// * `Self` - New shared state
+    pub fn new(database: String, uri: String) -> Self {
+        Self {
+            current_database: Arc::new(RwLock::new(database)),
+            connection_uri: uri,
+            connected: Arc::new(RwLock::new(false)),
+            server_version: Arc::new(RwLock::new(None)),
+        }
+    }
+
+    /// Get current database name
+    ///
+    /// # Returns
+    /// * `String` - Current database name
+    pub fn get_database(&self) -> String {
+        self.current_database.read().unwrap().clone()
+    }
+
+    /// Set current database name
+    ///
+    /// # Arguments
+    /// * `database` - New database name
+    pub fn set_database(&mut self, database: String) {
+        *self.current_database.write().unwrap() = database;
+    }
+
+    /// Check if connected
+    ///
+    /// # Returns
+    /// * `bool` - True if connected
+    pub fn is_connected(&self) -> bool {
+        *self.connected.read().unwrap()
+    }
+
+    /// Mark as connected
+    ///
+    /// # Arguments
+    /// * `version` - Server version
+    pub fn set_connected(&mut self, version: Option<String>) {
+        *self.connected.write().unwrap() = true;
+        *self.server_version.write().unwrap() = version;
+    }
+
+    /// Mark as disconnected
+    pub fn set_disconnected(&mut self) {
+        *self.connected.write().unwrap() = false;
+        *self.server_version.write().unwrap() = None;
+    }
+}
 
 /// REPL engine for interactive command execution
 pub struct ReplEngine {
     /// Line editor for command input
     editor: Editor<ReplHelper, DefaultHistory>,
 
-    /// Current REPL context
-    context: ReplContext,
+    /// Shared state with execution context
+    shared_state: SharedState,
 
     /// Parser for command parsing
     parser: Parser,
 
     /// Whether to continue running
     running: bool,
+
+    /// Enable colored output
+    color_enabled: bool,
+
+    /// Enable syntax highlighting
+    highlighting_enabled: bool,
 }
 
-/// REPL context holding state information
+/// REPL context holding state information (deprecated - use SharedState)
 #[derive(Debug, Clone)]
 pub struct ReplContext {
     /// Current database name
@@ -61,14 +142,20 @@ pub struct ReplContext {
 
 /// Helper for rustyline providing completion, hints, and highlighting
 pub struct ReplHelper {
-    /// Context for contextual completion
-    context: ReplContext,
+    /// Shared state for contextual completion
+    shared_state: SharedState,
 
     /// Available commands for completion
     commands: Vec<String>,
 
     /// Available collections for completion
     collections: Vec<String>,
+
+    /// Enable colored output
+    color_enabled: bool,
+
+    /// Enable syntax highlighting
+    highlighting_enabled: bool,
 }
 
 impl ReplHelper {
@@ -120,22 +207,29 @@ pub struct PromptGenerator {
 }
 
 impl ReplEngine {
-    /// Create a new REPL engine
+    /// Create a new REPL engine with shared state
     ///
     /// # Arguments
-    /// * `context` - Initial REPL context
+    /// * `shared_state` - Shared state with execution context
     /// * `history_config` - History configuration
+    /// * `color_enabled` - Enable colored output
+    /// * `highlighting_enabled` - Enable syntax highlighting
     ///
     /// # Returns
     /// * `Result<Self>` - New REPL engine or error
-    pub fn new(context: ReplContext, history_config: HistoryConfig) -> Result<Self> {
+    pub fn new(
+        shared_state: SharedState,
+        history_config: HistoryConfig,
+        color_enabled: bool,
+        highlighting_enabled: bool,
+    ) -> Result<Self> {
         let config = Config::builder()
             .max_history_size(history_config.max_size)?
             .history_ignore_space(true)
             .auto_add_history(true)
             .build();
 
-        let helper = ReplHelper::new(context.clone());
+        let helper = ReplHelper::new(shared_state.clone(), color_enabled, highlighting_enabled);
         let mut editor = Editor::<ReplHelper, DefaultHistory>::with_config(config)?;
         editor.set_helper(Some(helper));
 
@@ -146,10 +240,30 @@ impl ReplEngine {
 
         Ok(Self {
             editor,
-            context,
+            shared_state,
             parser: Parser::new(),
             running: true,
+            color_enabled,
+            highlighting_enabled,
         })
+    }
+
+    /// Create from legacy ReplContext (for backward compatibility)
+    ///
+    /// # Arguments
+    /// * `context` - Initial REPL context
+    /// * `history_config` - History configuration
+    ///
+    /// # Returns
+    /// * `Result<Self>` - New REPL engine or error
+    pub fn from_context(context: ReplContext, history_config: HistoryConfig) -> Result<Self> {
+        let shared_state = SharedState::new(context.current_database, context.connection_uri);
+        Self::new(
+            shared_state,
+            history_config,
+            context.color_enabled,
+            context.highlighting_enabled,
+        )
     }
 
     /// Start the REPL loop
@@ -237,15 +351,21 @@ impl ReplEngine {
         self.parser.parse(input)
     }
 
-    /// Update REPL context
+    /// Get shared state reference
+    ///
+    /// # Returns
+    /// * `&SharedState` - Shared state reference
+    pub fn shared_state(&self) -> &SharedState {
+        &self.shared_state
+    }
+
+    /// Update REPL context (deprecated - state is automatically synchronized)
     ///
     /// # Arguments
     /// * `context` - New context
-    pub fn update_context(&mut self, context: ReplContext) {
-        self.context = context.clone();
-        if let Some(helper) = self.editor.helper_mut() {
-            helper.update_context(context);
-        }
+    #[deprecated(note = "Use shared_state instead - state is automatically synchronized")]
+    pub fn update_context(&mut self, _context: ReplContext) {
+        // No-op: state is now automatically synchronized via SharedState
     }
 
     /// Add collection name for auto-completion
@@ -293,12 +413,19 @@ impl ReplEngine {
         self.running
     }
 
-    /// Generate prompt string based on context
+    /// Generate prompt string based on shared state
     ///
     /// # Returns
     /// * `String` - Prompt string
     fn generate_prompt(&self) -> String {
-        PromptGenerator::new(self.context.clone()).generate()
+        // Now we can call synchronously!
+        let database = self.shared_state.get_database();
+        let connected = self.shared_state.is_connected();
+        if connected {
+            format!("{}> ", database)
+        } else {
+            format!("{} (disconnected)> ", database)
+        }
     }
 
     /// Check if input is a complete statement (delegate to helper)
@@ -363,11 +490,13 @@ impl ReplHelper {
     /// Create a new REPL helper
     ///
     /// # Arguments
-    /// * `context` - REPL context
+    /// * `shared_state` - Shared state
+    /// * `color_enabled` - Enable colored output
+    /// * `highlighting_enabled` - Enable syntax highlighting
     ///
     /// # Returns
     /// * `Self` - New helper
-    pub fn new(context: ReplContext) -> Self {
+    pub fn new(shared_state: SharedState, color_enabled: bool, highlighting_enabled: bool) -> Self {
         let commands = vec![
             "show".to_string(),
             "use".to_string(),
@@ -378,18 +507,12 @@ impl ReplHelper {
         ];
 
         Self {
-            context,
+            shared_state,
             commands,
             collections: Vec::new(),
+            color_enabled,
+            highlighting_enabled,
         }
-    }
-
-    /// Update context
-    ///
-    /// # Arguments
-    /// * `context` - New context
-    pub fn update_context(&mut self, context: ReplContext) {
-        self.context = context;
     }
 
     /// Add collection for completion
@@ -477,7 +600,7 @@ impl Highlighter for ReplHelper {
     /// # Returns
     /// * `bool` - Whether to highlight
     fn highlight_char(&self, _line: &str, _pos: usize, _ctx: bool) -> bool {
-        self.context.highlighting_enabled && _ctx
+        self.highlighting_enabled && _ctx
     }
 }
 
@@ -510,7 +633,7 @@ impl PromptGenerator {
     /// Create a new prompt generator
     ///
     /// # Arguments
-    /// * `context` - REPL context
+    /// * `context` - REPL context (deprecated)
     ///
     /// # Returns
     /// * `Self` - New generator

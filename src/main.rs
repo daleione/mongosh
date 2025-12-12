@@ -50,7 +50,7 @@ use error::Result;
 use executor::{CommandRouter, ExecutionContext};
 use formatter::Formatter;
 
-use repl::{ReplContext, ReplEngine};
+use repl::{ReplContext, ReplEngine, SharedState};
 
 /// Application entry point
 #[tokio::main]
@@ -118,23 +118,30 @@ async fn run_interactive_mode(cli: &CliInterface) -> Result<()> {
         info!("Connected successfully");
     }
 
-    // Create execution context
-    let exec_context = ExecutionContext::new(conn_manager, database.clone());
+    // Create shared state for REPL and execution context
+    let mut shared_state = SharedState::new(database.clone(), uri);
+    shared_state.set_connected(None); // Mark as connected (version detection is optional)
+
+    // Create execution context with shared state
+    let exec_context = ExecutionContext::new(conn_manager, shared_state.clone());
 
     // Create command router
     let _router = CommandRouter::new(exec_context.clone()).await?;
-
-    // Create REPL context and mark as connected
-    let mut repl_context = ReplContext::new(database.clone(), uri);
-    repl_context.set_connected(None); // Mark as connected (version detection is optional)
 
     // Create and configure formatter
     let format = cli.config().display.format;
     let use_colors = cli.config().display.color_output && !cli.args().no_color;
     let formatter = Formatter::new(format, use_colors);
 
-    // Create REPL engine
-    let mut repl = ReplEngine::new(repl_context, cli.config().history.clone())?;
+    // Create REPL engine with shared state
+    let color_enabled = cli.config().display.color_output && !cli.args().no_color;
+    let highlighting_enabled = true; // TODO: make configurable
+    let mut repl = ReplEngine::new(
+        shared_state.clone(),
+        cli.config().history.clone(),
+        color_enabled,
+        highlighting_enabled,
+    )?;
 
     // Main REPL loop
     info!("Starting REPL loop");
@@ -175,6 +182,7 @@ async fn run_interactive_mode(cli: &CliInterface) -> Result<()> {
                     Ok(output) => println!("{}", output),
                     Err(e) => eprintln!("Format error: {}", e),
                 }
+                // No need to manually sync - shared_state is automatically updated!
             }
             Err(e) => {
                 eprintln!("Execution error: {}", e);
