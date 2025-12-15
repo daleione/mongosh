@@ -330,7 +330,7 @@ impl QueryExecutor {
             } => self.execute_find_one(collection, filter, options).await,
 
             QueryCommand::CountDocuments { collection, filter } => {
-                self.execute_count(collection, Some(filter)).await
+                self.execute_count(collection, filter).await
             }
 
             // Stub implementations for write operations (Phase 3)
@@ -388,27 +388,14 @@ impl QueryExecutor {
                 "aggregate not yet implemented (Phase 4)".to_string(),
             )),
 
-            // New command variants - not yet implemented
-            QueryCommand::ReplaceOne { .. } => Err(MongoshError::NotImplemented(
-                "replaceOne not yet implemented".to_string(),
-            )),
-            QueryCommand::EstimatedDocumentCount { .. } => Err(MongoshError::NotImplemented(
-                "estimatedDocumentCount not yet implemented".to_string(),
-            )),
-            QueryCommand::FindOneAndDelete { .. } => Err(MongoshError::NotImplemented(
-                "findOneAndDelete not yet implemented".to_string(),
-            )),
-            QueryCommand::FindOneAndUpdate { .. } => Err(MongoshError::NotImplemented(
-                "findOneAndUpdate not yet implemented".to_string(),
-            )),
-            QueryCommand::FindOneAndReplace { .. } => Err(MongoshError::NotImplemented(
-                "findOneAndReplace not yet implemented".to_string(),
-            )),
-            QueryCommand::Distinct { .. } => Err(MongoshError::NotImplemented(
-                "distinct not yet implemented".to_string(),
-            )),
-            QueryCommand::BulkWrite { .. } => Err(MongoshError::NotImplemented(
-                "bulkWrite not yet implemented".to_string(),
+            QueryCommand::FindAndModify {
+                collection: _,
+                query: _,
+                update: _,
+                remove: _,
+                options: _,
+            } => Err(MongoshError::NotImplemented(
+                "findAndModify not yet implemented (Phase 4)".to_string(),
             )),
         };
 
