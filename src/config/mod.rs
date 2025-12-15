@@ -93,18 +93,44 @@ pub struct DisplayConfig {
 #[serde(rename_all = "lowercase")]
 pub enum OutputFormat {
     /// Shell format (mongosh compatible)
+    ///
+    /// Uses MongoDB shell syntax with type wrappers:
+    /// - ObjectId('...'), ISODate('...'), Long('...')
+    /// - Pretty-printed nested documents and arrays
+    /// - Colored output support
     Shell,
 
-    /// Plain JSON format
+    /// Compact JSON format (single-line)
+    ///
+    /// Minified JSON without whitespace or indentation.
+    /// Suitable for: logging, piping to other tools, minimal output
+    /// Example: `{"_id":"123","name":"John"}`
     Json,
 
-    /// Pretty-printed JSON format
+    /// Pretty-printed JSON format (multi-line)
+    ///
+    /// Human-readable JSON with indentation and newlines.
+    /// Suitable for: terminal display, debugging, reading
+    /// Example:
+    /// ```json
+    /// {
+    ///   "_id": "123",
+    ///   "name": "John"
+    /// }
+    /// ```
     JsonPretty,
 
-    /// Table format
+    /// Table format (ASCII table layout)
+    ///
+    /// Displays documents as an ASCII table with columns.
+    /// Suitable for: comparing multiple documents, structured data view
     Table,
 
-    /// Compact format
+    /// Compact summary format
+    ///
+    /// Displays only summary information, not full document content.
+    /// Suitable for: quick checks, counting results
+    /// Example: "5 document(s) returned"
     Compact,
 }
 
@@ -193,7 +219,7 @@ fn default_idle_timeout() -> u64 {
 }
 
 fn default_format() -> OutputFormat {
-    OutputFormat::Shell
+    OutputFormat::Shell // Shell format is the most user-friendly default
 }
 
 fn default_color_output() -> bool {
@@ -443,7 +469,7 @@ mod tests {
     fn test_default_config() {
         let config = Config::default();
         assert_eq!(config.connection.default_uri, "mongodb://localhost:27017");
-        assert_eq!(config.display.format, OutputFormat::JsonPretty);
+        assert_eq!(config.display.format, OutputFormat::Shell);
         assert!(config.display.color_output);
     }
 

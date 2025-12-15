@@ -9,6 +9,16 @@ All notable changes to this project will be documented in this file.
 - `findOne` command support with filter and projection options
 - Shell-style output formatting (mongosh compatible)
 - Simplified JSON format for programmatic use
+- CLI `--format` argument support (shell, json, json-pretty, table, compact)
+
+### Changed
+
+- **Refactored formatter module into separate files for better maintainability**
+
+### Fixed
+
+- **JSON compact format now outputs single-line JSON without colorization**
+- CLI arguments (e.g., `--format`, `--no-color`) now properly override configuration defaults
 
 ## [0.1.1] - 2025-12-12
 

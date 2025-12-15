@@ -10,7 +10,7 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-use crate::config::Config;
+use crate::config::{Config, OutputFormat};
 use crate::error::Result;
 
 /// Extract database name from MongoDB connection URI
@@ -200,10 +200,32 @@ impl CliInterface {
     ///
     /// # Returns
     /// * `Result<Config>` - Loaded configuration or error
-    fn load_config(_args: &CliArgs) -> Result<Config> {
-        // For now, just return default config
-        // TODO: Load from file and environment in future
-        Ok(Config::default())
+    fn load_config(args: &CliArgs) -> Result<Config> {
+        // Load default config
+        let mut config = Config::default();
+
+        // Apply CLI arguments to override config values
+        if let Some(format_str) = &args.format {
+            // Parse format string to OutputFormat
+            config.display.format = match format_str.to_lowercase().as_str() {
+                "shell" => OutputFormat::Shell,
+                "json" => OutputFormat::Json,
+                "json-pretty" | "jsonpretty" => OutputFormat::JsonPretty,
+                "table" => OutputFormat::Table,
+                "compact" => OutputFormat::Compact,
+                _ => {
+                    eprintln!("Warning: Unknown format '{}', using default", format_str);
+                    OutputFormat::Shell
+                }
+            };
+        }
+
+        // Apply no-color flag
+        if args.no_color {
+            config.display.color_output = false;
+        }
+
+        Ok(config)
     }
 
     /// Run the CLI application
