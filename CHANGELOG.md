@@ -8,13 +8,16 @@ All notable changes to this project will be documented in this file.
 
 - **AST-based parser using Oxc** - Complete rewrite replacing regex-based parsing
 - **Chained method call support** - `.limit()`, `.skip()`, `.sort()`, `.projection()`, `.batchSize()`
+- **Write operations** - Full implementation of `insertOne`, `insertMany`, `updateOne`, `updateMany`, `deleteOne`, `deleteMany`
 - MongoDB-specific type constructors: `ObjectId()`, `ISODate()`, `NumberInt()`, `NumberLong()`, `NumberDecimal()`
 - New query commands: `ReplaceOne`, `EstimatedDocumentCount`, `FindOneAndDelete`, `FindOneAndUpdate`, `FindOneAndReplace`, `Distinct`, `BulkWrite`
 - Extended admin commands: `ShowUsers`, `ShowRoles`, `ShowProfile`, `ShowLogs`, `ServerStatus`, `CurrentOp`, `KillOp`, etc.
 - Enhanced options support for find, update, aggregate, and findAndModify operations
+- Result formatting for write operations in shell and JSON formats
 
 ### Changed
 
+- **Refactored executor module** - Split into separate files: `context.rs`, `result.rs`, `router.rs`, `query.rs`, `admin.rs`, `utility.rs`
 - Refactored parser into modular architecture (`command.rs`, `db_operation.rs`, `expr_converter.rs`, `shell_commands.rs`)
 - `QueryCommand::Count` renamed to `QueryCommand::CountDocuments`
 
