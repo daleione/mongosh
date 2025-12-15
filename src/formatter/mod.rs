@@ -130,11 +130,34 @@ impl Formatter {
                 Ok(result)
             }
             ResultData::Document(doc) => Ok(shell_formatter.format_document(doc)),
+            ResultData::InsertOne { inserted_id } => Ok(format!(
+                "{{\n  acknowledged: true,\n  insertedId: {}\n}}",
+                inserted_id
+            )),
+            ResultData::InsertMany { inserted_ids } => {
+                let ids_str = inserted_ids
+                    .iter()
+                    .enumerate()
+                    .map(|(i, id)| format!("    '{}': {}", i, id))
+                    .collect::<Vec<_>>()
+                    .join(",\n");
+                Ok(format!(
+                    "{{\n  acknowledged: true,\n  insertedIds: {{\n{}\n  }}\n}}",
+                    ids_str
+                ))
+            }
+            ResultData::Update { matched, modified } => Ok(format!(
+                "{{\n  acknowledged: true,\n  matchedCount: {},\n  modifiedCount: {}\n}}",
+                matched, modified
+            )),
+            ResultData::Delete { deleted } => Ok(format!(
+                "{{\n  acknowledged: true,\n  deletedCount: {}\n}}",
+                deleted
+            )),
             ResultData::Message(msg) => Ok(msg.clone()),
             ResultData::List(items) => Ok(items.join("\n")),
             ResultData::Count(count) => Ok(format!("{}", count)),
             ResultData::None => Ok("null".to_string()),
-            _ => Ok(format!("{:?}", data)),
         }
     }
 
@@ -174,9 +197,18 @@ impl Formatter {
         match data {
             ResultData::Documents(docs) => Ok(format!("{} document(s) returned", docs.len())),
             ResultData::Document(doc) => Ok(format!("1 document: {}", doc)),
+            ResultData::InsertOne { .. } => Ok("Inserted 1 document".to_string()),
+            ResultData::InsertMany { inserted_ids } => {
+                Ok(format!("Inserted {} document(s)", inserted_ids.len()))
+            }
+            ResultData::Update { matched, modified } => {
+                Ok(format!("Matched: {}, Modified: {}", matched, modified))
+            }
+            ResultData::Delete { deleted } => Ok(format!("Deleted {} document(s)", deleted)),
             ResultData::Message(msg) => Ok(msg.clone()),
+            ResultData::List(items) => Ok(format!("{} item(s)", items.len())),
             ResultData::Count(count) => Ok(format!("Count: {}", count)),
-            _ => Ok(format!("{:?}", data)),
+            ResultData::None => Ok("null".to_string()),
         }
     }
 
