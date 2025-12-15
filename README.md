@@ -7,6 +7,15 @@
 
 A MongoDB Shell developed in Rust, designed to provide faster performance, smaller binary size, and better user experience.
 
+> **⚠️ DEVELOPMENT STATUS**
+>
+> This project is currently under **active development** and is **NOT production-ready**.
+>
+> - 🚧 **Work in Progress**: Many features are incomplete or not yet implemented
+> - 🐛 **Expect Bugs**: You may encounter bugs, panics, or unexpected behavior
+> - 📝 **API Changes**: Commands and APIs may change without notice
+> - ✅ **Testing Welcome**: We encourage testing and feedback!
+
 ## ✨ Features
 
 - 🔥 **High Performance**: Written in Rust for ultimate performance
@@ -19,22 +28,6 @@ A MongoDB Shell developed in Rust, designed to provide faster performance, small
 - 🌍 **Cross-Platform**: Supports Linux, macOS, Windows
 
 ## 📦 Installation
-
-### Build from Source
-
-```bash
-# Clone the repository
-git clone https://github.com/dalei/mongosh.git
-cd mongosh
-
-# Build the project
-cargo build --release
-
-# Run
-./target/release/mongosh
-```
-
-### Install via Cargo
 
 ```bash
 cargo install mongosh
@@ -68,23 +61,23 @@ use mydb
 show collections
 
 // Insert document
-db.users.insertOne({ name: "John Doe", age: 25 })
+db.users.insertOne({ "name": "John Doe", "age": 25 })
 
 // Query documents
-db.users.find({ age: { $gte: 18 } })
+db.users.find({ "age": { "$gte": 18 } })
 
 // Update document
 db.users.updateOne(
-  { name: "John Doe" },
-  { $set: { age: 26 } }
+  { "name": "John Doe" },
+  { "$set": { "age": 26 } }
 )
 
 // Delete document
-db.users.deleteOne({ name: "John Doe" })
+db.users.deleteOne({ "name": "John Doe" })
 
 // Aggregation query
 db.orders.aggregate([
-  { $match: { status: "completed" } },
-  { $group: { _id: "$userId", total: { $sum: "$amount" } } }
+  { "$match": { "status": "completed" } },
+  { "$group": { "_id": "$userId", "total": { "$sum": "$amount" } } }
 ])
 ```
