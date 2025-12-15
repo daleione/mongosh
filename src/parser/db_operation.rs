@@ -19,6 +19,13 @@ use crate::parser::command::{
 };
 use crate::parser::expr_converter::ExpressionConverter;
 
+/// Represents a chained method call
+#[derive(Debug)]
+struct ChainMethod<'a> {
+    name: String,
+    args: &'a [Argument<'a>],
+}
+
 /// Parser for database operations
 pub struct DbOperationParser;
 
@@ -66,12 +73,16 @@ impl DbOperationParser {
         }
     }
 
-    /// Parse a call expression: db.collection.operation(...)
+    /// Parse a call expression: db.collection.operation(...) or chained calls
     fn parse_call_expression(call: &CallExpression) -> Result<Command> {
-        // Extract collection and operation from the callee
-        let (collection, operation) = Self::extract_db_call_target(&call.callee)?;
+        // Check if this is a chained call (e.g., db.users.find().limit(10))
+        if let Some((base_cmd, chain_methods)) = Self::try_parse_chained_call(call)? {
+            // Apply chained methods to the base command
+            return Self::apply_chain_methods(base_cmd, chain_methods);
+        }
 
-        // Parse arguments
+        // Not a chained call, parse as regular db.collection.operation()
+        let (collection, operation) = Self::extract_db_call_target(&call.callee)?;
         let args = &call.arguments;
 
         // Route to specific operation parser based on operation name
@@ -97,6 +108,263 @@ impl DbOperationParser {
                 ParseError::InvalidCommand(format!("Unsupported operation: {}", operation)).into(),
             ),
         }
+    }
+
+    /// Try to parse a chained call like db.users.find().limit(10).skip(5)
+    /// Returns (base_command, chain_methods) if this is a chained call
+    fn try_parse_chained_call<'a>(
+        call: &'a CallExpression<'a>,
+    ) -> Result<Option<(Command, Vec<ChainMethod<'a>>)>> {
+        // Check if the callee is itself a CallExpression (indicating a chain)
+        if let Expression::StaticMemberExpression(member) = &call.callee {
+            if let Expression::CallExpression(base_call) = &member.object {
+                // This is a chained call!
+                // Recursively parse the base call and collect chain methods
+                let mut chain_methods = Vec::new();
+                let base_cmd = Self::collect_chain_methods(call, &mut chain_methods)?;
+                return Ok(Some((base_cmd, chain_methods)));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Recursively collect all chained methods from innermost to outermost
+    fn collect_chain_methods<'a>(
+        call: &'a CallExpression<'a>,
+        methods: &mut Vec<ChainMethod<'a>>,
+    ) -> Result<Command> {
+        // Check if callee is a member expression with a call as object
+        if let Expression::StaticMemberExpression(member) = &call.callee {
+            let method_name = member.property.name.to_string();
+
+            if let Expression::CallExpression(inner_call) = &member.object {
+                // Recursively process the inner call
+                let base_cmd = Self::collect_chain_methods(inner_call, methods)?;
+
+                // Add current method to the chain
+                methods.push(ChainMethod {
+                    name: method_name,
+                    args: &call.arguments,
+                });
+
+                return Ok(base_cmd);
+            }
+        }
+
+        // Base case: this should be db.collection.operation()
+        Self::parse_call_expression_simple(call)
+    }
+
+    /// Parse a simple (non-chained) call expression
+    fn parse_call_expression_simple(call: &CallExpression) -> Result<Command> {
+        let (collection, operation) = Self::extract_db_call_target(&call.callee)?;
+        let args = &call.arguments;
+
+        match operation.as_str() {
+            "find" => Self::parse_find(&collection, args),
+            "findOne" => Self::parse_find_one(&collection, args),
+            "aggregate" => Self::parse_aggregate(&collection, args),
+            "countDocuments" => Self::parse_count_documents(&collection, args),
+            _ => Err(ParseError::InvalidCommand(format!(
+                "Operation '{}' does not support chaining",
+                operation
+            ))
+            .into()),
+        }
+    }
+
+    /// Apply chained methods to a base command
+    fn apply_chain_methods<'a>(mut cmd: Command, methods: Vec<ChainMethod<'a>>) -> Result<Command> {
+        for method in methods {
+            cmd = Self::apply_single_chain_method(cmd, method)?;
+        }
+        Ok(cmd)
+    }
+
+    /// Apply a single chained method to a command
+    fn apply_single_chain_method<'a>(cmd: Command, method: ChainMethod<'a>) -> Result<Command> {
+        match cmd {
+            Command::Query(query_cmd) => {
+                let updated = Self::apply_chain_to_query(query_cmd, method)?;
+                Ok(Command::Query(updated))
+            }
+            _ => Err(ParseError::InvalidCommand(
+                "Chained methods only supported on query commands".to_string(),
+            )
+            .into()),
+        }
+    }
+
+    /// Apply a chained method to a query command
+    fn apply_chain_to_query<'a>(
+        query_cmd: QueryCommand,
+        method: ChainMethod<'a>,
+    ) -> Result<QueryCommand> {
+        match query_cmd {
+            QueryCommand::Find {
+                collection,
+                filter,
+                mut options,
+            } => {
+                Self::apply_find_chain_method(&mut options, &method)?;
+                Ok(QueryCommand::Find {
+                    collection,
+                    filter,
+                    options,
+                })
+            }
+            QueryCommand::FindOne {
+                collection,
+                filter,
+                mut options,
+            } => {
+                Self::apply_find_chain_method(&mut options, &method)?;
+                Ok(QueryCommand::FindOne {
+                    collection,
+                    filter,
+                    options,
+                })
+            }
+            QueryCommand::Aggregate {
+                collection,
+                pipeline,
+                mut options,
+            } => {
+                Self::apply_aggregate_chain_method(&mut options, &method)?;
+                Ok(QueryCommand::Aggregate {
+                    collection,
+                    pipeline,
+                    options,
+                })
+            }
+            _ => Err(ParseError::InvalidCommand(format!(
+                "Chained methods not supported for this operation"
+            ))
+            .into()),
+        }
+    }
+
+    /// Apply a chained method to FindOptions
+    fn apply_find_chain_method<'a>(
+        options: &mut FindOptions,
+        method: &ChainMethod<'a>,
+    ) -> Result<()> {
+        match method.name.as_str() {
+            "limit" => {
+                if let Some(arg) = method.args.first() {
+                    if let Some(expr) = arg.as_expression() {
+                        if let Expression::NumericLiteral(n) = expr {
+                            options.limit = Some(n.value as i64);
+                        } else {
+                            return Err(ParseError::InvalidQuery(
+                                "limit() requires a number argument".to_string(),
+                            )
+                            .into());
+                        }
+                    }
+                }
+            }
+            "skip" => {
+                if let Some(arg) = method.args.first() {
+                    if let Some(expr) = arg.as_expression() {
+                        if let Expression::NumericLiteral(n) = expr {
+                            options.skip = Some(n.value as u64);
+                        } else {
+                            return Err(ParseError::InvalidQuery(
+                                "skip() requires a number argument".to_string(),
+                            )
+                            .into());
+                        }
+                    }
+                }
+            }
+            "sort" => {
+                if let Some(arg) = method.args.first() {
+                    if let Some(expr) = arg.as_expression() {
+                        let bson = ExpressionConverter::expr_to_bson(expr)?;
+                        if let mongodb::bson::Bson::Document(doc) = bson {
+                            options.sort = Some(doc);
+                        } else {
+                            return Err(ParseError::InvalidQuery(
+                                "sort() requires an object argument".to_string(),
+                            )
+                            .into());
+                        }
+                    }
+                }
+            }
+            "projection" => {
+                if let Some(arg) = method.args.first() {
+                    if let Some(expr) = arg.as_expression() {
+                        let bson = ExpressionConverter::expr_to_bson(expr)?;
+                        if let mongodb::bson::Bson::Document(doc) = bson {
+                            options.projection = Some(doc);
+                        } else {
+                            return Err(ParseError::InvalidQuery(
+                                "projection() requires an object argument".to_string(),
+                            )
+                            .into());
+                        }
+                    }
+                }
+            }
+            "batchSize" => {
+                if let Some(arg) = method.args.first() {
+                    if let Some(expr) = arg.as_expression() {
+                        if let Expression::NumericLiteral(n) = expr {
+                            options.batch_size = Some(n.value as u32);
+                        } else {
+                            return Err(ParseError::InvalidQuery(
+                                "batchSize() requires a number argument".to_string(),
+                            )
+                            .into());
+                        }
+                    }
+                }
+            }
+            _ => {
+                return Err(ParseError::InvalidCommand(format!(
+                    "Unknown chained method: {}",
+                    method.name
+                ))
+                .into())
+            }
+        }
+        Ok(())
+    }
+
+    /// Apply a chained method to AggregateOptions
+    fn apply_aggregate_chain_method<'a>(
+        options: &mut AggregateOptions,
+        method: &ChainMethod<'a>,
+    ) -> Result<()> {
+        match method.name.as_str() {
+            "allowDiskUse" => {
+                options.allow_disk_use = true;
+            }
+            "batchSize" => {
+                if let Some(arg) = method.args.first() {
+                    if let Some(expr) = arg.as_expression() {
+                        if let Expression::NumericLiteral(n) = expr {
+                            options.batch_size = Some(n.value as u32);
+                        } else {
+                            return Err(ParseError::InvalidQuery(
+                                "batchSize() requires a number argument".to_string(),
+                            )
+                            .into());
+                        }
+                    }
+                }
+            }
+            _ => {
+                return Err(ParseError::InvalidCommand(format!(
+                    "Unknown chained method for aggregate: {}",
+                    method.name
+                ))
+                .into())
+            }
+        }
+        Ok(())
     }
 
     /// Extract db.collection.operation from callee
@@ -164,15 +432,14 @@ impl DbOperationParser {
             // Use as_expression() to get Expression from Argument
             if let Some(expr) = arg.as_expression() {
                 let bson = ExpressionConverter::expr_to_bson(expr)?;
-                    if let mongodb::bson::Bson::Document(doc) = bson {
-                        Ok(doc)
-                    } else {
-                        Err(ParseError::InvalidQuery(format!(
-                            "Argument {} must be an object",
-                            index
-                        ))
-                        .into())
-                    }
+                if let mongodb::bson::Bson::Document(doc) = bson {
+                    Ok(doc)
+                } else {
+                    Err(
+                        ParseError::InvalidQuery(format!("Argument {} must be an object", index))
+                            .into(),
+                    )
+                }
             } else {
                 Err(ParseError::InvalidQuery("Invalid argument type".to_string()).into())
             }
@@ -187,26 +454,25 @@ impl DbOperationParser {
             // Use as_expression() to get Expression from Argument
             if let Some(expr) = arg.as_expression() {
                 let bson = ExpressionConverter::expr_to_bson(expr)?;
-                    if let mongodb::bson::Bson::Array(arr) = bson {
-                        let mut docs = Vec::new();
-                        for item in arr {
-                            if let mongodb::bson::Bson::Document(doc) = item {
-                                docs.push(doc);
-                            } else {
-                                return Err(ParseError::InvalidQuery(
-                                    "Array must contain only documents".to_string(),
-                                )
-                                .into());
-                            }
+                if let mongodb::bson::Bson::Array(arr) = bson {
+                    let mut docs = Vec::new();
+                    for item in arr {
+                        if let mongodb::bson::Bson::Document(doc) = item {
+                            docs.push(doc);
+                        } else {
+                            return Err(ParseError::InvalidQuery(
+                                "Array must contain only documents".to_string(),
+                            )
+                            .into());
                         }
-                        Ok(docs)
-                    } else {
-                        Err(ParseError::InvalidQuery(format!(
-                            "Argument {} must be an array",
-                            index
-                        ))
-                        .into())
                     }
+                    Ok(docs)
+                } else {
+                    Err(
+                        ParseError::InvalidQuery(format!("Argument {} must be an array", index))
+                            .into(),
+                    )
+                }
             } else {
                 Err(ParseError::InvalidQuery("Invalid argument type".to_string()).into())
             }
@@ -223,11 +489,10 @@ impl DbOperationParser {
                 if let Expression::StringLiteral(s) = expr {
                     Ok(s.value.to_string())
                 } else {
-                    Err(ParseError::InvalidQuery(format!(
-                        "Argument {} must be a string",
-                        index
-                    ))
-                    .into())
+                    Err(
+                        ParseError::InvalidQuery(format!("Argument {} must be a string", index))
+                            .into(),
+                    )
                 }
             } else {
                 Err(ParseError::InvalidQuery("Invalid argument type".to_string()).into())
@@ -608,6 +873,88 @@ mod tests {
             assert_eq!(age_cond.get_i64("$gte").unwrap(), 18);
         } else {
             panic!("Expected CountDocuments command");
+        }
+    }
+
+    #[test]
+    fn test_parse_chained_limit() {
+        let result = DbOperationParser::parse("db.users.find().limit(10)").unwrap();
+        if let Command::Query(QueryCommand::Find {
+            collection,
+            filter,
+            options,
+        }) = result
+        {
+            assert_eq!(collection, "users");
+            assert!(filter.is_empty());
+            assert_eq!(options.limit, Some(10));
+        } else {
+            panic!("Expected Find command");
+        }
+    }
+
+    #[test]
+    fn test_parse_chained_skip() {
+        let result = DbOperationParser::parse("db.users.find().skip(5)").unwrap();
+        if let Command::Query(QueryCommand::Find { options, .. }) = result {
+            assert_eq!(options.skip, Some(5));
+        } else {
+            panic!("Expected Find command");
+        }
+    }
+
+    #[test]
+    fn test_parse_chained_sort() {
+        let result = DbOperationParser::parse("db.users.find().sort({ name: 1 })").unwrap();
+        if let Command::Query(QueryCommand::Find { options, .. }) = result {
+            assert!(options.sort.is_some());
+            let sort = options.sort.unwrap();
+            assert_eq!(sort.get_i64("name").unwrap(), 1);
+        } else {
+            panic!("Expected Find command");
+        }
+    }
+
+    #[test]
+    fn test_parse_multiple_chained_methods() {
+        let result =
+            DbOperationParser::parse("db.users.find({ age: { $gt: 18 } }).limit(10).skip(5)")
+                .unwrap();
+        if let Command::Query(QueryCommand::Find {
+            collection,
+            filter,
+            options,
+        }) = result
+        {
+            assert_eq!(collection, "users");
+            assert_eq!(options.limit, Some(10));
+            assert_eq!(options.skip, Some(5));
+            let age_cond = filter.get_document("age").unwrap();
+            assert_eq!(age_cond.get_i64("$gt").unwrap(), 18);
+        } else {
+            panic!("Expected Find command");
+        }
+    }
+
+    #[test]
+    fn test_parse_complex_chain() {
+        let result = DbOperationParser::parse(
+            "db.users.find({ status: 'active' }).sort({ createdAt: -1 }).limit(20).skip(10)",
+        )
+        .unwrap();
+        if let Command::Query(QueryCommand::Find {
+            collection,
+            filter,
+            options,
+        }) = result
+        {
+            assert_eq!(collection, "users");
+            assert_eq!(filter.get_str("status").unwrap(), "active");
+            assert_eq!(options.limit, Some(20));
+            assert_eq!(options.skip, Some(10));
+            assert!(options.sort.is_some());
+        } else {
+            panic!("Expected Find command");
         }
     }
 }

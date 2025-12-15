@@ -540,4 +540,72 @@ mod tests {
         assert!(cmd.is_help());
         assert_eq!(cmd.name(), "help");
     }
+
+    #[test]
+    fn test_parse_chained_limit() {
+        let mut parser = Parser::new();
+        let cmd = parser.parse("db.users.find().limit(1)").unwrap();
+        if let Command::Query(QueryCommand::Find { options, .. }) = cmd {
+            assert_eq!(options.limit, Some(1));
+        } else {
+            panic!("Expected Find command");
+        }
+    }
+
+    #[test]
+    fn test_parse_chained_skip_and_limit() {
+        let mut parser = Parser::new();
+        let cmd = parser
+            .parse("db.users.find({ age: { $gt: 18 } }).limit(10).skip(5)")
+            .unwrap();
+        if let Command::Query(QueryCommand::Find {
+            filter, options, ..
+        }) = cmd
+        {
+            assert_eq!(options.limit, Some(10));
+            assert_eq!(options.skip, Some(5));
+            let age_cond = filter.get_document("age").unwrap();
+            assert_eq!(age_cond.get_i64("$gt").unwrap(), 18);
+        } else {
+            panic!("Expected Find command");
+        }
+    }
+
+    #[test]
+    fn test_parse_chained_sort() {
+        let mut parser = Parser::new();
+        let cmd = parser
+            .parse("db.users.find().sort({ name: 1, age: -1 })")
+            .unwrap();
+        if let Command::Query(QueryCommand::Find { options, .. }) = cmd {
+            assert!(options.sort.is_some());
+            let sort = options.sort.unwrap();
+            assert_eq!(sort.get_i64("name").unwrap(), 1);
+            assert_eq!(sort.get_i64("age").unwrap(), -1);
+        } else {
+            panic!("Expected Find command");
+        }
+    }
+
+    #[test]
+    fn test_parse_complex_chained_query() {
+        let mut parser = Parser::new();
+        let cmd = parser
+            .parse("db.products.find({ category: 'electronics' }).sort({ price: -1 }).limit(20).skip(10)")
+            .unwrap();
+        if let Command::Query(QueryCommand::Find {
+            collection,
+            filter,
+            options,
+        }) = cmd
+        {
+            assert_eq!(collection, "products");
+            assert_eq!(filter.get_str("category").unwrap(), "electronics");
+            assert_eq!(options.limit, Some(20));
+            assert_eq!(options.skip, Some(10));
+            assert!(options.sort.is_some());
+        } else {
+            panic!("Expected Find command");
+        }
+    }
 }

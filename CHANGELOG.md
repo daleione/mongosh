@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.0] - 2025-12-16
+
+### Added
+
+- **AST-based parser using Oxc** - Complete rewrite replacing regex-based parsing
+- **Chained method call support** - `.limit()`, `.skip()`, `.sort()`, `.projection()`, `.batchSize()`
+- MongoDB-specific type constructors: `ObjectId()`, `ISODate()`, `NumberInt()`, `NumberLong()`, `NumberDecimal()`
+- New query commands: `ReplaceOne`, `EstimatedDocumentCount`, `FindOneAndDelete`, `FindOneAndUpdate`, `FindOneAndReplace`, `Distinct`, `BulkWrite`
+- Extended admin commands: `ShowUsers`, `ShowRoles`, `ShowProfile`, `ShowLogs`, `ServerStatus`, `CurrentOp`, `KillOp`, etc.
+- Enhanced options support for find, update, aggregate, and findAndModify operations
+
+### Changed
+
+- Refactored parser into modular architecture (`command.rs`, `db_operation.rs`, `expr_converter.rs`, `shell_commands.rs`)
+- `QueryCommand::Count` renamed to `QueryCommand::CountDocuments`
+
+### Fixed
+
+- Complex nested queries and MongoDB operators now parse correctly
+- Proper handling of negative numbers, arrays, and nested objects
+- Database name validation follows MongoDB naming rules
+
 ## [0.1.2] - 2025-12-15
 
 ### Added
