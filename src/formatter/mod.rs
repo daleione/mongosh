@@ -120,13 +120,28 @@ impl Formatter {
         let shell_formatter = ShellFormatter::new(self.use_colors);
         match data {
             ResultData::Documents(docs) => {
-                let mut result = String::new();
-                for (i, doc) in docs.iter().enumerate() {
-                    if i > 0 {
-                        result.push_str("\n\n");
-                    }
-                    result.push_str(&shell_formatter.format_document(doc));
+                if docs.is_empty() {
+                    return Ok("[]".to_string());
                 }
+
+                let mut result = String::from("[\n");
+                for (i, doc) in docs.iter().enumerate() {
+                    let formatted = shell_formatter.format_document(doc);
+                    // Indent each document
+                    let indented = formatted
+                        .lines()
+                        .map(|line| format!("  {}", line))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    result.push_str(&indented);
+
+                    if i < docs.len() - 1 {
+                        result.push_str(",\n");
+                    } else {
+                        result.push('\n');
+                    }
+                }
+                result.push(']');
                 Ok(result)
             }
             ResultData::Document(doc) => Ok(shell_formatter.format_document(doc)),
@@ -308,5 +323,38 @@ mod tests {
             .format_compact(&ResultData::Documents(docs))
             .unwrap();
         assert!(result.contains("1 document(s)"));
+    }
+
+    #[test]
+    fn test_format_shell_documents_as_array() {
+        let formatter = Formatter::new(OutputFormat::Shell, false);
+        let docs = vec![
+            doc! { "name": "Alice", "age": 25 },
+            doc! { "name": "Bob", "age": 30 },
+        ];
+        let result = formatter
+            .format_shell(&ResultData::Documents(docs))
+            .unwrap();
+
+        // Should start with [ and end with ]
+        assert!(result.starts_with("["));
+        assert!(result.ends_with("]"));
+
+        // Should contain both documents
+        assert!(result.contains("'Alice'"));
+        assert!(result.contains("'Bob'"));
+
+        // Should be comma separated
+        assert!(result.contains("},"));
+    }
+
+    #[test]
+    fn test_format_shell_empty_documents() {
+        let formatter = Formatter::new(OutputFormat::Shell, false);
+        let docs: Vec<mongodb::bson::Document> = vec![];
+        let result = formatter
+            .format_shell(&ResultData::Documents(docs))
+            .unwrap();
+        assert_eq!(result, "[]");
     }
 }
