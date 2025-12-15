@@ -7,6 +7,7 @@
 //! - Color highlighting for improved readability
 //! - Custom formatters for specific result types
 
+use colored_json::prelude::*;
 use mongodb::bson::Document;
 
 use crate::config::OutputFormat;
@@ -53,6 +54,9 @@ pub struct JsonFormatter {
 
     /// Indentation level
     indent: usize,
+
+    /// Enable colored output
+    use_colors: bool,
 }
 
 /// Statistics formatter for command execution
@@ -118,7 +122,7 @@ impl Formatter {
     /// # Returns
     /// * `Result<String>` - JSON string or error
     pub fn format_json(&self, data: &ResultData, pretty: bool) -> Result<String> {
-        let formatter = JsonFormatter::new(pretty);
+        let formatter = JsonFormatter::new(pretty, self.use_colors);
         formatter.format(data)
     }
 
@@ -189,14 +193,20 @@ impl Formatter {
     /// # Returns
     /// * `String` - Formatted document
     pub fn format_document(&self, doc: &Document) -> String {
-        match self.format_type {
+        let json_str = match self.format_type {
             OutputFormat::JsonPretty => {
                 serde_json::to_string_pretty(&doc).unwrap_or_else(|_| format!("{:?}", doc))
             }
             OutputFormat::Json => {
                 serde_json::to_string(&doc).unwrap_or_else(|_| format!("{:?}", doc))
             }
-            _ => format!("{}", doc),
+            _ => return format!("{}", doc),
+        };
+
+        if self.use_colors {
+            json_str.to_colored_json_auto().unwrap_or(json_str)
+        } else {
+            json_str
         }
     }
 
@@ -450,11 +460,16 @@ impl JsonFormatter {
     ///
     /// # Arguments
     /// * `pretty` - Enable pretty printing
+    /// * `use_colors` - Enable colored output
     ///
     /// # Returns
     /// * `Self` - New formatter
-    pub fn new(pretty: bool) -> Self {
-        Self { pretty, indent: 2 }
+    pub fn new(pretty: bool, use_colors: bool) -> Self {
+        Self {
+            pretty,
+            indent: 2,
+            use_colors,
+        }
     }
 
     /// Format result data as JSON
@@ -502,10 +517,16 @@ impl JsonFormatter {
     /// # Returns
     /// * `Result<String>` - JSON array string
     fn format_documents(&self, docs: &[Document]) -> Result<String> {
-        if self.pretty {
-            Ok(serde_json::to_string_pretty(docs).unwrap_or_else(|_| format!("{:?}", docs)))
+        let json_str = if self.pretty {
+            serde_json::to_string_pretty(docs).unwrap_or_else(|_| format!("{:?}", docs))
         } else {
-            Ok(serde_json::to_string(docs).unwrap_or_else(|_| format!("{:?}", docs)))
+            serde_json::to_string(docs).unwrap_or_else(|_| format!("{:?}", docs))
+        };
+
+        if self.use_colors {
+            Ok(json_str.to_colored_json_auto().unwrap_or(json_str))
+        } else {
+            Ok(json_str)
         }
     }
 
@@ -517,10 +538,16 @@ impl JsonFormatter {
     /// # Returns
     /// * `Result<String>` - JSON object string
     fn format_document(&self, doc: &Document) -> Result<String> {
-        if self.pretty {
-            Ok(serde_json::to_string_pretty(doc).unwrap_or_else(|_| format!("{:?}", doc)))
+        let json_str = if self.pretty {
+            serde_json::to_string_pretty(doc).unwrap_or_else(|_| format!("{:?}", doc))
         } else {
-            Ok(serde_json::to_string(doc).unwrap_or_else(|_| format!("{:?}", doc)))
+            serde_json::to_string(doc).unwrap_or_else(|_| format!("{:?}", doc))
+        };
+
+        if self.use_colors {
+            Ok(json_str.to_colored_json_auto().unwrap_or(json_str))
+        } else {
+            Ok(json_str)
         }
     }
 }
@@ -586,7 +613,7 @@ impl Default for TableFormatter {
 
 impl Default for JsonFormatter {
     fn default() -> Self {
-        Self::new(true)
+        Self::new(true, false)
     }
 }
 
