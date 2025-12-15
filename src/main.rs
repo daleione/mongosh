@@ -113,9 +113,7 @@ async fn run_interactive_mode(cli: &CliInterface) -> Result<()> {
     let mut conn_manager = ConnectionManager::new(uri.clone(), cli.config().connection.clone());
 
     if !cli.args().no_connect {
-        info!("Connecting to MongoDB: {}", uri);
         conn_manager.connect().await?;
-        info!("Connected successfully");
     }
 
     // Create shared state for REPL and execution context
@@ -217,7 +215,6 @@ async fn run_script_mode(cli: &CliInterface) -> Result<()> {
     let mut conn_manager = ConnectionManager::new(uri.clone(), cli.config().connection.clone());
 
     if !cli.args().no_connect {
-        info!("Connecting to MongoDB: {}", uri);
         conn_manager.connect().await?;
     }
 
