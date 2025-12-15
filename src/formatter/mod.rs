@@ -645,7 +645,7 @@ mod tests {
 
     #[test]
     fn test_json_formatter() {
-        let formatter = JsonFormatter::new(false);
+        let formatter = JsonFormatter::new(false, false);
         let doc = doc! { "name": "test", "value": 42 };
         let result = formatter.format_document(&doc).unwrap();
         assert!(result.contains("name"));

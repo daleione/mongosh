@@ -54,6 +54,13 @@ pub enum QueryCommand {
         options: FindOptions,
     },
 
+    /// Find one document
+    FindOne {
+        collection: String,
+        filter: Document,
+        options: FindOptions,
+    },
+
     /// Insert one document
     InsertOne {
         collection: String,
@@ -483,6 +490,7 @@ impl Parser {
             // Parse based on operation type
             match operation {
                 "find" => self.parse_find_operation(collection, args_str),
+                "findOne" => self.parse_find_one_operation(collection, args_str),
                 "insertOne" => self.parse_insert_one_operation(collection, args_str),
                 "insertMany" => self.parse_insert_many_operation(collection, args_str),
                 "updateOne" => self.parse_update_one_operation(collection, args_str),
@@ -537,6 +545,45 @@ impl Parser {
         };
 
         Ok(Command::Query(QueryCommand::Find {
+            collection,
+            filter,
+            options,
+        }))
+    }
+
+    /// Parse findOne operation: db.collection.findOne(filter, projection)
+    ///
+    /// # Arguments
+    /// * `collection` - Collection name
+    /// * `args` - Arguments string
+    ///
+    /// # Returns
+    /// * `Result<Command>` - Parsed findOne command
+    fn parse_find_one_operation(&self, collection: String, args: &str) -> Result<Command> {
+        let (filter, options) = if args.is_empty() {
+            // No arguments: find one
+            (Document::new(), FindOptions::default())
+        } else {
+            // Parse arguments
+            let parsed_args = self.parse_function_arguments(args)?;
+
+            let filter = if parsed_args.is_empty() {
+                Document::new()
+            } else {
+                self.parse_document(&parsed_args[0])?
+            };
+
+            let mut options = FindOptions::default();
+
+            // Second argument is projection
+            if parsed_args.len() > 1 {
+                options.projection = Some(self.parse_document(&parsed_args[1])?);
+            }
+
+            (filter, options)
+        };
+
+        Ok(Command::Query(QueryCommand::FindOne {
             collection,
             filter,
             options,
@@ -1012,6 +1059,60 @@ mod tests {
                 assert!(options.projection.is_some());
             }
             _ => panic!("Expected Find command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_find_one_empty() {
+        let mut parser = Parser::new();
+        let cmd = parser.parse("db.users.findOne()").unwrap();
+        match cmd {
+            Command::Query(QueryCommand::FindOne {
+                collection,
+                filter,
+                options: _,
+            }) => {
+                assert_eq!(collection, "users");
+                assert_eq!(filter, Document::new());
+            }
+            _ => panic!("Expected FindOne command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_find_one_with_filter() {
+        let mut parser = Parser::new();
+        let cmd = parser.parse(r#"db.users.findOne({"age": 25})"#).unwrap();
+        match cmd {
+            Command::Query(QueryCommand::FindOne {
+                collection,
+                filter,
+                options: _,
+            }) => {
+                assert_eq!(collection, "users");
+                assert_eq!(filter.get_i64("age"), Ok(25));
+            }
+            _ => panic!("Expected FindOne command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_find_one_with_projection() {
+        let mut parser = Parser::new();
+        let cmd = parser
+            .parse(r#"db.users.findOne({"age": 25}, {"name": 1})"#)
+            .unwrap();
+        match cmd {
+            Command::Query(QueryCommand::FindOne {
+                collection,
+                filter,
+                options,
+            }) => {
+                assert_eq!(collection, "users");
+                assert_eq!(filter.get_i64("age"), Ok(25));
+                assert!(options.projection.is_some());
+            }
+            _ => panic!("Expected FindOne command"),
         }
     }
 

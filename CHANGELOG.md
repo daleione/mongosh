@@ -4,8 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [0.1.2] - 2025-12-15
 
-## Features
+### Added
 
+- `findOne` command support with filter and projection options
 - JSON syntax highlighting using `colored_json` library
 
 ## [0.1.1] - 2025-12-12

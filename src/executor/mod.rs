@@ -323,6 +323,12 @@ impl QueryExecutor {
                 options,
             } => self.execute_find(collection, filter, options).await,
 
+            QueryCommand::FindOne {
+                collection,
+                filter,
+                options,
+            } => self.execute_find_one(collection, filter, options).await,
+
             QueryCommand::Count { collection, filter } => {
                 self.execute_count(collection, filter).await
             }
@@ -403,6 +409,7 @@ impl QueryExecutor {
     }
 
     /// Execute find operation
+    /// Execute findOne command
     ///
     /// # Arguments
     /// * `collection` - Collection name
@@ -410,7 +417,67 @@ impl QueryExecutor {
     /// * `options` - Find options
     ///
     /// # Returns
-    /// * `Result<ExecutionResult>` - Documents or error
+    /// * `Result<ExecutionResult>` - Query result with single document
+    async fn execute_find_one(
+        &self,
+        collection: String,
+        filter: Document,
+        options: FindOptions,
+    ) -> Result<ExecutionResult> {
+        debug!(
+            "Executing findOne on collection '{}' with filter: {:?}",
+            collection, filter
+        );
+
+        let db = self.context.get_database().await?;
+        let coll: Collection<Document> = db.collection(&collection);
+
+        // Build find options
+        let mut find_options = mongodb::options::FindOptions::default();
+        find_options.projection = options.projection;
+        find_options.sort = options.sort;
+        find_options.limit = Some(1); // FindOne always limits to 1
+
+        // Execute find query
+        let mut cursor = coll.find(filter).with_options(find_options).await?;
+
+        // Get first document
+        use futures::stream::TryStreamExt;
+        let doc = cursor.try_next().await?;
+
+        match doc {
+            Some(document) => Ok(ExecutionResult {
+                success: true,
+                data: ResultData::Document(document),
+                stats: ExecutionStats {
+                    execution_time_ms: 0,
+                    documents_returned: 1,
+                    documents_affected: None,
+                },
+                error: None,
+            }),
+            None => Ok(ExecutionResult {
+                success: true,
+                data: ResultData::None,
+                stats: ExecutionStats {
+                    execution_time_ms: 0,
+                    documents_returned: 0,
+                    documents_affected: None,
+                },
+                error: None,
+            }),
+        }
+    }
+
+    /// Execute find command
+    ///
+    /// # Arguments
+    /// * `collection` - Collection name
+    /// * `filter` - Query filter
+    /// * `options` - Find options
+    ///
+    /// # Returns
+    /// * `Result<ExecutionResult>` - Query result
     async fn execute_find(
         &self,
         collection: String,
