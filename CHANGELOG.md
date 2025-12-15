@@ -7,7 +7,8 @@ All notable changes to this project will be documented in this file.
 ### Added
 
 - `findOne` command support with filter and projection options
-- JSON syntax highlighting using `colored_json` library
+- Shell-style output formatting (mongosh compatible)
+- Simplified JSON format for programmatic use
 
 ## [0.1.1] - 2025-12-12
 

@@ -19,6 +19,8 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 colored_json = "5"
 bson = "2.11"
+hex = "0.4"
+base64 = "0.21"
 regex = "1.10"
 futures = "0.3"
 toml = "0.8"

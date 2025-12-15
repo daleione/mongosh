@@ -92,6 +92,9 @@ pub struct DisplayConfig {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum OutputFormat {
+    /// Shell format (mongosh compatible)
+    Shell,
+
     /// Plain JSON format
     Json,
 
@@ -190,7 +193,7 @@ fn default_idle_timeout() -> u64 {
 }
 
 fn default_format() -> OutputFormat {
-    OutputFormat::JsonPretty
+    OutputFormat::Shell
 }
 
 fn default_color_output() -> bool {
