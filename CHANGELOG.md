@@ -19,6 +19,7 @@ All notable changes to this project will be documented in this file.
 
 - **JSON compact format now outputs single-line JSON without colorization**
 - CLI arguments (e.g., `--format`, `--no-color`) now properly override configuration defaults
+- Tab completion no longer causes panic in REPL
 
 ## [0.1.1] - 2025-12-12
 

@@ -550,11 +550,103 @@ impl Completer for ReplHelper {
     /// * `Result<(usize, Vec<Pair>)>` - Completion position and candidates
     fn complete(
         &self,
-        _line: &str,
-        _pos: usize,
+        line: &str,
+        pos: usize,
         _ctx: &rustyline::Context<'_>,
     ) -> rustyline::Result<(usize, Vec<Pair>)> {
-        todo!("Implement auto-completion for commands and collections")
+        let mut candidates = Vec::new();
+
+        // Get the word being completed
+        let start = line[..pos]
+            .rfind(|c: char| c.is_whitespace() || c == '.')
+            .map(|i| i + 1)
+            .unwrap_or(0);
+
+        let word = &line[start..pos];
+
+        // Determine what to complete based on context
+        if line.starts_with("use ") {
+            // Complete database names
+            // For now, just suggest the current database
+            let current_db = self.shared_state.get_database();
+            if current_db.starts_with(word) {
+                candidates.push(Pair {
+                    display: current_db.clone(),
+                    replacement: current_db,
+                });
+            }
+        } else if line.starts_with("show ") {
+            // Complete "show" subcommands
+            let show_commands = vec!["dbs", "databases", "collections", "tables"];
+            for cmd in show_commands {
+                if cmd.starts_with(word) {
+                    candidates.push(Pair {
+                        display: cmd.to_string(),
+                        replacement: cmd.to_string(),
+                    });
+                }
+            }
+        } else if line.contains("db.") {
+            // Complete collection names after "db."
+            let after_db = line.split("db.").last().unwrap_or("");
+            let collection_part = after_db.split('.').next().unwrap_or("");
+
+            if collection_part == word || word.is_empty() {
+                for collection in &self.collections {
+                    if collection.starts_with(word) {
+                        candidates.push(Pair {
+                            display: collection.clone(),
+                            replacement: collection.clone(),
+                        });
+                    }
+                }
+            }
+
+            // Also suggest common operations after collection name
+            if after_db.contains('.') {
+                let operations = vec![
+                    "find",
+                    "findOne",
+                    "insertOne",
+                    "insertMany",
+                    "updateOne",
+                    "updateMany",
+                    "deleteOne",
+                    "deleteMany",
+                    "countDocuments",
+                    "aggregate",
+                    "drop",
+                ];
+                for op in operations {
+                    if op.starts_with(word) {
+                        candidates.push(Pair {
+                            display: op.to_string(),
+                            replacement: op.to_string(),
+                        });
+                    }
+                }
+            }
+        } else {
+            // Complete top-level commands
+            for cmd in &self.commands {
+                if cmd.starts_with(word) {
+                    candidates.push(Pair {
+                        display: cmd.clone(),
+                        replacement: cmd.clone(),
+                    });
+                }
+            }
+
+            // Also suggest "db" if it matches
+            if "db".starts_with(word) {
+                candidates.push(Pair {
+                    display: "db".to_string(),
+                    replacement: "db".to_string(),
+                });
+            }
+        }
+
+        Ok((start, candidates))
     }
 }
 
