@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.1] - 2025-12-16
+
+### Added
+
+### Changed
+
+- **Default log level changed to WARN** - Cleaner interactive mode output, INFO logs only shown with `--verbose`
+- `find()` results now displayed as array format - Matches MongoDB shell behavior
+
+### Fixed
+
+- Removed duplicate connection logging messages
+- Fixed redundant error message prefixes (e.g., "Parse error: Parse error:")
+- Removed extra blank line after connection banner
+
 ## [0.2.0] - 2025-12-16
 
 ### Added

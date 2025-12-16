@@ -190,7 +190,7 @@ impl fmt::Display for MongoshError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             MongoshError::Connection(e) => write!(f, "Connection error: {}", e),
-            MongoshError::Parse(e) => write!(f, "Parse error: {}", e),
+            MongoshError::Parse(e) => write!(f, "{}", e),
             MongoshError::Execution(e) => write!(f, "Execution error: {}", e),
             MongoshError::Config(e) => write!(f, "Configuration error: {}", e),
             MongoshError::Io(e) => write!(f, "I/O error: {}", e),

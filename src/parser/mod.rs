@@ -139,7 +139,7 @@ impl Parser {
         }
 
         // If nothing matches, it's an invalid command
-        Err(ParseError::InvalidCommand(format!("Unknown command: {}", trimmed)).into())
+        Err(ParseError::InvalidCommand(trimmed.to_string()).into())
     }
 
     /// Parse a query filter document from a string

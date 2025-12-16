@@ -482,7 +482,6 @@ impl CliInterface {
         if !self.args.quiet {
             println!("MongoDB Shell v{}", env!("CARGO_PKG_VERSION"));
             println!("Connecting to: {}", self.get_connection_uri());
-            println!();
         }
     }
 }

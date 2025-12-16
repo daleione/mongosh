@@ -253,7 +253,7 @@ fn default_persist_history() -> bool {
 }
 
 fn default_log_level() -> LogLevel {
-    LogLevel::Info
+    LogLevel::Warn
 }
 
 fn default_log_timestamps() -> bool {

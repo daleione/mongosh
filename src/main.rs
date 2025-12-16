@@ -103,8 +103,6 @@ async fn run() -> Result<()> {
 /// # Returns
 /// * `Result<()>` - Success or error
 async fn run_interactive_mode(cli: &CliInterface) -> Result<()> {
-    info!("Starting interactive REPL mode");
-
     // Get connection URI and database
     let uri = cli.get_connection_uri();
     let database = cli.get_database();
@@ -142,7 +140,6 @@ async fn run_interactive_mode(cli: &CliInterface) -> Result<()> {
     )?;
 
     // Main REPL loop
-    info!("Starting REPL loop");
     while repl.is_running() {
         // Read user input
         let input = match repl.read_line()? {
@@ -162,7 +159,7 @@ async fn run_interactive_mode(cli: &CliInterface) -> Result<()> {
         let command = match repl.process_input(&input) {
             Ok(cmd) => cmd,
             Err(e) => {
-                eprintln!("Parse error: {}", e);
+                eprintln!("{}", e);
                 continue;
             }
         };
@@ -278,8 +275,6 @@ fn initialize_logging(cli: &CliInterface) {
     } else {
         subscriber.without_time().init();
     }
-
-    info!("Logging initialized at level: {:?}", level);
 }
 
 #[cfg(test)]
