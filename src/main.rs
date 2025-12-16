@@ -50,7 +50,7 @@ use error::Result;
 use executor::{CommandRouter, ExecutionContext};
 use formatter::Formatter;
 
-use repl::{ReplContext, ReplEngine, SharedState};
+use repl::{ReplEngine, SharedState};
 
 /// Application entry point
 #[tokio::main]

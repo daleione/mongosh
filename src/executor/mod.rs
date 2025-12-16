@@ -65,12 +65,9 @@ mod router;
 mod utility;
 
 // Re-export public types
-pub use admin::AdminExecutor;
 pub use context::ExecutionContext;
-pub use query::QueryExecutor;
-pub use result::{ExecutionResult, ExecutionStats, ResultData};
+pub use result::{ExecutionResult, ResultData};
 pub use router::CommandRouter;
-pub use utility::UtilityExecutor;
 
 // Re-export for convenience
 use crate::error::Result;
