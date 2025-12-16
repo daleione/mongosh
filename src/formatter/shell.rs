@@ -8,10 +8,12 @@
 
 use mongodb::bson::{Bson, Document};
 
+use super::colorizer::Colorizer;
+
 /// Shell-style formatter (mongosh compatible)
 pub struct ShellFormatter {
-    /// Enable colored output
-    use_colors: bool,
+    /// Colorizer for output highlighting
+    colorizer: Colorizer,
 
     /// Indentation level
     indent: usize,
@@ -27,7 +29,7 @@ impl ShellFormatter {
     /// * `Self` - New formatter
     pub fn new(use_colors: bool) -> Self {
         Self {
-            use_colors,
+            colorizer: Colorizer::new(use_colors),
             indent: 2,
         }
     }
@@ -58,11 +60,7 @@ impl ShellFormatter {
             result.push_str(&indent);
 
             // Key without quotes (shell style)
-            if self.use_colors {
-                result.push_str(&format!("\x1b[36m{}\x1b[0m", key));
-            } else {
-                result.push_str(key);
-            }
+            result.push_str(&self.colorizer.field_key(key));
 
             result.push_str(": ");
             result.push_str(&formatted_value);
@@ -82,78 +80,22 @@ impl ShellFormatter {
     /// Format a BSON value in shell style
     fn format_bson_value(&self, value: &Bson, indent_level: usize) -> String {
         match value {
-            Bson::ObjectId(oid) => {
-                let formatted = format!("ObjectId('{}')", oid);
-                if self.use_colors {
-                    format!("\x1b[33m{}\x1b[0m", formatted)
-                } else {
-                    formatted
-                }
-            }
+            Bson::ObjectId(oid) => self.colorizer.type_wrapper("ObjectId", &oid.to_string()),
             Bson::DateTime(dt) => {
                 // Convert to ISO 8601 format
                 let iso = dt.try_to_rfc3339_string().unwrap_or_else(|_| {
                     // Fallback to timestamp if conversion fails
                     format!("{}", dt.timestamp_millis())
                 });
-                let formatted = format!("ISODate('{}')", iso);
-                if self.use_colors {
-                    format!("\x1b[32m{}\x1b[0m", formatted)
-                } else {
-                    formatted
-                }
+                self.colorizer.iso_date(&iso)
             }
-            Bson::Int64(n) => {
-                let formatted = format!("Long('{}')", n);
-                if self.use_colors {
-                    format!("\x1b[33m{}\x1b[0m", formatted)
-                } else {
-                    formatted
-                }
-            }
-            Bson::Decimal128(d) => {
-                let formatted = format!("NumberDecimal('{}')", d);
-                if self.use_colors {
-                    format!("\x1b[33m{}\x1b[0m", formatted)
-                } else {
-                    formatted
-                }
-            }
-            Bson::String(s) => {
-                if self.use_colors {
-                    format!("\x1b[32m'{}'\x1b[0m", s)
-                } else {
-                    format!("'{}'", s)
-                }
-            }
-            Bson::Int32(n) => {
-                if self.use_colors {
-                    format!("\x1b[33m{}\x1b[0m", n)
-                } else {
-                    n.to_string()
-                }
-            }
-            Bson::Double(f) => {
-                if self.use_colors {
-                    format!("\x1b[33m{}\x1b[0m", f)
-                } else {
-                    f.to_string()
-                }
-            }
-            Bson::Boolean(b) => {
-                if self.use_colors {
-                    format!("\x1b[33m{}\x1b[0m", b)
-                } else {
-                    b.to_string()
-                }
-            }
-            Bson::Null => {
-                if self.use_colors {
-                    "\x1b[90mnull\x1b[0m".to_string()
-                } else {
-                    "null".to_string()
-                }
-            }
+            Bson::Int64(n) => self.colorizer.type_wrapper("Long", &n.to_string()),
+            Bson::Decimal128(d) => self.colorizer.type_wrapper("NumberDecimal", &d.to_string()),
+            Bson::String(s) => self.colorizer.string(s),
+            Bson::Int32(n) => self.colorizer.number(&n.to_string()),
+            Bson::Double(f) => self.colorizer.number(&f.to_string()),
+            Bson::Boolean(b) => self.colorizer.number(&b.to_string()),
+            Bson::Null => self.colorizer.null("null"),
             Bson::Array(arr) => self.format_array(arr, indent_level),
             Bson::Document(doc) => self.format_document_with_indent(doc, indent_level),
             Bson::Binary(bin) => {
@@ -171,29 +113,11 @@ impl ShellFormatter {
                     mongodb::bson::spec::BinarySubtype::UserDefined(n) => n,
                     _ => 0u8, // Default to generic for unknown subtypes
                 };
-                let formatted = format!("BinData({}, '{}')", subtype_num, hex::encode(&bin.bytes));
-                if self.use_colors {
-                    format!("\x1b[35m{}\x1b[0m", formatted)
-                } else {
-                    formatted
-                }
+                self.colorizer
+                    .bin_data(subtype_num, &hex::encode(&bin.bytes))
             }
-            Bson::RegularExpression(regex) => {
-                let formatted = format!("/{}/{}", regex.pattern, regex.options);
-                if self.use_colors {
-                    format!("\x1b[31m{}\x1b[0m", formatted)
-                } else {
-                    formatted
-                }
-            }
-            Bson::Timestamp(ts) => {
-                let formatted = format!("Timestamp({}, {})", ts.time, ts.increment);
-                if self.use_colors {
-                    format!("\x1b[33m{}\x1b[0m", formatted)
-                } else {
-                    formatted
-                }
-            }
+            Bson::RegularExpression(regex) => self.colorizer.regex(&regex.pattern, &regex.options),
+            Bson::Timestamp(ts) => self.colorizer.timestamp(ts.time, ts.increment),
             _ => format!("{:?}", value),
         }
     }
