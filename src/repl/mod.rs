@@ -19,7 +19,7 @@ use std::borrow::Cow;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
-use crate::config::HistoryConfig;
+use crate::config::{HistoryConfig, OutputFormat};
 use crate::error::Result;
 use crate::parser::Parser;
 
@@ -37,6 +37,12 @@ pub struct SharedState {
 
     /// Server version
     pub server_version: Arc<RwLock<Option<String>>>,
+
+    /// Output format setting
+    pub output_format: Arc<RwLock<OutputFormat>>,
+
+    /// Color output setting
+    pub color_enabled: Arc<RwLock<bool>>,
 }
 
 impl SharedState {
@@ -54,6 +60,8 @@ impl SharedState {
             connection_uri: uri,
             connected: Arc::new(RwLock::new(false)),
             server_version: Arc::new(RwLock::new(None)),
+            output_format: Arc::new(RwLock::new(OutputFormat::Shell)),
+            color_enabled: Arc::new(RwLock::new(true)),
         }
     }
 
@@ -71,6 +79,38 @@ impl SharedState {
     /// * `database` - New database name
     pub fn set_database(&mut self, database: String) {
         *self.current_database.write().unwrap() = database;
+    }
+
+    /// Get current output format
+    ///
+    /// # Returns
+    /// * `OutputFormat` - Current output format
+    pub fn get_format(&self) -> OutputFormat {
+        *self.output_format.read().unwrap()
+    }
+
+    /// Set output format
+    ///
+    /// # Arguments
+    /// * `format` - New output format
+    pub fn set_format(&self, format: OutputFormat) {
+        *self.output_format.write().unwrap() = format;
+    }
+
+    /// Get current color setting
+    ///
+    /// # Returns
+    /// * `bool` - True if color output is enabled
+    pub fn get_color_enabled(&self) -> bool {
+        *self.color_enabled.read().unwrap()
+    }
+
+    /// Set color output
+    ///
+    /// # Arguments
+    /// * `enabled` - Whether to enable color output
+    pub fn set_color_enabled(&self, enabled: bool) {
+        *self.color_enabled.write().unwrap() = enabled;
     }
 
     /// Check if connected

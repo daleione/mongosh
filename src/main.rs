@@ -169,13 +169,28 @@ async fn run_interactive_mode(cli: &CliInterface) -> Result<()> {
             break;
         }
 
+        // Check if this is a config command - output directly without formatting
+        let is_config_cmd = matches!(command, parser::Command::Config(_));
+
         // Execute command
         match exec_context.execute(command).await {
             Ok(result) => {
-                // Format and display result
-                match formatter.format(&result) {
-                    Ok(output) => println!("{}", output),
-                    Err(e) => eprintln!("Format error: {}", e),
+                if is_config_cmd {
+                    // Config commands output directly, no formatting
+                    if let executor::ResultData::Message(msg) = &result.data {
+                        println!("{}", msg);
+                    }
+                } else {
+                    // Update formatter with current settings from shared_state
+                    let current_format = shared_state.get_format();
+                    let current_color = shared_state.get_color_enabled();
+                    let mut current_formatter = Formatter::new(current_format, current_color);
+
+                    // Format and display result
+                    match current_formatter.format(&result) {
+                        Ok(output) => println!("{}", output),
+                        Err(e) => eprintln!("Format error: {}", e),
+                    }
                 }
                 // No need to manually sync - shared_state is automatically updated!
             }

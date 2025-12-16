@@ -2,9 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.2.1] - 2025-12-16
+## [0.2.2] - 2025-12-17
 
 ### Added
+
+- **Runtime configuration commands** - `format`, `color`, and `config` commands for changing output settings in REPL
+
+## [0.2.1] - 2025-12-16
 
 ### Changed
 

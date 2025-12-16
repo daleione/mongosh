@@ -9,8 +9,9 @@
 use std::time::Instant;
 use tracing::debug;
 
+use crate::config::OutputFormat;
 use crate::error::{MongoshError, Result};
-use crate::parser::Command;
+use crate::parser::{Command, ConfigCommand};
 
 use super::admin::AdminExecutor;
 use super::context::ExecutionContext;
@@ -61,6 +62,7 @@ impl CommandRouter {
                 let executor = UtilityExecutor::new();
                 executor.execute(util_cmd).await
             }
+            Command::Config(config_cmd) => self.execute_config(config_cmd).await,
             Command::Help(topic) => self.execute_help(topic).await,
             Command::Exit => Ok(ExecutionResult {
                 success: true,
@@ -108,6 +110,11 @@ Administrative:
   show collections                            - List collections
   use <database>                              - Switch database
 
+Configuration:
+  format [shell|json|json-pretty|table|compact] - Set/get output format
+  color [on|off]                                - Enable/disable color output
+  config                                        - Show current configuration
+
 Utility:
   help                                        - Show this help
   help <command>                              - Show help for specific command
@@ -119,6 +126,105 @@ Utility:
         Ok(ExecutionResult {
             success: true,
             data: ResultData::Message(help_text),
+            stats: ExecutionStats::default(),
+            error: None,
+        })
+    }
+
+    /// Execute config command
+    ///
+    /// # Arguments
+    /// * `cmd` - Config command to execute
+    ///
+    /// # Returns
+    /// * `Result<ExecutionResult>` - Config result
+    async fn execute_config(&self, cmd: ConfigCommand) -> Result<ExecutionResult> {
+        let shared_state = &self.context.shared_state;
+
+        let message = match cmd {
+            ConfigCommand::SetFormat(format_str) => {
+                let format = match format_str.to_lowercase().as_str() {
+                    "shell" => OutputFormat::Shell,
+                    "json" => OutputFormat::Json,
+                    "json-pretty" | "jsonpretty" => OutputFormat::JsonPretty,
+                    "table" => OutputFormat::Table,
+                    "compact" => OutputFormat::Compact,
+                    _ => {
+                        return Ok(ExecutionResult {
+                            success: false,
+                            data: ResultData::Message(format!(
+                                "Invalid format: '{}'\n\nSupported formats: shell, json, json-pretty, table, compact",
+                                format_str
+                            )),
+                            stats: ExecutionStats::default(),
+                            error: Some("Invalid format".to_string()),
+                        });
+                    }
+                };
+
+                shared_state.set_format(format);
+                format!("Output format set to: {}", format_str)
+            }
+            ConfigCommand::GetFormat => {
+                let format = shared_state.get_format();
+                let format_str = match format {
+                    OutputFormat::Shell => "shell",
+                    OutputFormat::Json => "json",
+                    OutputFormat::JsonPretty => "json-pretty",
+                    OutputFormat::Table => "table",
+                    OutputFormat::Compact => "compact",
+                };
+                format!(
+                    "Current format: {}\n\nSupported formats: shell, json, json-pretty, table, compact",
+                    format_str
+                )
+            }
+            ConfigCommand::SetColor(enabled) => {
+                shared_state.set_color_enabled(enabled);
+                format!(
+                    "Color output {}",
+                    if enabled { "enabled" } else { "disabled" }
+                )
+            }
+            ConfigCommand::GetColor => {
+                let enabled = shared_state.get_color_enabled();
+                format!(
+                    "Color output: {}",
+                    if enabled { "enabled" } else { "disabled" }
+                )
+            }
+            ConfigCommand::ShowConfig => {
+                let format = shared_state.get_format();
+                let format_str = match format {
+                    OutputFormat::Shell => "shell",
+                    OutputFormat::Json => "json",
+                    OutputFormat::JsonPretty => "json-pretty",
+                    OutputFormat::Table => "table",
+                    OutputFormat::Compact => "compact",
+                };
+                let color = if shared_state.get_color_enabled() {
+                    "enabled"
+                } else {
+                    "disabled"
+                };
+
+                format!(
+                    r#"Current Configuration:
+  format: {}
+  color: {}
+
+Available Commands:
+  format [shell|json|json-pretty|table|compact] - Set/get output format
+  color [on|off]                                  - Set/get color output
+  config                                          - Show this configuration"#,
+                    format_str, color
+                )
+            }
+        };
+
+        Ok(ExecutionResult {
+            success: true,
+            data: ResultData::Message(message),
             stats: ExecutionStats::default(),
             error: None,
         })

@@ -18,6 +18,9 @@ pub enum Command {
     /// Utility command (print, serverStatus, etc.)
     Utility(UtilityCommand),
 
+    /// Configuration command (set format, color, etc.)
+    Config(ConfigCommand),
+
     /// Script execution command
     Script(ScriptCommand),
 
@@ -239,6 +242,7 @@ pub enum AdminCommand {
 
 /// Utility commands
 #[derive(Debug, Clone, PartialEq)]
+/// Utility commands for shell operations
 pub enum UtilityCommand {
     /// Print/echo a value
     Print(String),
@@ -263,6 +267,25 @@ pub enum UtilityCommand {
 
     /// Get database version
     Version,
+}
+
+/// Configuration commands for runtime settings
+#[derive(Debug, Clone, PartialEq)]
+pub enum ConfigCommand {
+    /// Set output format (shell, json, json-pretty, table, compact)
+    SetFormat(String),
+
+    /// Get current format
+    GetFormat,
+
+    /// Enable/disable colors
+    SetColor(bool),
+
+    /// Get current color setting
+    GetColor,
+
+    /// Show all current settings
+    ShowConfig,
 }
 
 /// Script execution command
@@ -405,6 +428,7 @@ impl Command {
             Command::Query(q) => q.name(),
             Command::Admin(a) => a.name(),
             Command::Utility(u) => u.name(),
+            Command::Config(_) => "config",
             Command::Script(_) => "script",
             Command::Help(_) => "help",
             Command::Exit => "exit",
@@ -504,6 +528,19 @@ impl UtilityCommand {
             UtilityCommand::HostInfo => "hostInfo",
             UtilityCommand::ConnectionStatus => "connectionStatus",
             UtilityCommand::Version => "version",
+        }
+    }
+}
+
+impl ConfigCommand {
+    /// Get command name
+    pub fn name(&self) -> &str {
+        match self {
+            ConfigCommand::SetFormat(_) => "setFormat",
+            ConfigCommand::GetFormat => "getFormat",
+            ConfigCommand::SetColor(_) => "setColor",
+            ConfigCommand::GetColor => "getColor",
+            ConfigCommand::ShowConfig => "config",
         }
     }
 }

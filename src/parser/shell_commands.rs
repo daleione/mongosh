@@ -9,7 +9,7 @@
 //! These commands don't use JavaScript syntax, so they're parsed with simple string matching.
 
 use crate::error::{ParseError, Result};
-use crate::parser::command::{AdminCommand, Command};
+use crate::parser::command::{AdminCommand, Command, ConfigCommand};
 
 /// Parser for shell-specific commands
 pub struct ShellCommandParser;
@@ -20,6 +20,11 @@ impl ShellCommandParser {
         input.starts_with("show ")
             || input.starts_with("use ")
             || input.starts_with("help")
+            || input.starts_with("config")
+            || input == "format"
+            || input.starts_with("format ")
+            || input == "color"
+            || input.starts_with("color ")
             || matches!(input, "exit" | "quit")
     }
 
@@ -45,6 +50,14 @@ impl ShellCommandParser {
         // Use command
         if trimmed.starts_with("use ") {
             return Self::parse_use(trimmed);
+        }
+
+        // Config commands
+        if trimmed.starts_with("config")
+            || trimmed.starts_with("format")
+            || trimmed.starts_with("color")
+        {
+            return Self::parse_config(trimmed);
         }
 
         Err(ParseError::InvalidCommand(format!("Unknown shell command: {}", input)).into())
@@ -110,6 +123,48 @@ impl ShellCommandParser {
         )))
     }
 
+    /// Parse config commands (format, color, config)
+    fn parse_config(input: &str) -> Result<Command> {
+        let trimmed = input.trim();
+
+        // Handle "format" command
+        if trimmed.starts_with("format") {
+            let rest = trimmed.strip_prefix("format").unwrap().trim();
+            if rest.is_empty() {
+                return Ok(Command::Config(ConfigCommand::GetFormat));
+            }
+            return Ok(Command::Config(ConfigCommand::SetFormat(rest.to_string())));
+        }
+
+        // Handle "color" command
+        if trimmed.starts_with("color") {
+            let rest = trimmed.strip_prefix("color").unwrap().trim();
+            if rest.is_empty() {
+                return Ok(Command::Config(ConfigCommand::GetColor));
+            }
+
+            let enabled = match rest {
+                "on" | "true" | "yes" | "1" => true,
+                "off" | "false" | "no" | "0" => false,
+                _ => {
+                    return Err(ParseError::InvalidCommand(format!(
+                        "Invalid color value: '{}'. Use 'on' or 'off'",
+                        rest
+                    ))
+                    .into());
+                }
+            };
+            return Ok(Command::Config(ConfigCommand::SetColor(enabled)));
+        }
+
+        // Handle "config" command (show all settings)
+        if trimmed == "config" {
+            return Ok(Command::Config(ConfigCommand::ShowConfig));
+        }
+
+        Err(ParseError::InvalidCommand(format!("Unknown config command: {}", input)).into())
+    }
+
     /// Validate database name
     fn is_valid_db_name(name: &str) -> bool {
         // MongoDB database name restrictions:
@@ -151,6 +206,10 @@ mod tests {
         assert!(ShellCommandParser::is_shell_command("help"));
         assert!(ShellCommandParser::is_shell_command("exit"));
         assert!(ShellCommandParser::is_shell_command("quit"));
+        assert!(ShellCommandParser::is_shell_command("format"));
+        assert!(ShellCommandParser::is_shell_command("format json"));
+        assert!(ShellCommandParser::is_shell_command("color on"));
+        assert!(ShellCommandParser::is_shell_command("config"));
         assert!(!ShellCommandParser::is_shell_command("db.users.find()"));
         assert!(!ShellCommandParser::is_shell_command("print('hello')"));
     }
@@ -216,11 +275,48 @@ mod tests {
     #[test]
     fn test_parse_use_database() {
         let result = ShellCommandParser::parse("use mydb").unwrap();
-        if let Command::Admin(AdminCommand::UseDatabase(name)) = result {
-            assert_eq!(name, "mydb");
+        if let Command::Admin(AdminCommand::UseDatabase(db)) = result {
+            assert_eq!(db, "mydb");
         } else {
             panic!("Expected UseDatabase command");
         }
+    }
+
+    #[test]
+    fn test_parse_config_format() {
+        let result = ShellCommandParser::parse("format").unwrap();
+        assert!(matches!(result, Command::Config(ConfigCommand::GetFormat)));
+
+        let result = ShellCommandParser::parse("format json").unwrap();
+        if let Command::Config(ConfigCommand::SetFormat(fmt)) = result {
+            assert_eq!(fmt, "json");
+        } else {
+            panic!("Expected SetFormat command");
+        }
+    }
+
+    #[test]
+    fn test_parse_config_color() {
+        let result = ShellCommandParser::parse("color").unwrap();
+        assert!(matches!(result, Command::Config(ConfigCommand::GetColor)));
+
+        let result = ShellCommandParser::parse("color on").unwrap();
+        assert!(matches!(
+            result,
+            Command::Config(ConfigCommand::SetColor(true))
+        ));
+
+        let result = ShellCommandParser::parse("color off").unwrap();
+        assert!(matches!(
+            result,
+            Command::Config(ConfigCommand::SetColor(false))
+        ));
+    }
+
+    #[test]
+    fn test_parse_config_show() {
+        let result = ShellCommandParser::parse("config").unwrap();
+        assert!(matches!(result, Command::Config(ConfigCommand::ShowConfig)));
     }
 
     #[test]

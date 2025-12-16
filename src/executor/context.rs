@@ -19,7 +19,7 @@ pub struct ExecutionContext {
     connection: Arc<RwLock<ConnectionManager>>,
 
     /// Shared state with REPL
-    shared_state: SharedState,
+    pub(crate) shared_state: SharedState,
 
     /// Command execution history
     history: Arc<RwLock<Vec<String>>>,
