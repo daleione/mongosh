@@ -324,7 +324,7 @@ impl ConnectionManager {
 
                     // Exponential backoff with jitter
                     let delay_ms =
-                        std::cmp::min(base_delay_ms * 2_u64.pow(attempt as u32 - 1), max_delay_ms);
+                        std::cmp::min(base_delay_ms * 2_u64.pow(attempt - 1), max_delay_ms);
 
                     warn!(
                         "Connection attempt {} failed: {}. Retrying in {}ms",
@@ -427,13 +427,12 @@ impl ConnectionManager {
     /// * `String` - Sanitized URI
     fn sanitize_uri(&self, uri: &str) -> String {
         // Simple sanitization: hide everything between :// and @
-        if let Some(proto_end) = uri.find("://") {
-            if let Some(host_start) = uri.find('@') {
+        if let Some(proto_end) = uri.find("://")
+            && let Some(host_start) = uri.find('@') {
                 let proto = &uri[..proto_end + 3];
                 let host = &uri[host_start..];
                 return format!("{}***{}", proto, host);
             }
-        }
         // If no credentials, return as-is (or just scheme if paranoid)
         if uri.contains('@') {
             "mongodb://***".to_string()

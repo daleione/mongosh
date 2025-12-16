@@ -478,7 +478,7 @@ impl ReplEngine {
     fn is_complete_statement(&self, input: &str) -> bool {
         self.editor
             .helper()
-            .map_or(true, |h| h.is_complete_statement(input))
+            .is_none_or(|h| h.is_complete_statement(input))
     }
 }
 

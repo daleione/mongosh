@@ -149,7 +149,7 @@ impl ShellFormatter {
             }
             Bson::Null => {
                 if self.use_colors {
-                    format!("\x1b[90mnull\x1b[0m")
+                    "\x1b[90mnull\x1b[0m".to_string()
                 } else {
                     "null".to_string()
                 }

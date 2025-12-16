@@ -50,11 +50,10 @@ impl StatsFormatter {
             ));
         }
 
-        if self.show_count {
-            if let Some(count) = result.stats.documents_affected {
+        if self.show_count
+            && let Some(count) = result.stats.documents_affected {
                 parts.push(format!("Documents affected: {}", count));
             }
-        }
 
         if parts.is_empty() {
             String::new()
@@ -67,7 +66,7 @@ impl StatsFormatter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::executor::{ExecutionStats, ResultData};
+    use crate::executor::{ExecutionResult, ExecutionStats, ResultData};
 
     #[test]
     fn test_stats_formatter() {

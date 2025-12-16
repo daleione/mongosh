@@ -351,11 +351,10 @@ impl CliInterface {
         }
 
         // Then try to extract from URI if provided
-        if let Some(uri) = &self.args.uri {
-            if let Some(db) = extract_database_from_uri(uri) {
+        if let Some(uri) = &self.args.uri
+            && let Some(db) = extract_database_from_uri(uri) {
                 return db;
             }
-        }
 
         // Finally, fall back to default
         "test".to_string()
@@ -407,7 +406,7 @@ impl CliInterface {
     ///
     /// # Arguments
     /// * `config` - Configuration to modify
-    fn apply_args_to_config(config: &mut Config, args: &CliArgs) {
+    fn apply_args_to_config(_config: &mut Config, _args: &CliArgs) {
         todo!("Apply CLI arguments to override config values")
     }
 
@@ -454,7 +453,7 @@ impl CliInterface {
     ///
     /// # Returns
     /// * `Result<()>` - Success or error
-    fn generate_completion(&self, shell: &str) -> Result<()> {
+    fn generate_completion(&self, _shell: &str) -> Result<()> {
         todo!("Generate shell completion script for specified shell")
     }
 

@@ -230,11 +230,10 @@ pub mod fs {
     /// # Returns
     /// * `PathBuf` - Expanded path
     pub fn expand_home(path: &str) -> PathBuf {
-        if path.starts_with("~/") {
-            if let Some(home) = dirs::home_dir() {
+        if path.starts_with("~/")
+            && let Some(home) = dirs::home_dir() {
                 return home.join(&path[2..]);
             }
-        }
         PathBuf::from(path)
     }
 }

@@ -46,7 +46,7 @@ impl TableFormatter {
     pub fn format(&self, data: &ResultData) -> Result<String> {
         match data {
             ResultData::Documents(docs) => self.format_documents(docs),
-            ResultData::Document(doc) => self.format_documents(&vec![doc.clone()]),
+            ResultData::Document(doc) => self.format_documents(&[doc.clone()]),
             ResultData::Message(msg) => Ok(msg.clone()),
             _ => Ok(format!("{:?}", data)),
         }
@@ -59,7 +59,7 @@ impl TableFormatter {
     ///
     /// # Returns
     /// * `Result<String>` - Table string
-    fn format_documents(&self, docs: &[Document]) -> Result<String> {
+    fn format_documents(&self, _docs: &[Document]) -> Result<String> {
         todo!("Format documents as ASCII table with columns for each field")
     }
 
@@ -70,7 +70,7 @@ impl TableFormatter {
     ///
     /// # Returns
     /// * `Vec<String>` - Unique field names
-    fn get_field_names(&self, docs: &[Document]) -> Vec<String> {
+    fn get_field_names(&self, _docs: &[Document]) -> Vec<String> {
         todo!("Extract all unique field names across all documents")
     }
 
@@ -81,7 +81,7 @@ impl TableFormatter {
     ///
     /// # Returns
     /// * `String` - Header row
-    fn format_header(&self, fields: &[String]) -> String {
+    fn format_header(&self, _fields: &[String]) -> String {
         todo!("Format table header with field names")
     }
 
@@ -93,7 +93,7 @@ impl TableFormatter {
     ///
     /// # Returns
     /// * `String` - Table row
-    fn format_row(&self, doc: &Document, fields: &[String]) -> String {
+    fn format_row(&self, _doc: &Document, _fields: &[String]) -> String {
         todo!("Format single document as table row")
     }
 }

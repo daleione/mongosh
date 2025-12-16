@@ -116,15 +116,14 @@ impl DbOperationParser {
         call: &'a CallExpression<'a>,
     ) -> Result<Option<(Command, Vec<ChainMethod<'a>>)>> {
         // Check if the callee is itself a CallExpression (indicating a chain)
-        if let Expression::StaticMemberExpression(member) = &call.callee {
-            if let Expression::CallExpression(base_call) = &member.object {
+        if let Expression::StaticMemberExpression(member) = &call.callee
+            && let Expression::CallExpression(_base_call) = &member.object {
                 // This is a chained call!
                 // Recursively parse the base call and collect chain methods
                 let mut chain_methods = Vec::new();
                 let base_cmd = Self::collect_chain_methods(call, &mut chain_methods)?;
                 return Ok(Some((base_cmd, chain_methods)));
             }
-        }
         Ok(None)
     }
 
@@ -237,9 +236,7 @@ impl DbOperationParser {
                     options,
                 })
             }
-            _ => Err(ParseError::InvalidCommand(format!(
-                "Chained methods not supported for this operation"
-            ))
+            _ => Err(ParseError::InvalidCommand("Chained methods not supported for this operation".to_string())
             .into()),
         }
     }
@@ -251,8 +248,8 @@ impl DbOperationParser {
     ) -> Result<()> {
         match method.name.as_str() {
             "limit" => {
-                if let Some(arg) = method.args.first() {
-                    if let Some(expr) = arg.as_expression() {
+                if let Some(arg) = method.args.first()
+                    && let Some(expr) = arg.as_expression() {
                         if let Expression::NumericLiteral(n) = expr {
                             options.limit = Some(n.value as i64);
                         } else {
@@ -262,11 +259,10 @@ impl DbOperationParser {
                             .into());
                         }
                     }
-                }
             }
             "skip" => {
-                if let Some(arg) = method.args.first() {
-                    if let Some(expr) = arg.as_expression() {
+                if let Some(arg) = method.args.first()
+                    && let Some(expr) = arg.as_expression() {
                         if let Expression::NumericLiteral(n) = expr {
                             options.skip = Some(n.value as u64);
                         } else {
@@ -276,11 +272,10 @@ impl DbOperationParser {
                             .into());
                         }
                     }
-                }
             }
             "sort" => {
-                if let Some(arg) = method.args.first() {
-                    if let Some(expr) = arg.as_expression() {
+                if let Some(arg) = method.args.first()
+                    && let Some(expr) = arg.as_expression() {
                         let bson = ExpressionConverter::expr_to_bson(expr)?;
                         if let mongodb::bson::Bson::Document(doc) = bson {
                             options.sort = Some(doc);
@@ -291,11 +286,10 @@ impl DbOperationParser {
                             .into());
                         }
                     }
-                }
             }
             "projection" => {
-                if let Some(arg) = method.args.first() {
-                    if let Some(expr) = arg.as_expression() {
+                if let Some(arg) = method.args.first()
+                    && let Some(expr) = arg.as_expression() {
                         let bson = ExpressionConverter::expr_to_bson(expr)?;
                         if let mongodb::bson::Bson::Document(doc) = bson {
                             options.projection = Some(doc);
@@ -306,11 +300,10 @@ impl DbOperationParser {
                             .into());
                         }
                     }
-                }
             }
             "batchSize" => {
-                if let Some(arg) = method.args.first() {
-                    if let Some(expr) = arg.as_expression() {
+                if let Some(arg) = method.args.first()
+                    && let Some(expr) = arg.as_expression() {
                         if let Expression::NumericLiteral(n) = expr {
                             options.batch_size = Some(n.value as u32);
                         } else {
@@ -320,7 +313,6 @@ impl DbOperationParser {
                             .into());
                         }
                     }
-                }
             }
             _ => {
                 return Err(ParseError::InvalidCommand(format!(
@@ -343,8 +335,8 @@ impl DbOperationParser {
                 options.allow_disk_use = true;
             }
             "batchSize" => {
-                if let Some(arg) = method.args.first() {
-                    if let Some(expr) = arg.as_expression() {
+                if let Some(arg) = method.args.first()
+                    && let Some(expr) = arg.as_expression() {
                         if let Expression::NumericLiteral(n) = expr {
                             options.batch_size = Some(n.value as u32);
                         } else {
@@ -354,7 +346,6 @@ impl DbOperationParser {
                             .into());
                         }
                     }
-                }
             }
             _ => {
                 return Err(ParseError::InvalidCommand(format!(
@@ -379,11 +370,10 @@ impl DbOperationParser {
                 let collection = inner_member.property.name.to_string();
 
                 // The inner object should be 'db'
-                if let Expression::Identifier(id) = &inner_member.object {
-                    if id.name == "db" {
+                if let Expression::Identifier(id) = &inner_member.object
+                    && id.name == "db" {
                         return Ok((collection, operation));
                     }
-                }
             }
         } else if let Expression::ComputedMemberExpression(member) = callee {
             // Handle db["collection"]["operation"] or db.collection["operation"]
@@ -413,11 +403,10 @@ impl DbOperationParser {
         // Check if object is db.collection
         if let Expression::StaticMemberExpression(inner) = &member.object {
             let collection = inner.property.name.to_string();
-            if let Expression::Identifier(id) = &inner.object {
-                if id.name == "db" {
+            if let Expression::Identifier(id) = &inner.object
+                && id.name == "db" {
                     return Ok((collection, operation));
                 }
-            }
         }
 
         Err(ParseError::InvalidCommand(

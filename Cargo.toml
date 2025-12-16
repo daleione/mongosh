@@ -1,8 +1,8 @@
 [package]
 name = "mongosh"
 version = "0.2.1"
-edition = "2021"
-rust-version = "1.70"
+edition = "2024"
+rust-version = "1.91"
 authors = ["guoyunlei"]
 description = "A high-performance MongoDB Shell implementation in Rust"
 license = "MIT"

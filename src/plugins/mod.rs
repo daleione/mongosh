@@ -92,7 +92,7 @@ pub trait Plugin: Send + Sync {
     ///
     /// # Returns
     /// * `Result<()>` - Success or error
-    fn configure(&mut self, config: HashMap<String, String>) -> Result<()> {
+    fn configure(&mut self, _config: HashMap<String, String>) -> Result<()> {
         // Default implementation ignores configuration
         Ok(())
     }
@@ -216,7 +216,7 @@ impl PluginManager {
     ///
     /// # Returns
     /// * `Result<()>` - Success or error
-    pub async fn load_plugin<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
+    pub async fn load_plugin<P: AsRef<Path>>(&mut self, _path: P) -> Result<()> {
         todo!("Load plugin from dynamic library file")
     }
 
@@ -298,7 +298,7 @@ impl PluginManager {
     ///
     /// # Returns
     /// * `Result<()>` - Success or error
-    pub async fn load_enabled_plugins(&mut self, client: Client) -> Result<()> {
+    pub async fn load_enabled_plugins(&mut self, _client: Client) -> Result<()> {
         todo!("Discover and load all enabled plugins from directory")
     }
 
@@ -516,7 +516,7 @@ impl PluginLoader {
     ///
     /// # Returns
     /// * `Result<Box<dyn Plugin>>` - Loaded plugin or error
-    pub fn load_from_file<P: AsRef<Path>>(&self, path: P) -> Result<Box<dyn Plugin>> {
+    pub fn load_from_file<P: AsRef<Path>>(&self, _path: P) -> Result<Box<dyn Plugin>> {
         todo!("Load plugin from dynamic library")
     }
 
@@ -527,7 +527,7 @@ impl PluginLoader {
     ///
     /// # Returns
     /// * `Result<bool>` - True if valid
-    pub fn validate_plugin<P: AsRef<Path>>(&self, path: P) -> Result<bool> {
+    pub fn validate_plugin<P: AsRef<Path>>(&self, _path: P) -> Result<bool> {
         todo!("Validate plugin file format and signature")
     }
 }

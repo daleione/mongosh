@@ -59,6 +59,7 @@ pub enum ResultData {
 
 /// Execution statistics
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct ExecutionStats {
     /// Execution time in milliseconds
     pub execution_time_ms: u64,
@@ -70,15 +71,6 @@ pub struct ExecutionStats {
     pub documents_affected: Option<u64>,
 }
 
-impl Default for ExecutionStats {
-    fn default() -> Self {
-        Self {
-            execution_time_ms: 0,
-            documents_returned: 0,
-            documents_affected: None,
-        }
-    }
-}
 
 impl ExecutionResult {
     /// Create a successful result

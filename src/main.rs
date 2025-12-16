@@ -27,9 +27,7 @@
 //! mongosh --eval "db.users.find()"
 //! ```
 
-use tokio;
 use tracing::{info, Level};
-use tracing_subscriber;
 
 mod cli;
 mod config;
@@ -127,7 +125,7 @@ async fn run_interactive_mode(cli: &CliInterface) -> Result<()> {
     // Create and configure formatter
     let format = cli.config().display.format;
     let use_colors = cli.config().display.color_output && !cli.args().no_color;
-    let formatter = Formatter::new(format, use_colors);
+    let _formatter = Formatter::new(format, use_colors);
 
     // Create REPL engine with shared state
     let color_enabled = cli.config().display.color_output && !cli.args().no_color;
@@ -184,7 +182,7 @@ async fn run_interactive_mode(cli: &CliInterface) -> Result<()> {
                     // Update formatter with current settings from shared_state
                     let current_format = shared_state.get_format();
                     let current_color = shared_state.get_color_enabled();
-                    let mut current_formatter = Formatter::new(current_format, current_color);
+                    let current_formatter = Formatter::new(current_format, current_color);
 
                     // Format and display result
                     match current_formatter.format(&result) {

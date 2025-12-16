@@ -19,6 +19,7 @@ use crate::error::Result;
 
 /// Main configuration structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct Config {
     /// Connection configuration
     pub connection: ConnectionConfig,
@@ -271,17 +272,6 @@ fn default_plugin_directory() -> PathBuf {
         .join("plugins")
 }
 
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            connection: ConnectionConfig::default(),
-            display: DisplayConfig::default(),
-            history: HistoryConfig::default(),
-            logging: LoggingConfig::default(),
-            plugins: PluginConfig::default(),
-        }
-    }
-}
 
 impl Default for ConnectionConfig {
     fn default() -> Self {
@@ -351,7 +341,7 @@ impl Config {
     ///
     /// # Returns
     /// * `Result<Config>` - Loaded configuration or error
-    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
+    pub fn from_file<P: AsRef<Path>>(_path: P) -> Result<Self> {
         todo!("Load configuration from TOML file")
     }
 
@@ -392,7 +382,7 @@ impl Config {
     ///
     /// # Returns
     /// * `Result<()>` - Success or error
-    pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+    pub fn save<P: AsRef<Path>>(&self, _path: P) -> Result<()> {
         todo!("Save configuration to TOML file")
     }
 
@@ -403,7 +393,7 @@ impl Config {
     ///
     /// # Returns
     /// * `Config` - Merged configuration
-    pub fn merge(&self, other: &Config) -> Config {
+    pub fn merge(&self, _other: &Config) -> Config {
         todo!("Merge two configurations with proper precedence")
     }
 

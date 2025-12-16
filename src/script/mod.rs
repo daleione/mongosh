@@ -112,7 +112,7 @@ impl ScriptExecutor {
     ///
     /// # Returns
     /// * `Result<ScriptResult>` - Execution result or error
-    pub async fn execute_string(&self, script: &str) -> Result<ScriptResult> {
+    pub async fn execute_string(&self, _script: &str) -> Result<ScriptResult> {
         todo!("Execute JavaScript code with MongoDB context")
     }
 
@@ -182,7 +182,7 @@ impl ScriptExecutor {
     ///
     /// # Returns
     /// * `Result<ScriptResult>` - Execution result or timeout error
-    async fn execute_with_timeout(&self, script: &str) -> Result<ScriptResult> {
+    async fn execute_with_timeout(&self, _script: &str) -> Result<ScriptResult> {
         todo!("Execute script with timeout handling")
     }
 }
@@ -458,7 +458,7 @@ impl ScriptRuntime {
     ///
     /// # Returns
     /// * `Result<ScriptResult>` - Execution result or error
-    pub async fn execute(&mut self, code: &str) -> Result<ScriptResult> {
+    pub async fn execute(&mut self, _code: &str) -> Result<ScriptResult> {
         todo!("Execute JavaScript code in runtime")
     }
 

@@ -66,7 +66,7 @@ mod utility;
 
 // Re-export public types
 pub use context::ExecutionContext;
-pub use result::{ExecutionResult, ResultData};
+pub use result::{ExecutionResult, ExecutionStats, ResultData};
 pub use router::CommandRouter;
 
 // Re-export for convenience
