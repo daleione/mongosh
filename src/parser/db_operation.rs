@@ -503,12 +503,191 @@ impl DbOperationParser {
         }
     }
 
+    /// Parse FindAndModifyOptions from a BSON document
+    fn parse_find_and_modify_options(doc: &Document) -> FindAndModifyOptions {
+        let mut options = FindAndModifyOptions::default();
+
+        if let Ok(projection) = doc.get_document("projection") {
+            options.projection = Some(projection.clone());
+        }
+
+        if let Ok(sort) = doc.get_document("sort") {
+            options.sort = Some(sort.clone());
+        }
+
+        if let Ok(upsert) = doc.get_bool("upsert") {
+            options.upsert = upsert;
+        }
+
+        if let Ok(return_new) = doc.get_bool("returnDocument") {
+            options.return_new = return_new;
+        } else if let Ok(return_new) = doc.get_bool("returnNew") {
+            options.return_new = return_new;
+        } else if let Ok(return_new) = doc.get_bool("new") {
+            options.return_new = return_new;
+        }
+
+        if let Ok(collation) = doc.get_document("collation") {
+            options.collation = Some(collation.clone());
+        }
+
+        if let Ok(max_time) = doc.get_i64("maxTimeMS") {
+            if max_time > 0 {
+                options.max_time_ms = Some(max_time as u64);
+            }
+        }
+
+        if let Ok(hint) = doc.get_document("hint") {
+            options.hint = Some(hint.clone());
+        }
+
+        if let Ok(array_filters) = doc.get_array("arrayFilters") {
+            let mut filters = Vec::new();
+            for filter in array_filters {
+                if let mongodb::bson::Bson::Document(doc) = filter {
+                    filters.push(doc.clone());
+                }
+            }
+            if !filters.is_empty() {
+                options.array_filters = Some(filters);
+            }
+        }
+
+        options
+    }
+
+    /// Get UpdateOptions from arguments at specified index
+    fn get_update_options(args: &[Argument], index: usize) -> Result<UpdateOptions> {
+        if args.len() > index {
+            let doc = Self::get_doc_arg(args, index)?;
+            if !doc.is_empty() {
+                return Ok(Self::parse_update_options(&doc));
+            }
+        }
+        Ok(UpdateOptions::default())
+    }
+
+    /// Get FindAndModifyOptions from arguments at specified index
+    fn get_find_and_modify_options(
+        args: &[Argument],
+        index: usize,
+    ) -> Result<FindAndModifyOptions> {
+        if args.len() > index {
+            let doc = Self::get_doc_arg(args, index)?;
+            if !doc.is_empty() {
+                return Ok(Self::parse_find_and_modify_options(&doc));
+            }
+        }
+        Ok(FindAndModifyOptions::default())
+    }
+
+    /// Get AggregateOptions from arguments at specified index
+    fn get_aggregate_options(args: &[Argument], index: usize) -> Result<AggregateOptions> {
+        if args.len() > index {
+            let doc = Self::get_doc_arg(args, index)?;
+            if !doc.is_empty() {
+                return Ok(Self::parse_aggregate_options(&doc));
+            }
+        }
+        Ok(AggregateOptions::default())
+    }
+
+    /// Get projection from arguments at specified index
+    fn get_projection(args: &[Argument], index: usize) -> Result<Option<Document>> {
+        if args.len() > index {
+            let doc = Self::get_doc_arg(args, index)?;
+            if !doc.is_empty() {
+                return Ok(Some(doc));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Parse UpdateOptions from a BSON document
+    fn parse_update_options(doc: &Document) -> UpdateOptions {
+        let mut options = UpdateOptions::default();
+
+        if let Ok(upsert) = doc.get_bool("upsert") {
+            options.upsert = upsert;
+        }
+
+        if let Ok(array_filters) = doc.get_array("arrayFilters") {
+            let mut filters = Vec::new();
+            for filter in array_filters {
+                if let mongodb::bson::Bson::Document(doc) = filter {
+                    filters.push(doc.clone());
+                }
+            }
+            if !filters.is_empty() {
+                options.array_filters = Some(filters);
+            }
+        }
+
+        if let Ok(collation) = doc.get_document("collation") {
+            options.collation = Some(collation.clone());
+        }
+
+        if let Ok(hint) = doc.get_document("hint") {
+            options.hint = Some(hint.clone());
+        }
+
+        if let Ok(write_concern) = doc.get_document("writeConcern") {
+            options.write_concern = Some(write_concern.clone());
+        }
+
+        options
+    }
+
+    /// Parse AggregateOptions from a BSON document
+    fn parse_aggregate_options(doc: &Document) -> AggregateOptions {
+        let mut options = AggregateOptions::default();
+
+        if let Ok(allow_disk_use) = doc.get_bool("allowDiskUse") {
+            options.allow_disk_use = allow_disk_use;
+        }
+
+        if let Ok(batch_size) = doc.get_i32("batchSize") {
+            if batch_size > 0 {
+                options.batch_size = Some(batch_size as u32);
+            }
+        }
+
+        if let Ok(max_time) = doc.get_i64("maxTimeMS") {
+            if max_time > 0 {
+                options.max_time_ms = Some(max_time as u64);
+            }
+        }
+
+        if let Ok(collation) = doc.get_document("collation") {
+            options.collation = Some(collation.clone());
+        }
+
+        if let Ok(hint) = doc.get_document("hint") {
+            options.hint = Some(hint.clone());
+        }
+
+        if let Ok(read_concern) = doc.get_document("readConcern") {
+            options.read_concern = Some(read_concern.clone());
+        }
+
+        if let Ok(let_vars) = doc.get_document("let") {
+            options.let_vars = Some(let_vars.clone());
+        }
+
+        options
+    }
+
     // === CRUD Operation Parsers ===
 
-    /// Parse find operation: db.collection.find(filter, options)
+    /// Parse find operation: db.collection.find(filter, projection)
     fn parse_find(collection: &str, args: &[Argument]) -> Result<Command> {
         let filter = Self::get_doc_arg(args, 0)?;
-        let options = FindOptions::default(); // TODO: parse options from second arg
+        let projection = Self::get_projection(args, 1)?;
+
+        let options = FindOptions {
+            projection,
+            ..Default::default()
+        };
 
         Ok(Command::Query(QueryCommand::Find {
             collection: collection.to_string(),
@@ -517,10 +696,15 @@ impl DbOperationParser {
         }))
     }
 
-    /// Parse findOne operation: db.collection.findOne(filter, options)
+    /// Parse findOne operation: db.collection.findOne(filter, projection)
     fn parse_find_one(collection: &str, args: &[Argument]) -> Result<Command> {
         let filter = Self::get_doc_arg(args, 0)?;
-        let options = FindOptions::default();
+        let projection = Self::get_projection(args, 1)?;
+
+        let options = FindOptions {
+            projection,
+            ..Default::default()
+        };
 
         Ok(Command::Query(QueryCommand::FindOne {
             collection: collection.to_string(),
@@ -567,7 +751,7 @@ impl DbOperationParser {
     fn parse_update_one(collection: &str, args: &[Argument]) -> Result<Command> {
         let filter = Self::get_doc_arg(args, 0)?;
         let update = Self::get_doc_arg(args, 1)?;
-        let options = UpdateOptions::default();
+        let options = Self::get_update_options(args, 2)?;
 
         Ok(Command::Query(QueryCommand::UpdateOne {
             collection: collection.to_string(),
@@ -581,7 +765,7 @@ impl DbOperationParser {
     fn parse_update_many(collection: &str, args: &[Argument]) -> Result<Command> {
         let filter = Self::get_doc_arg(args, 0)?;
         let update = Self::get_doc_arg(args, 1)?;
-        let options = UpdateOptions::default();
+        let options = Self::get_update_options(args, 2)?;
 
         Ok(Command::Query(QueryCommand::UpdateMany {
             collection: collection.to_string(),
@@ -595,7 +779,7 @@ impl DbOperationParser {
     fn parse_replace_one(collection: &str, args: &[Argument]) -> Result<Command> {
         let filter = Self::get_doc_arg(args, 0)?;
         let replacement = Self::get_doc_arg(args, 1)?;
-        let options = UpdateOptions::default();
+        let options = Self::get_update_options(args, 2)?;
 
         Ok(Command::Query(QueryCommand::ReplaceOne {
             collection: collection.to_string(),
@@ -628,7 +812,7 @@ impl DbOperationParser {
     /// Parse aggregate operation: db.collection.aggregate(pipeline, options)
     fn parse_aggregate(collection: &str, args: &[Argument]) -> Result<Command> {
         let pipeline = Self::get_doc_array_arg(args, 0)?;
-        let options = AggregateOptions::default();
+        let options = Self::get_aggregate_options(args, 1)?;
 
         Ok(Command::Query(QueryCommand::Aggregate {
             collection: collection.to_string(),
@@ -654,10 +838,10 @@ impl DbOperationParser {
         }))
     }
 
-    /// Parse findOneAndDelete operation
+    /// Parse findOneAndDelete operation: db.collection.findOneAndDelete(filter, options)
     fn parse_find_one_and_delete(collection: &str, args: &[Argument]) -> Result<Command> {
         let filter = Self::get_doc_arg(args, 0)?;
-        let options = FindAndModifyOptions::default();
+        let options = Self::get_find_and_modify_options(args, 1)?;
 
         Ok(Command::Query(QueryCommand::FindOneAndDelete {
             collection: collection.to_string(),
@@ -666,11 +850,11 @@ impl DbOperationParser {
         }))
     }
 
-    /// Parse findOneAndUpdate operation
+    /// Parse findOneAndUpdate operation: db.collection.findOneAndUpdate(filter, update, options)
     fn parse_find_one_and_update(collection: &str, args: &[Argument]) -> Result<Command> {
         let filter = Self::get_doc_arg(args, 0)?;
         let update = Self::get_doc_arg(args, 1)?;
-        let options = FindAndModifyOptions::default();
+        let options = Self::get_find_and_modify_options(args, 2)?;
 
         Ok(Command::Query(QueryCommand::FindOneAndUpdate {
             collection: collection.to_string(),
@@ -680,11 +864,11 @@ impl DbOperationParser {
         }))
     }
 
-    /// Parse findOneAndReplace operation
+    /// Parse findOneAndReplace operation: db.collection.findOneAndReplace(filter, replacement, options)
     fn parse_find_one_and_replace(collection: &str, args: &[Argument]) -> Result<Command> {
         let filter = Self::get_doc_arg(args, 0)?;
         let replacement = Self::get_doc_arg(args, 1)?;
-        let options = FindAndModifyOptions::default();
+        let options = Self::get_find_and_modify_options(args, 2)?;
 
         Ok(Command::Query(QueryCommand::FindOneAndReplace {
             collection: collection.to_string(),
