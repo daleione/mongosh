@@ -7,6 +7,20 @@ All notable changes to this project will be documented in this file.
 ### Added
 
 - **Runtime configuration commands** - `format`, `color`, and `config` commands for changing output settings in REPL
+- **Table formatter** - New table output format using tabled crate for MongoDB documents
+- **Configurable JSON indentation** - Customizable indentation levels for JSON output
+- **`count()` alias** - Added as alias for `countDocuments()` for convenience
+
+### Changed
+
+- **Rust edition updated to 2024**
+- Refactored CLI argument handling into separate method for better code organization
+- Refactored colorizer and shell formatter for BSON types
+- Enforced minimum server selection timeout and direct connection for single hosts
+
+### Removed
+
+- Script mod removed from codebase
 
 ## [0.2.1] - 2025-12-16
 
