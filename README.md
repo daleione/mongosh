@@ -1,38 +1,76 @@
-# Rust MongoDB Shell
+# Rust MongoDB Power CLI
 
 [![Crates.io](https://img.shields.io/crates/v/mongosh.svg)](https://crates.io/crates/mongosh)
 [![Rust](https://img.shields.io/badge/rust-1.91%2B-orange.svg)](https://www.rust-lang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-🚀 **High-Performance MongoDB Shell Implementation in Rust**
+A power-user oriented MongoDB CLI written in Rust, focused on productivity, scripting, and rich output.
 
-A MongoDB Shell developed in Rust, designed to provide faster performance, smaller binary size, and better user experience.
+> **Note:** This project is an independent, community-driven tool. It is **NOT** affiliated with MongoDB, and it is not intended to be a drop-in replacement for the official `mongosh`.
 
-> **⚠️ DEVELOPMENT STATUS**
+---
+
+## ✨ Why Another MongoDB CLI?
+
+The official MongoDB Shell (`mongosh`) is excellent for compatibility and JavaScript workflows. This project exists for engineers who want a faster, more scriptable, and CLI-native experience:
+
+- 🧠 **Power-user workflows** — Batch queries, automation, CI/CD
+- 📊 **Readable output** — Tables, highlighted JSON
+- ⚡ **Fast startup & execution** — Compiled Rust binary
+- 🧩 **Extensible architecture** — Plugins & future extensions
+
+> If you rely heavily on JavaScript execution inside the shell, you should continue using the official `mongosh`.
+
+---
+
+## 🔍 Key Differences vs Official mongosh
+
+| Feature        | Official mongosh | This Project              |
+| -------------- | ---------------- | ------------------------- |
+| Implementation | Node.js          | Rust (async)              |
+| JS Runtime     | Full JavaScript  | ❌ Not a JS shell         |
+| Startup Time   | Slower           | Fast                      |
+| Output         | JSON-first       | Tables + highlighted JSON |
+| Scripting      | JS-based         | CLI / batch-oriented      |
+| Target Users   | General users    | Power users / DevOps      |
+
+---
+
+## 🚧 Project Status
+
+> ⚠️ **Active Development – Not Production Ready**
 >
-> This project is currently under **active development** and is **NOT production-ready**.
+> - APIs and commands may change
+> - Some MongoDB features are incomplete
+> - Bugs and panics may exist
 >
-> - 🚧 **Work in Progress**: Many features are incomplete or not yet implemented
-> - 🐛 **Expect Bugs**: You may encounter bugs, panics, or unexpected behavior
-> - 📝 **API Changes**: Commands and APIs may change without notice
-> - ✅ **Testing Welcome**: We encourage testing and feedback!
+> Feedback, testing, and contributions are highly welcome.
+
+---
 
 ## ✨ Features
 
-- 🔥 **High Performance**: Written in Rust for ultimate performance
-- 💾 **Lightweight**: Small compiled binary size
-- 🔒 **Type Safe**: Rust's type system ensures memory safety
-- ⚡ **Async Execution**: Built on Tokio async runtime
-- 🎨 **Syntax Highlighting**: Command syntax highlighting support
-- 📝 **Smart Completion**: Context-aware command auto-completion
-- 🔌 **Extensible**: Plugin system support
-- 🌍 **Cross-Platform**: Supports Linux, macOS, Windows
+- ⚡ **High Performance** — Native Rust, async I/O
+- 💾 **Lightweight** — Small static binary
+- 🔒 **Type Safety** — Memory-safe by design
+- 🧵 **Async Execution** — Powered by Tokio
+- 🎨 **Syntax Highlighting** — Readable command & JSON output
+- 🧠 **Smart Completion** — Context-aware auto-completion
+- 📊 **Rich Output** — Table & structured views (WIP)
+- 🔌 **Extensible** — Plugin-friendly design
+- 🌍 **Cross-Platform** — Linux, macOS, Windows
+
+---
 
 ## 📦 Installation
 
 ```bash
 cargo install mongosh
 ```
+
+> **Note:** The binary name may change in the future to avoid conflicts with the official MongoDB shell.
+
+---
 
 ## 🚀 Quick Start
 
@@ -49,36 +87,67 @@ mongosh mongodb://localhost:27017
 mongosh mongodb://username:password@localhost:27017/dbname
 ```
 
-### Basic Operations
+---
+
+## 🧪 Example Commands
+
+### Show Databases
 
 ```javascript
-// Show all databases
 show dbs
-
-// Switch database
-use mydb
-
-// Show all collections
-show collections
-
-// Insert document
-db.users.insertOne({ "name": "John Doe", "age": 25 })
-
-// Query documents
-db.users.find({ "age": { "$gte": 18 } })
-
-// Update document
-db.users.updateOne(
-  { "name": "John Doe" },
-  { "$set": { "age": 26 } }
-)
-
-// Delete document
-db.users.deleteOne({ "name": "John Doe" })
-
-// Aggregation query
-db.orders.aggregate([
-  { "$match": { "status": "completed" } },
-  { "$group": { "_id": "$userId", "total": { "$sum": "$amount" } } }
-])
 ```
+
+### Switch Database
+
+```javascript
+use mydb
+```
+
+### Show Collections
+
+```javascript
+show collections
+```
+
+### Insert a Document
+
+```javascript
+db.users.insertOne({ name: "John Doe", age: 25 });
+```
+
+### Query Documents
+
+```javascript
+db.users.find({ age: { $gte: 18 } });
+```
+
+### Update Documents
+
+```javascript
+db.users.updateOne({ name: "John Doe" }, { $set: { age: 26 } });
+```
+
+### Aggregation Pipeline
+
+```javascript
+db.orders.aggregate([
+  { $match: { status: "completed" } },
+  { $group: { _id: "$userId", total: { $sum: "$amount" } } },
+]);
+```
+
+---
+
+## 📄 License
+
+Licensed under the [MIT License](https://opensource.org/licenses/MIT).
+
+---
+
+## 🤝 Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## 📬 Feedback
+
+If you have any questions, suggestions, or issues, please open an issue on GitHub.
