@@ -260,9 +260,11 @@ impl ConnectionManager {
         options.max_pool_size = Some(self.config.max_pool_size);
         options.min_pool_size = Some(self.config.min_pool_size);
 
-        // Set timeouts
+        // Set timeouts from configuration
         options.connect_timeout = Some(Duration::from_secs(self.config.timeout));
-        options.server_selection_timeout = Some(Duration::from_secs(self.config.timeout));
+        // Use a reasonable minimum for server selection timeout to handle secondary-only scenarios
+        let server_selection_timeout = std::cmp::max(self.config.timeout, 30);
+        options.server_selection_timeout = Some(Duration::from_secs(server_selection_timeout));
 
         // Set application name for tracking
         if options.app_name.is_none() {
@@ -276,9 +278,21 @@ impl ConnectionManager {
         // Preserve readPreference from URI - don't override if already set
         // This allows secondary reads when connecting to replica sets
 
+        // For direct connections to a single host (not using SRV), enable direct connection
+        // This prevents the driver from trying to discover other replica set members
+        // Check the parsed hosts list instead of parsing URI string
+        if options.hosts.len() == 1 {
+            options.direct_connection = Some(true);
+            debug!("Enabled direct connection for single-host connection");
+        }
+
         debug!(
-            "Configured connection pool: max={}, min={}, readPreference={:?}",
-            self.config.max_pool_size, self.config.min_pool_size, options.selection_criteria
+            "Configured connection pool: max={}, min={}, readPreference={:?}, direct={:?}, server_selection_timeout={:?}s",
+            self.config.max_pool_size,
+            self.config.min_pool_size,
+            options.selection_criteria,
+            options.direct_connection,
+            server_selection_timeout
         );
 
         options
