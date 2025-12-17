@@ -205,25 +205,7 @@ impl CliInterface {
         let mut config = Config::default();
 
         // Apply CLI arguments to override config values
-        if let Some(format_str) = &args.format {
-            // Parse format string to OutputFormat
-            config.display.format = match format_str.to_lowercase().as_str() {
-                "shell" => OutputFormat::Shell,
-                "json" => OutputFormat::Json,
-                "json-pretty" | "jsonpretty" => OutputFormat::JsonPretty,
-                "table" => OutputFormat::Table,
-                "compact" => OutputFormat::Compact,
-                _ => {
-                    eprintln!("Warning: Unknown format '{}', using default", format_str);
-                    OutputFormat::Shell
-                }
-            };
-        }
-
-        // Apply no-color flag
-        if args.no_color {
-            config.display.color_output = false;
-        }
+        Self::apply_args_to_config(&mut config, args);
 
         Ok(config)
     }
@@ -352,9 +334,10 @@ impl CliInterface {
 
         // Then try to extract from URI if provided
         if let Some(uri) = &self.args.uri
-            && let Some(db) = extract_database_from_uri(uri) {
-                return db;
-            }
+            && let Some(db) = extract_database_from_uri(uri)
+        {
+            return db;
+        }
 
         // Finally, fall back to default
         "test".to_string()
@@ -406,8 +389,43 @@ impl CliInterface {
     ///
     /// # Arguments
     /// * `config` - Configuration to modify
-    fn apply_args_to_config(_config: &mut Config, _args: &CliArgs) {
-        todo!("Apply CLI arguments to override config values")
+    fn apply_args_to_config(config: &mut Config, args: &CliArgs) {
+        // Display configuration
+        if let Some(format_str) = &args.format {
+            // Parse format string to OutputFormat
+            config.display.format = match format_str.to_lowercase().as_str() {
+                "shell" => OutputFormat::Shell,
+                "json" => OutputFormat::Json,
+                "json-pretty" | "jsonpretty" => OutputFormat::JsonPretty,
+                "table" => OutputFormat::Table,
+                "compact" => OutputFormat::Compact,
+                _ => {
+                    eprintln!("Warning: Unknown format '{}', using default", format_str);
+                    OutputFormat::Shell
+                }
+            };
+        }
+
+        if args.no_color {
+            config.display.color_output = false;
+        }
+
+        // Logging configuration based on verbosity
+        if args.very_verbose {
+            config.logging.level = crate::config::LogLevel::Trace;
+        } else if args.verbose {
+            config.logging.level = crate::config::LogLevel::Debug;
+        } else if args.quiet {
+            config.logging.level = crate::config::LogLevel::Error;
+        }
+
+        // Connection configuration
+        if let Some(timeout) = args.timeout {
+            config.connection.timeout = timeout;
+        }
+
+        // TLS configuration would go here when TLS config is added to Config
+        // For now, these are handled separately in get_connection_uri()
     }
 
     /// Validate configuration and arguments
