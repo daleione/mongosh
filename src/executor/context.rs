@@ -106,8 +106,6 @@ impl ExecutionContext {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[tokio::test]
     async fn test_history_management() {
         // This is a placeholder test - would need proper setup with ConnectionManager

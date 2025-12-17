@@ -29,6 +29,7 @@ pub struct TableFormatter {
     max_column_width: usize,
 
     /// Maximum table width
+    #[allow(dead_code)]
     max_table_width: usize,
 
     /// Table style

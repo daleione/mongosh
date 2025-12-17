@@ -14,7 +14,6 @@
 //! - `parser`: Command and query parsing
 //! - `plugins`: Plugin system for extensibility
 //! - `repl`: Interactive REPL engine
-//! - `script`: Script execution
 //! - `utils`: Utility functions and helpers
 //!
 //! # Example
@@ -47,7 +46,6 @@ pub mod formatter;
 pub mod parser;
 pub mod plugins;
 pub mod repl;
-pub mod script;
 pub mod utils;
 
 // Re-export commonly used types

@@ -7,7 +7,7 @@
 //! - Automatic reconnection with exponential backoff
 //! - Session management for transactions
 
-use mongodb::{options::ClientOptions, Client, Database};
+use mongodb::{Client, Database, options::ClientOptions};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
@@ -428,11 +428,12 @@ impl ConnectionManager {
     fn sanitize_uri(&self, uri: &str) -> String {
         // Simple sanitization: hide everything between :// and @
         if let Some(proto_end) = uri.find("://")
-            && let Some(host_start) = uri.find('@') {
-                let proto = &uri[..proto_end + 3];
-                let host = &uri[host_start..];
-                return format!("{}***{}", proto, host);
-            }
+            && let Some(host_start) = uri.find('@')
+        {
+            let proto = &uri[..proto_end + 3];
+            let host = &uri[host_start..];
+            return format!("{}***{}", proto, host);
+        }
         // If no credentials, return as-is (or just scheme if paranoid)
         if uri.contains('@') {
             "mongodb://***".to_string()
@@ -603,12 +604,14 @@ mod tests {
         assert_eq!(sanitized, "mongodb://localhost:27017/db");
     }
 
-    // Integration tests requiring real MongoDB should be feature-gated
-    #[cfg(feature = "integration-tests")]
+    // Integration tests requiring real MongoDB should be ignored by default
+    #[cfg(test)]
+    #[allow(dead_code)]
     mod integration {
         use super::*;
 
         #[tokio::test]
+        #[ignore]
         async fn test_connect_to_mongodb() {
             let config = ConnectionConfig::default();
             let mut manager =
@@ -625,6 +628,7 @@ mod tests {
         }
 
         #[tokio::test]
+        #[ignore]
         async fn test_health_check() {
             let config = ConnectionConfig::default();
             let mut manager =

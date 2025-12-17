@@ -78,14 +78,6 @@ pub struct CliArgs {
     #[arg(long, value_name = "NAME", default_value = "admin")]
     pub auth_database: String,
 
-    /// Execute JavaScript file
-    #[arg(short = 'f', long = "file", value_name = "FILE")]
-    pub script_file: Option<PathBuf>,
-
-    /// Evaluate JavaScript expression
-    #[arg(long = "eval", value_name = "EXPR")]
-    pub eval: Option<String>,
-
     /// Configuration file path
     #[arg(short = 'c', long = "config", value_name = "FILE")]
     pub config_file: Option<PathBuf>,
@@ -343,22 +335,6 @@ impl CliInterface {
         "test".to_string()
     }
 
-    /// Check if running in interactive mode
-    ///
-    /// # Returns
-    /// * `bool` - True if interactive mode
-    pub fn is_interactive(&self) -> bool {
-        self.args.script_file.is_none() && self.args.eval.is_none()
-    }
-
-    /// Check if running in script mode
-    ///
-    /// # Returns
-    /// * `bool` - True if script mode
-    pub fn is_script_mode(&self) -> bool {
-        self.args.script_file.is_some() || self.args.eval.is_some()
-    }
-
     /// Get the configuration
     ///
     /// # Returns
@@ -532,15 +508,6 @@ mod tests {
         let args = CliArgs::try_parse_from(vec!["mongosh", "--no-color", "--quiet"]).unwrap();
         assert!(args.no_color);
         assert!(args.quiet);
-    }
-
-    #[test]
-    fn test_is_interactive_mode() {
-        let args = CliArgs::try_parse_from(vec!["mongosh"]).unwrap();
-        let config = Config::default();
-        let cli = CliInterface { args, config };
-        assert!(cli.is_interactive());
-        assert!(!cli.is_script_mode());
     }
 
     #[test]

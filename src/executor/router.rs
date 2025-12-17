@@ -233,8 +233,6 @@ Available Commands:
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[tokio::test]
     async fn test_command_router_help() {
         // This is a placeholder test - would need proper setup with ConnectionManager

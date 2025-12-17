@@ -129,8 +129,6 @@ impl AdminExecutor {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[tokio::test]
     async fn test_admin_executor_creation() {
         // This is a placeholder test - would need proper setup with ConnectionManager

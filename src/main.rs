@@ -1,12 +1,11 @@
 //! MongoDB Shell - Rust Edition
 //!
 //! A high-performance MongoDB shell implementation written in Rust.
-//! Provides an interactive REPL interface, script execution, and full MongoDB operation support.
+//! Provides an interactive REPL interface and full MongoDB operation support.
 //!
 //! # Features
 //!
 //! - Interactive REPL with syntax highlighting and auto-completion
-//! - Script execution from files or command line
 //! - Full CRUD operation support
 //! - Aggregation pipeline execution
 //! - Connection management with pooling
@@ -19,15 +18,9 @@
 //! ```bash
 //! # Interactive mode
 //! mongosh mongodb://localhost:27017
-//!
-//! # Execute script
-//! mongosh --file script.js
-//!
-//! # Evaluate expression
-//! mongosh --eval "db.users.find()"
 //! ```
 
-use tracing::{info, Level};
+use tracing::Level;
 
 mod cli;
 mod config;
@@ -38,7 +31,6 @@ mod formatter;
 mod parser;
 mod plugins;
 mod repl;
-mod script;
 mod utils;
 
 use cli::CliInterface;
@@ -85,12 +77,8 @@ async fn run() -> Result<()> {
     // Print banner if not in quiet mode
     cli.print_banner();
 
-    // Determine execution mode and run
-    if cli.is_interactive() {
-        run_interactive_mode(&cli).await
-    } else {
-        run_script_mode(&cli).await
-    }
+    // Run in interactive mode
+    run_interactive_mode(&cli).await
 }
 
 /// Run application in interactive REPL mode
@@ -207,63 +195,6 @@ async fn run_interactive_mode(cli: &CliInterface) -> Result<()> {
     Ok(())
 }
 
-/// Run application in script execution mode
-///
-/// # Arguments
-/// * `cli` - CLI interface with configuration
-///
-/// # Returns
-/// * `Result<()>` - Success or error
-async fn run_script_mode(cli: &CliInterface) -> Result<()> {
-    info!("Starting script execution mode");
-
-    // Get connection URI and database
-    let uri = cli.get_connection_uri();
-    let database = cli.get_database();
-
-    // Connect to MongoDB
-    let mut conn_manager = ConnectionManager::new(uri.clone(), cli.config().connection.clone());
-
-    if !cli.args().no_connect {
-        conn_manager.connect().await?;
-    }
-
-    // Get MongoDB client
-    let client = conn_manager.get_client()?.clone();
-
-    // Create script executor
-    let executor = script::ScriptExecutor::new(client, database);
-
-    // Execute script
-    let result = if let Some(file) = &cli.args().script_file {
-        info!("Executing script file: {:?}", file);
-        executor.execute_file(file).await?
-    } else if let Some(eval) = &cli.args().eval {
-        info!("Evaluating expression");
-        executor.execute_string(eval).await?
-    } else {
-        return Err("No script or eval expression provided".into());
-    };
-
-    // Display results
-    if !cli.args().quiet {
-        if result.success {
-            println!("{}", result.get_output());
-            if let Some(value) = result.return_value {
-                println!("Return value: {}", value);
-            }
-        } else {
-            eprintln!("Script failed: {}", result.error.unwrap_or_default());
-            std::process::exit(1);
-        }
-    }
-
-    // Disconnect
-    conn_manager.disconnect().await?;
-
-    Ok(())
-}
-
 /// Initialize logging system based on verbosity level
 ///
 /// # Arguments
@@ -292,8 +223,6 @@ fn initialize_logging(cli: &CliInterface) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_module_structure() {
         // This test ensures all modules are properly declared
