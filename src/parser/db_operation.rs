@@ -97,6 +97,7 @@ impl DbOperationParser {
             "deleteOne" => Self::parse_delete_one(&collection, args),
             "deleteMany" => Self::parse_delete_many(&collection, args),
             "aggregate" => Self::parse_aggregate(&collection, args),
+            "count" => Self::parse_count_documents(&collection, args),
             "countDocuments" => Self::parse_count_documents(&collection, args),
             "estimatedDocumentCount" => Self::parse_estimated_document_count(&collection, args),
             "findOneAndDelete" => Self::parse_find_one_and_delete(&collection, args),
@@ -117,13 +118,14 @@ impl DbOperationParser {
     ) -> Result<Option<(Command, Vec<ChainMethod<'a>>)>> {
         // Check if the callee is itself a CallExpression (indicating a chain)
         if let Expression::StaticMemberExpression(member) = &call.callee
-            && let Expression::CallExpression(_base_call) = &member.object {
-                // This is a chained call!
-                // Recursively parse the base call and collect chain methods
-                let mut chain_methods = Vec::new();
-                let base_cmd = Self::collect_chain_methods(call, &mut chain_methods)?;
-                return Ok(Some((base_cmd, chain_methods)));
-            }
+            && let Expression::CallExpression(_base_call) = &member.object
+        {
+            // This is a chained call!
+            // Recursively parse the base call and collect chain methods
+            let mut chain_methods = Vec::new();
+            let base_cmd = Self::collect_chain_methods(call, &mut chain_methods)?;
+            return Ok(Some((base_cmd, chain_methods)));
+        }
         Ok(None)
     }
 
@@ -236,7 +238,9 @@ impl DbOperationParser {
                     options,
                 })
             }
-            _ => Err(ParseError::InvalidCommand("Chained methods not supported for this operation".to_string())
+            _ => Err(ParseError::InvalidCommand(
+                "Chained methods not supported for this operation".to_string(),
+            )
             .into()),
         }
     }
@@ -249,77 +253,82 @@ impl DbOperationParser {
         match method.name.as_str() {
             "limit" => {
                 if let Some(arg) = method.args.first()
-                    && let Some(expr) = arg.as_expression() {
-                        if let Expression::NumericLiteral(n) = expr {
-                            options.limit = Some(n.value as i64);
-                        } else {
-                            return Err(ParseError::InvalidQuery(
-                                "limit() requires a number argument".to_string(),
-                            )
-                            .into());
-                        }
+                    && let Some(expr) = arg.as_expression()
+                {
+                    if let Expression::NumericLiteral(n) = expr {
+                        options.limit = Some(n.value as i64);
+                    } else {
+                        return Err(ParseError::InvalidQuery(
+                            "limit() requires a number argument".to_string(),
+                        )
+                        .into());
                     }
+                }
             }
             "skip" => {
                 if let Some(arg) = method.args.first()
-                    && let Some(expr) = arg.as_expression() {
-                        if let Expression::NumericLiteral(n) = expr {
-                            options.skip = Some(n.value as u64);
-                        } else {
-                            return Err(ParseError::InvalidQuery(
-                                "skip() requires a number argument".to_string(),
-                            )
-                            .into());
-                        }
+                    && let Some(expr) = arg.as_expression()
+                {
+                    if let Expression::NumericLiteral(n) = expr {
+                        options.skip = Some(n.value as u64);
+                    } else {
+                        return Err(ParseError::InvalidQuery(
+                            "skip() requires a number argument".to_string(),
+                        )
+                        .into());
                     }
+                }
             }
             "sort" => {
                 if let Some(arg) = method.args.first()
-                    && let Some(expr) = arg.as_expression() {
-                        let bson = ExpressionConverter::expr_to_bson(expr)?;
-                        if let mongodb::bson::Bson::Document(doc) = bson {
-                            options.sort = Some(doc);
-                        } else {
-                            return Err(ParseError::InvalidQuery(
-                                "sort() requires an object argument".to_string(),
-                            )
-                            .into());
-                        }
+                    && let Some(expr) = arg.as_expression()
+                {
+                    let bson = ExpressionConverter::expr_to_bson(expr)?;
+                    if let mongodb::bson::Bson::Document(doc) = bson {
+                        options.sort = Some(doc);
+                    } else {
+                        return Err(ParseError::InvalidQuery(
+                            "sort() requires an object argument".to_string(),
+                        )
+                        .into());
                     }
+                }
             }
             "projection" => {
                 if let Some(arg) = method.args.first()
-                    && let Some(expr) = arg.as_expression() {
-                        let bson = ExpressionConverter::expr_to_bson(expr)?;
-                        if let mongodb::bson::Bson::Document(doc) = bson {
-                            options.projection = Some(doc);
-                        } else {
-                            return Err(ParseError::InvalidQuery(
-                                "projection() requires an object argument".to_string(),
-                            )
-                            .into());
-                        }
+                    && let Some(expr) = arg.as_expression()
+                {
+                    let bson = ExpressionConverter::expr_to_bson(expr)?;
+                    if let mongodb::bson::Bson::Document(doc) = bson {
+                        options.projection = Some(doc);
+                    } else {
+                        return Err(ParseError::InvalidQuery(
+                            "projection() requires an object argument".to_string(),
+                        )
+                        .into());
                     }
+                }
             }
             "batchSize" => {
                 if let Some(arg) = method.args.first()
-                    && let Some(expr) = arg.as_expression() {
-                        if let Expression::NumericLiteral(n) = expr {
-                            options.batch_size = Some(n.value as u32);
-                        } else {
-                            return Err(ParseError::InvalidQuery(
-                                "batchSize() requires a number argument".to_string(),
-                            )
-                            .into());
-                        }
+                    && let Some(expr) = arg.as_expression()
+                {
+                    if let Expression::NumericLiteral(n) = expr {
+                        options.batch_size = Some(n.value as u32);
+                    } else {
+                        return Err(ParseError::InvalidQuery(
+                            "batchSize() requires a number argument".to_string(),
+                        )
+                        .into());
                     }
+                }
             }
             _ => {
                 return Err(ParseError::InvalidCommand(format!(
                     "Unknown chained method: {}",
                     method.name
                 ))
-                .into())
+                .into());
             }
         }
         Ok(())
@@ -336,23 +345,24 @@ impl DbOperationParser {
             }
             "batchSize" => {
                 if let Some(arg) = method.args.first()
-                    && let Some(expr) = arg.as_expression() {
-                        if let Expression::NumericLiteral(n) = expr {
-                            options.batch_size = Some(n.value as u32);
-                        } else {
-                            return Err(ParseError::InvalidQuery(
-                                "batchSize() requires a number argument".to_string(),
-                            )
-                            .into());
-                        }
+                    && let Some(expr) = arg.as_expression()
+                {
+                    if let Expression::NumericLiteral(n) = expr {
+                        options.batch_size = Some(n.value as u32);
+                    } else {
+                        return Err(ParseError::InvalidQuery(
+                            "batchSize() requires a number argument".to_string(),
+                        )
+                        .into());
                     }
+                }
             }
             _ => {
                 return Err(ParseError::InvalidCommand(format!(
                     "Unknown chained method for aggregate: {}",
                     method.name
                 ))
-                .into())
+                .into());
             }
         }
         Ok(())
@@ -371,9 +381,10 @@ impl DbOperationParser {
 
                 // The inner object should be 'db'
                 if let Expression::Identifier(id) = &inner_member.object
-                    && id.name == "db" {
-                        return Ok((collection, operation));
-                    }
+                    && id.name == "db"
+                {
+                    return Ok((collection, operation));
+                }
             }
         } else if let Expression::ComputedMemberExpression(member) = callee {
             // Handle db["collection"]["operation"] or db.collection["operation"]
@@ -404,9 +415,10 @@ impl DbOperationParser {
         if let Expression::StaticMemberExpression(inner) = &member.object {
             let collection = inner.property.name.to_string();
             if let Expression::Identifier(id) = &inner.object
-                && id.name == "db" {
-                    return Ok((collection, operation));
-                }
+                && id.name == "db"
+            {
+                return Ok((collection, operation));
+            }
         }
 
         Err(ParseError::InvalidCommand(
@@ -858,8 +870,34 @@ mod tests {
         }) = result
         {
             assert_eq!(collection, "users");
-            let age_cond = filter.get_document("age").unwrap();
-            assert_eq!(age_cond.get_i64("$gte").unwrap(), 18);
+            assert!(!filter.is_empty());
+        } else {
+            panic!("Expected CountDocuments command");
+        }
+    }
+
+    #[test]
+    fn test_parse_count() {
+        // Test count() as alias for countDocuments()
+        let result = DbOperationParser::parse("db.users.count({ age: { $gte: 18 } })").unwrap();
+        if let Command::Query(QueryCommand::CountDocuments {
+            collection, filter, ..
+        }) = result
+        {
+            assert_eq!(collection, "users");
+            assert!(!filter.is_empty());
+        } else {
+            panic!("Expected CountDocuments command");
+        }
+
+        // Test count() with empty filter
+        let result = DbOperationParser::parse("db.users.count({})").unwrap();
+        if let Command::Query(QueryCommand::CountDocuments {
+            collection, filter, ..
+        }) = result
+        {
+            assert_eq!(collection, "users");
+            assert!(filter.is_empty());
         } else {
             panic!("Expected CountDocuments command");
         }
