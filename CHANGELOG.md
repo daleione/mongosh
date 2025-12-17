@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.3] - 2025-12-18
+
+### Added
+
+- **Projection support** - Implemented field projection for query results to control which fields are returned
+- **MongoDB 4.0+ compatibility** - Locked MongoDB driver version to 3.2.5 for better compatibility with MongoDB 4.0 and later versions
+
 ## [0.2.2] - 2025-12-17
 
 ### Added
