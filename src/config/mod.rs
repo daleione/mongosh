@@ -18,8 +18,7 @@ use std::time::Duration;
 use crate::error::Result;
 
 /// Main configuration structure
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
     /// Connection configuration
     pub connection: ConnectionConfig,
@@ -87,6 +86,10 @@ pub struct DisplayConfig {
     /// Show execution time
     #[serde(default = "default_show_timing")]
     pub show_timing: bool,
+
+    /// JSON indentation (number of spaces)
+    #[serde(default = "default_json_indent")]
+    pub json_indent: usize,
 }
 
 /// Output format options
@@ -239,6 +242,10 @@ fn default_show_timing() -> bool {
     true
 }
 
+fn default_json_indent() -> usize {
+    2
+}
+
 fn default_max_history_size() -> usize {
     1000
 }
@@ -272,7 +279,6 @@ fn default_plugin_directory() -> PathBuf {
         .join("plugins")
 }
 
-
 impl Default for ConnectionConfig {
     fn default() -> Self {
         Self {
@@ -294,6 +300,7 @@ impl Default for DisplayConfig {
             page_size: default_page_size(),
             syntax_highlighting: default_syntax_highlighting(),
             show_timing: default_show_timing(),
+            json_indent: default_json_indent(),
         }
     }
 }

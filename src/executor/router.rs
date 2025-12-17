@@ -214,7 +214,7 @@ Utility:
   color: {}
 
 Available Commands:
-  format [shell|json|json-pretty|table|compact] - Set/get output format
+  format [shell|json|json-pretty|table|compact]   - Set/get output format
   color [on|off]                                  - Set/get color output
   config                                          - Show this configuration"#,
                     format_str, color

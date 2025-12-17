@@ -33,10 +33,10 @@ impl JsonFormatter {
     ///
     /// # Returns
     /// * `Self` - New formatter
-    pub fn new(pretty: bool, use_colors: bool) -> Self {
+    pub fn new(pretty: bool, use_colors: bool, indent: usize) -> Self {
         Self {
             pretty,
-            indent: 2,
+            indent: indent,
             use_colors,
         }
     }
@@ -93,7 +93,8 @@ impl JsonFormatter {
             .collect();
 
         let json_str = if self.pretty {
-            serde_json::to_string_pretty(&json_docs).unwrap_or_else(|_| format!("{:?}", docs))
+            self.to_pretty_string(&json_docs)
+                .unwrap_or_else(|_| format!("{:?}", docs))
         } else {
             serde_json::to_string(&json_docs).unwrap_or_else(|_| format!("{:?}", docs))
         };
@@ -119,7 +120,8 @@ impl JsonFormatter {
         let json_value = self.bson_to_simplified_json(doc);
 
         let json_str = if self.pretty {
-            serde_json::to_string_pretty(&json_value).unwrap_or_else(|_| format!("{:?}", doc))
+            self.to_pretty_string(&json_value)
+                .unwrap_or_else(|_| format!("{:?}", doc))
         } else {
             serde_json::to_string(&json_value).unwrap_or_else(|_| format!("{:?}", doc))
         };
@@ -131,6 +133,25 @@ impl JsonFormatter {
         } else {
             Ok(json_str)
         }
+    }
+
+    /// Convert a value to pretty-printed JSON with custom indentation
+    ///
+    /// # Arguments
+    /// * `value` - The value to serialize
+    ///
+    /// # Returns
+    /// * `Result<String, serde_json::Error>` - Pretty JSON string with custom indent
+    fn to_pretty_string<T: serde::Serialize>(
+        &self,
+        value: &T,
+    ) -> std::result::Result<String, serde_json::Error> {
+        let mut buf = Vec::new();
+        let indent = " ".repeat(self.indent);
+        let formatter = serde_json::ser::PrettyFormatter::with_indent(indent.as_bytes());
+        let mut ser = serde_json::Serializer::with_formatter(&mut buf, formatter);
+        value.serialize(&mut ser)?;
+        Ok(String::from_utf8(buf).unwrap())
     }
 
     /// Convert BSON document to simplified JSON
@@ -207,7 +228,7 @@ impl JsonFormatter {
 
 impl Default for JsonFormatter {
     fn default() -> Self {
-        Self::new(true, false)
+        Self::new(true, false, 2)
     }
 }
 
@@ -218,7 +239,7 @@ mod tests {
 
     #[test]
     fn test_json_formatter() {
-        let formatter = JsonFormatter::new(false, false);
+        let formatter = JsonFormatter::new(false, false, 2);
         let doc = doc! { "name": "test", "value": 42 };
         let result = formatter.format_document(&doc).unwrap();
         assert!(result.contains("name"));
@@ -228,7 +249,7 @@ mod tests {
     #[test]
     fn test_json_formatter_simplified_objectid() {
         use mongodb::bson::oid::ObjectId;
-        let formatter = JsonFormatter::new(true, false);
+        let formatter = JsonFormatter::new(true, false, 2);
         let oid = ObjectId::parse_str("65705d84dfc3f3b5094e1f72").unwrap();
         let doc = doc! { "_id": oid };
         let result = formatter.format_document(&doc).unwrap();
@@ -241,7 +262,7 @@ mod tests {
     #[test]
     fn test_json_formatter_simplified_datetime() {
         use mongodb::bson::DateTime;
-        let formatter = JsonFormatter::new(true, false);
+        let formatter = JsonFormatter::new(true, false, 2);
         let dt = DateTime::from_millis(1701862788373);
         let doc = doc! { "created_time": dt };
         let result = formatter.format_document(&doc).unwrap();
@@ -254,7 +275,7 @@ mod tests {
 
     #[test]
     fn test_json_formatter_simplified_long() {
-        let formatter = JsonFormatter::new(true, false);
+        let formatter = JsonFormatter::new(true, false, 2);
         let doc = doc! { "user_id": 1i64 };
         let result = formatter.format_document(&doc).unwrap();
         // Should be a number, not Long('1')
@@ -265,8 +286,8 @@ mod tests {
 
     #[test]
     fn test_json_formatter_complete_document() {
-        use mongodb::bson::{oid::ObjectId, DateTime};
-        let formatter = JsonFormatter::new(true, false);
+        use mongodb::bson::{DateTime, oid::ObjectId};
+        let formatter = JsonFormatter::new(true, false, 2);
         let oid = ObjectId::parse_str("65705d84dfc3f3b5094e1f72").unwrap();
         let dt = DateTime::from_millis(1701862788373);
         let doc = doc! {
@@ -292,7 +313,7 @@ mod tests {
 
     #[test]
     fn test_json_formatter_compact() {
-        let formatter = JsonFormatter::new(false, false);
+        let formatter = JsonFormatter::new(false, false, 2);
         let doc = doc! { "name": "test", "value": 42 };
         let result = formatter.format_document(&doc).unwrap();
 
@@ -314,8 +335,8 @@ mod tests {
 
     #[test]
     fn test_json_formatter_compact_vs_pretty() {
-        let compact = JsonFormatter::new(false, false);
-        let pretty = JsonFormatter::new(true, false);
+        let compact = JsonFormatter::new(false, false, 2);
+        let pretty = JsonFormatter::new(true, false, 2);
         let doc = doc! { "a": 1, "b": 2, "c": 3 };
 
         let compact_result = compact.format_document(&doc).unwrap();

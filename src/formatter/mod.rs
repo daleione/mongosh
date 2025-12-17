@@ -61,6 +61,9 @@ pub struct Formatter {
 
     /// Enable colored output
     use_colors: bool,
+
+    /// JSON indentation (number of spaces)
+    json_indent: usize,
 }
 
 impl Formatter {
@@ -77,6 +80,25 @@ impl Formatter {
             format_type,
             colorizer: Colorizer::new(use_colors),
             use_colors,
+            json_indent: 2, // Default to 2 spaces
+        }
+    }
+
+    /// Create a new formatter with custom JSON indentation
+    ///
+    /// # Arguments
+    /// * `format_type` - Output format type
+    /// * `use_colors` - Enable colored output
+    /// * `json_indent` - Number of spaces for JSON indentation
+    ///
+    /// # Returns
+    /// * `Self` - New formatter instance
+    pub fn with_indent(format_type: OutputFormat, use_colors: bool, json_indent: usize) -> Self {
+        Self {
+            format_type,
+            colorizer: Colorizer::new(use_colors),
+            use_colors,
+            json_indent,
         }
     }
 
@@ -185,7 +207,7 @@ impl Formatter {
     /// # Returns
     /// * `Result<String>` - JSON string or error
     pub fn format_json(&self, data: &ResultData, pretty: bool) -> Result<String> {
-        let formatter = JsonFormatter::new(pretty, self.use_colors);
+        let formatter = JsonFormatter::new(pretty, self.use_colors, self.json_indent);
         formatter.format(data)
     }
 
@@ -271,7 +293,7 @@ impl Formatter {
                 shell_formatter.format_document(doc)
             }
             OutputFormat::JsonPretty | OutputFormat::Json => {
-                let json_formatter = JsonFormatter::new(true, self.use_colors);
+                let json_formatter = JsonFormatter::new(true, self.use_colors, self.json_indent);
                 json_formatter
                     .format_document(doc)
                     .unwrap_or_else(|_| format!("{}", doc))
@@ -300,7 +322,7 @@ impl Formatter {
 
 impl Default for Formatter {
     fn default() -> Self {
-        Self::new(OutputFormat::Shell, true)
+        Self::with_indent(OutputFormat::Shell, true, 2)
     }
 }
 
