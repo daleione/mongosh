@@ -15,7 +15,8 @@ use oxc::span::SourceType;
 
 use crate::error::{ParseError, Result};
 use crate::parser::command::{
-    AggregateOptions, Command, FindAndModifyOptions, FindOptions, QueryCommand, UpdateOptions,
+    AdminCommand, AggregateOptions, Command, FindAndModifyOptions, FindOptions, QueryCommand,
+    UpdateOptions,
 };
 use crate::parser::expr_converter::ExpressionConverter;
 
@@ -105,6 +106,7 @@ impl DbOperationParser {
             "findOneAndReplace" => Self::parse_find_one_and_replace(&collection, args),
             "distinct" => Self::parse_distinct(&collection, args),
             "bulkWrite" => Self::parse_bulk_write(&collection, args),
+            "getIndexes" => Self::parse_get_indexes(&collection, args),
             _ => Err(
                 ParseError::InvalidCommand(format!("Unsupported operation: {}", operation)).into(),
             ),
@@ -905,6 +907,12 @@ impl DbOperationParser {
             ordered,
         }))
     }
+
+    fn parse_get_indexes(collection: &str, _args: &[Argument]) -> Result<Command> {
+        Ok(Command::Admin(AdminCommand::ListIndexes(
+            collection.to_string(),
+        )))
+    }
 }
 
 #[cfg(test)]
@@ -1150,7 +1158,7 @@ mod tests {
     #[test]
     fn test_parse_complex_chain() {
         let result = DbOperationParser::parse(
-            "db.users.find({ status: 'active' }).sort({ createdAt: -1 }).limit(20).skip(10)",
+            "db.users.find({ status: 'active' }).sort({ created_at: -1 }).limit(10).skip(5)",
         )
         .unwrap();
         if let Command::Query(QueryCommand::Find {
@@ -1161,11 +1169,21 @@ mod tests {
         {
             assert_eq!(collection, "users");
             assert_eq!(filter.get_str("status").unwrap(), "active");
-            assert_eq!(options.limit, Some(20));
-            assert_eq!(options.skip, Some(10));
+            assert_eq!(options.limit, Some(10));
+            assert_eq!(options.skip, Some(5));
             assert!(options.sort.is_some());
         } else {
-            panic!("Expected Find command");
+            panic!("Expected Find command with chained methods");
+        }
+    }
+
+    #[test]
+    fn test_parse_get_indexes() {
+        let result = DbOperationParser::parse("db.users.getIndexes()").unwrap();
+        if let Command::Admin(AdminCommand::ListIndexes(collection)) = result {
+            assert_eq!(collection, "users");
+        } else {
+            panic!("Expected ListIndexes admin command");
         }
     }
 }

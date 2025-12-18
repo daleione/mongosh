@@ -5,6 +5,8 @@
 //! - Collection management: show collections
 //! - Server commands and diagnostics
 
+use futures::stream::TryStreamExt;
+use mongodb::bson::{self, Document};
 use tracing::info;
 
 use crate::error::{ExecutionError, MongoshError, Result};
@@ -43,6 +45,7 @@ impl AdminExecutor {
             AdminCommand::ShowDatabases => self.show_databases().await,
             AdminCommand::ShowCollections => self.show_collections().await,
             AdminCommand::UseDatabase(name) => self.use_database(name).await,
+            AdminCommand::ListIndexes(collection) => self.list_indexes(collection).await,
             _ => Err(MongoshError::NotImplemented(
                 "Admin command not yet implemented".to_string(),
             )),
@@ -122,6 +125,58 @@ impl AdminExecutor {
             success: true,
             data: ResultData::Message(format!("switched to db {}", name)),
             stats: ExecutionStats::default(),
+            error: None,
+        })
+    }
+
+    /// List indexes on a collection
+    ///
+    /// # Arguments
+    /// * `collection` - Collection name
+    ///
+    /// # Returns
+    /// * `Result<ExecutionResult>` - List of indexes
+    async fn list_indexes(&self, collection: String) -> Result<ExecutionResult> {
+        let db_name = self.context.get_current_database().await;
+        info!(
+            "Listing indexes for collection '{}' in database '{}'",
+            collection, db_name
+        );
+
+        let db = self.context.get_database().await?;
+        let coll: mongodb::Collection<Document> = db.collection(&collection);
+
+        // Get cursor for indexes
+        let mut cursor = coll
+            .list_indexes()
+            .await
+            .map_err(|e| ExecutionError::QueryFailed(e.to_string()))?;
+
+        // Collect all indexes into a vector
+        let mut indexes = Vec::new();
+        while let Some(index) = cursor
+            .try_next()
+            .await
+            .map_err(|e| ExecutionError::QueryFailed(e.to_string()))?
+        {
+            // Convert IndexModel to Document
+            let index_doc = bson::to_document(&index).map_err(|e| {
+                ExecutionError::QueryFailed(format!("Failed to convert index to document: {}", e))
+            })?;
+            indexes.push(index_doc);
+        }
+
+        let count = indexes.len();
+        info!("Found {} indexes", count);
+
+        Ok(ExecutionResult {
+            success: true,
+            data: ResultData::Documents(indexes),
+            stats: ExecutionStats {
+                execution_time_ms: 0,
+                documents_returned: count,
+                documents_affected: None,
+            },
             error: None,
         })
     }
