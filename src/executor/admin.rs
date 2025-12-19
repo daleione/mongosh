@@ -46,6 +46,15 @@ impl AdminExecutor {
             AdminCommand::ShowCollections => self.show_collections().await,
             AdminCommand::UseDatabase(name) => self.use_database(name).await,
             AdminCommand::ListIndexes(collection) => self.list_indexes(collection).await,
+            AdminCommand::CreateIndex {
+                collection,
+                keys,
+                options,
+            } => self.create_index(collection, keys, options).await,
+            AdminCommand::CreateIndexes {
+                collection,
+                indexes,
+            } => self.create_indexes(collection, indexes).await,
             _ => Err(MongoshError::NotImplemented(
                 "Admin command not yet implemented".to_string(),
             )),
@@ -177,6 +186,192 @@ impl AdminExecutor {
                 documents_returned: count,
                 documents_affected: None,
             },
+            error: None,
+        })
+    }
+
+    /// Parse index options from a document
+    ///
+    /// # Arguments
+    /// * `options_doc` - Options document to parse
+    ///
+    /// # Returns
+    /// * `Result<Option<mongodb::options::IndexOptions>>` - Parsed options or error
+    fn parse_index_options(
+        options_doc: Option<Document>,
+    ) -> Result<Option<mongodb::options::IndexOptions>> {
+        match options_doc {
+            Some(opts) => {
+                let index_opts = bson::from_document(opts).map_err(|e| {
+                    ExecutionError::InvalidParameters(format!("Invalid index options: {}", e))
+                })?;
+                Ok(Some(index_opts))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Create an index on a collection
+    ///
+    /// # Arguments
+    /// * `collection` - Collection name
+    /// * `keys` - Index keys document
+    /// * `options` - Optional index options
+    ///
+    /// # Returns
+    /// * `Result<ExecutionResult>` - Index creation result
+    async fn create_index(
+        &self,
+        collection: String,
+        keys: Document,
+        options: Option<Document>,
+    ) -> Result<ExecutionResult> {
+        use tracing::debug;
+
+        debug!(
+            "Creating index on collection '{}' with keys: {:?}",
+            collection, keys
+        );
+
+        let db = self.context.get_database().await?;
+        let coll: mongodb::Collection<Document> = db.collection(&collection);
+
+        // Parse and validate index options
+        let index_options = Self::parse_index_options(options)?;
+
+        // Create index model
+        let index_model = mongodb::IndexModel::builder()
+            .keys(keys)
+            .options(index_options)
+            .build();
+
+        // Create the index
+        let result = coll
+            .create_index(index_model)
+            .await
+            .map_err(|e| ExecutionError::QueryFailed(e.to_string()))?;
+
+        debug!("Created index with name: {}", result.index_name);
+
+        Ok(ExecutionResult {
+            success: true,
+            data: ResultData::Message(format!("Created index: {}", result.index_name)),
+            stats: ExecutionStats::default(),
+            error: None,
+        })
+    }
+
+    /// Create multiple indexes on a collection
+    ///
+    /// # Arguments
+    /// * `collection` - Collection name
+    /// * `indexes` - Vector of index specifications
+    ///
+    /// # Returns
+    /// * `Result<ExecutionResult>` - Index creation result
+    async fn create_indexes(
+        &self,
+        collection: String,
+        indexes: Vec<Document>,
+    ) -> Result<ExecutionResult> {
+        use tracing::debug;
+
+        debug!(
+            "Creating {} indexes on collection '{}'",
+            indexes.len(),
+            collection
+        );
+
+        let db = self.context.get_database().await?;
+        let coll: mongodb::Collection<Document> = db.collection(&collection);
+
+        // Create index models from documents
+        let mut index_models = Vec::new();
+        for (idx, index_doc) in indexes.into_iter().enumerate() {
+            // Extract keys - MongoDB requires "key" field (not "keys")
+            // Spec format: { key: { name: 1 }, name: "idx_name", unique: true, ... }
+            let keys = index_doc
+                .get_document("key")
+                .or_else(|_| index_doc.get_document("keys"))
+                .map_err(|_| {
+                    ExecutionError::InvalidParameters(format!(
+                        "Index specification at position {} must contain 'key' or 'keys' field",
+                        idx
+                    ))
+                })?
+                .clone();
+
+            // Extract options - separate from keys
+            let options_doc = if let Ok(opts_doc) = index_doc.get_document("options") {
+                // Explicit options field
+                Some(opts_doc.clone())
+            } else {
+                // Extract root-level option fields
+                let mut opts = Document::new();
+                let option_fields = [
+                    "name",
+                    "unique",
+                    "background",
+                    "sparse",
+                    "expireAfterSeconds",
+                    "partialFilterExpression",
+                    "collation",
+                    "weights",
+                    "default_language",
+                    "language_override",
+                    "textIndexVersion",
+                    "2dsphereIndexVersion",
+                    "bits",
+                    "min",
+                    "max",
+                    "bucketSize",
+                    "storageEngine",
+                    "wildcardProjection",
+                    "hidden",
+                ];
+
+                for field in &option_fields {
+                    if let Some(value) = index_doc.get(*field) {
+                        opts.insert(*field, value.clone());
+                    }
+                }
+
+                if !opts.is_empty() { Some(opts) } else { None }
+            };
+
+            // Parse options with proper error handling
+            let index_options = Self::parse_index_options(options_doc).map_err(|e| {
+                ExecutionError::InvalidParameters(format!(
+                    "Invalid options for index at position {}: {}",
+                    idx, e
+                ))
+            })?;
+
+            let index_model = mongodb::IndexModel::builder()
+                .keys(keys)
+                .options(index_options)
+                .build();
+
+            index_models.push(index_model);
+        }
+
+        // Create the indexes
+        let result = coll
+            .create_indexes(index_models)
+            .await
+            .map_err(|e| ExecutionError::QueryFailed(e.to_string()))?;
+
+        let index_names = result.index_names.join(", ");
+        debug!(
+            "Created {} indexes: {}",
+            result.index_names.len(),
+            index_names
+        );
+
+        Ok(ExecutionResult {
+            success: true,
+            data: ResultData::Message(format!("Created indexes: {}", index_names)),
+            stats: ExecutionStats::default(),
             error: None,
         })
     }

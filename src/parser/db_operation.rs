@@ -107,6 +107,9 @@ impl DbOperationParser {
             "distinct" => Self::parse_distinct(&collection, args),
             "bulkWrite" => Self::parse_bulk_write(&collection, args),
             "getIndexes" => Self::parse_get_indexes(&collection, args),
+            "createIndex" => Self::parse_create_index(&collection, args),
+            "createIndexes" => Self::parse_create_indexes(&collection, args),
+
             _ => Err(
                 ParseError::InvalidCommand(format!("Unsupported operation: {}", operation)).into(),
             ),
@@ -588,7 +591,7 @@ impl DbOperationParser {
         if args.len() > index {
             let doc = Self::get_doc_arg(args, index)?;
             if !doc.is_empty() {
-                return Ok(Self::parse_aggregate_options(&doc));
+                return Self::parse_aggregate_options(&doc);
             }
         }
         Ok(AggregateOptions::default())
@@ -641,14 +644,27 @@ impl DbOperationParser {
     }
 
     /// Parse AggregateOptions from a BSON document
-    fn parse_aggregate_options(doc: &Document) -> AggregateOptions {
+    fn parse_aggregate_options(doc: &Document) -> Result<AggregateOptions> {
         let mut options = AggregateOptions::default();
 
         if let Ok(allow_disk_use) = doc.get_bool("allowDiskUse") {
             options.allow_disk_use = allow_disk_use;
         }
 
-        if let Ok(batch_size) = doc.get_i32("batchSize") {
+        if let Ok(batch_size) = doc.get_i64("batchSize") {
+            if batch_size < 0 {
+                return Err(
+                    ParseError::InvalidQuery("batchSize must be non-negative".to_string()).into(),
+                );
+            }
+            if batch_size > u32::MAX as i64 {
+                return Err(ParseError::InvalidQuery(format!(
+                    "batchSize {} exceeds maximum value {}",
+                    batch_size,
+                    u32::MAX
+                ))
+                .into());
+            }
             if batch_size > 0 {
                 options.batch_size = Some(batch_size as u32);
             }
@@ -676,7 +692,7 @@ impl DbOperationParser {
             options.let_vars = Some(let_vars.clone());
         }
 
-        options
+        Ok(options)
     }
 
     // === CRUD Operation Parsers ===
@@ -912,6 +928,71 @@ impl DbOperationParser {
         Ok(Command::Admin(AdminCommand::ListIndexes(
             collection.to_string(),
         )))
+    }
+
+    /// Parse createIndex operation: db.collection.createIndex(keys, options)
+    fn parse_create_index(collection: &str, args: &[Argument]) -> Result<Command> {
+        // createIndex typically takes keys (document or string) and optional options (document)
+        // Example: db.collection.createIndex({name: 1}, {unique: true})
+
+        if args.is_empty() {
+            return Err(ParseError::InvalidQuery(
+                "createIndex requires at least one argument (the index keys)".to_string(),
+            )
+            .into());
+        }
+
+        // Try to get the keys document
+        let keys = Self::get_doc_arg(args, 0)?;
+
+        if keys.is_empty() {
+            return Err(ParseError::InvalidQuery(
+                "createIndex requires non-empty keys document".to_string(),
+            )
+            .into());
+        }
+
+        // Get optional options
+        let options = if args.len() > 1 {
+            Some(Self::get_doc_arg(args, 1)?)
+        } else {
+            None
+        };
+
+        Ok(Command::Admin(AdminCommand::CreateIndex {
+            collection: collection.to_string(),
+            keys,
+            options,
+        }))
+    }
+
+    /// Parse createIndexes operation: db.collection.createIndexes(indexes)
+    fn parse_create_indexes(collection: &str, args: &[Argument]) -> Result<Command> {
+        // createIndexes typically takes an array of index specifications
+        // Example: db.collection.createIndexes([{key: {name: 1}, unique: true}])
+
+        if args.is_empty() {
+            return Err(ParseError::InvalidQuery(
+                "createIndexes requires at least one argument (the index specifications)"
+                    .to_string(),
+            )
+            .into());
+        }
+
+        // Get the array of index documents
+        let indexes = Self::get_doc_array_arg(args, 0)?;
+
+        if indexes.is_empty() {
+            return Err(ParseError::InvalidQuery(
+                "createIndexes requires at least one index specification".to_string(),
+            )
+            .into());
+        }
+
+        Ok(Command::Admin(AdminCommand::CreateIndexes {
+            collection: collection.to_string(),
+            indexes,
+        }))
     }
 }
 
@@ -1184,6 +1265,96 @@ mod tests {
             assert_eq!(collection, "users");
         } else {
             panic!("Expected ListIndexes admin command");
+        }
+    }
+
+    #[test]
+    fn test_parse_create_index() {
+        // Test basic createIndex with just keys
+        let result = DbOperationParser::parse("db.users.createIndex({ name: 1 })").unwrap();
+        if let Command::Admin(AdminCommand::CreateIndex {
+            collection,
+            keys,
+            options,
+        }) = result
+        {
+            assert_eq!(collection, "users");
+            assert_eq!(keys.get_i64("name"), Ok(1));
+            assert!(options.is_none());
+        } else {
+            panic!("Expected CreateIndex admin command");
+        }
+    }
+
+    #[test]
+    fn test_parse_create_index_with_options() {
+        // Test createIndex with keys and options
+        let result =
+            DbOperationParser::parse("db.users.createIndex({ name: 1 }, { unique: true })")
+                .unwrap();
+        if let Command::Admin(AdminCommand::CreateIndex {
+            collection,
+            keys,
+            options,
+        }) = result
+        {
+            assert_eq!(collection, "users");
+            assert_eq!(keys.get_i64("name"), Ok(1));
+            assert!(options.is_some());
+            assert_eq!(options.unwrap().get_bool("unique"), Ok(true));
+        } else {
+            panic!("Expected CreateIndex admin command");
+        }
+    }
+
+    #[test]
+    fn test_parse_create_indexes() {
+        // Test createIndexes with array of index specs
+        let result = DbOperationParser::parse(
+            "db.users.createIndexes([{ key: { name: 1 }, name: 'idx_name' }])",
+        )
+        .unwrap();
+        if let Command::Admin(AdminCommand::CreateIndexes {
+            collection,
+            indexes,
+        }) = result
+        {
+            assert_eq!(collection, "users");
+            assert_eq!(indexes.len(), 1);
+            assert_eq!(indexes[0].get_str("name"), Ok("idx_name"));
+        } else {
+            panic!("Expected CreateIndexes admin command");
+        }
+    }
+
+    #[test]
+    fn test_parse_aggregate_with_invalid_batch_size() {
+        // Test that batchSize exceeding u32::MAX is rejected
+        let large_batch_size = (u32::MAX as i64) + 1;
+        let input = format!(
+            "db.users.aggregate([{{ $match: {{ age: {{ $gt: 18 }} }} }}], {{ batchSize: {} }})",
+            large_batch_size
+        );
+        let result = DbOperationParser::parse(&input);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_aggregate_with_negative_batch_size() {
+        // Test that negative batchSize is rejected
+        let input = "db.users.aggregate([{ $match: { age: { $gt: 18 } } }], { batchSize: -100 })";
+        let result = DbOperationParser::parse(input);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_aggregate_with_valid_batch_size() {
+        // Test that valid batchSize works
+        let input = "db.users.aggregate([{ $match: { age: { $gt: 18 } } }], { batchSize: 1000 })";
+        let result = DbOperationParser::parse(input);
+        assert!(result.is_ok());
+        if let Ok(Command::Query(QueryCommand::Aggregate { options, .. })) = result {
+            assert_eq!(options.batch_size, Some(1000));
         }
     }
 }
