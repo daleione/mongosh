@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.4] - 2025-12-23
+
+### Added
+
+- **Aggregate command execution** - Full implementation of MongoDB aggregation pipeline support with options including `allowDiskUse`, `batchSize`, `maxTimeMS`, `collation`, `hint`, `readConcern`, and `let` variables
+- **Index management commands** - Added `createIndex` and `createIndexes` admin commands for creating single and multiple indexes
+- **Index listing command** - Added `getIndexes` command to list all indexes on a collection
+
 ## [0.2.3] - 2025-12-18
 
 ### Added
