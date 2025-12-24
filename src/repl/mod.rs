@@ -23,6 +23,72 @@ use crate::config::{HistoryConfig, OutputFormat};
 use crate::error::Result;
 use crate::parser::Parser;
 
+/// Cursor state for pagination
+#[derive(Debug, Clone)]
+pub struct CursorState {
+    /// Collection name
+    pub collection: String,
+    /// Query filter
+    pub filter: mongodb::bson::Document,
+    /// Query options
+    pub options: crate::parser::FindOptions,
+    /// Number of documents already retrieved
+    pub documents_retrieved: usize,
+    /// Total documents matched (if known)
+    pub total_matched: Option<usize>,
+    /// Whether this is the last batch
+    pub has_more: bool,
+}
+
+impl CursorState {
+    /// Create a new cursor state
+    pub fn new(
+        collection: String,
+        filter: mongodb::bson::Document,
+        options: crate::parser::FindOptions,
+        total_matched: Option<usize>,
+    ) -> Self {
+        Self {
+            collection,
+            filter,
+            options,
+            documents_retrieved: 0,
+            total_matched,
+            has_more: true,
+        }
+    }
+
+    /// Get the skip value for next batch
+    pub fn get_skip(&self) -> u64 {
+        self.documents_retrieved as u64
+    }
+
+    /// Update after retrieving documents
+    pub fn update(&mut self, batch_size: usize, total_matched: Option<usize>) {
+        self.documents_retrieved += batch_size;
+        if let Some(total) = total_matched {
+            self.total_matched = Some(total);
+            // has_more will be set by the caller based on cursor state
+        }
+        // Note: has_more field should be set by the caller after this update
+        // based on whether the cursor actually has more documents
+    }
+
+    /// Check if there are more documents
+    pub fn has_more(&self) -> bool {
+        self.has_more
+    }
+
+    /// Get display information
+    pub fn get_display_info(&self) -> String {
+        if let Some(total) = self.total_matched {
+            format!("Displayed {}/{} documents", self.documents_retrieved, total)
+        } else {
+            format!("Displayed {} documents", self.documents_retrieved)
+        }
+    }
+}
+
 /// Shared state between REPL and execution context
 #[derive(Debug, Clone)]
 pub struct SharedState {
@@ -43,6 +109,9 @@ pub struct SharedState {
 
     /// Color output setting
     pub color_enabled: Arc<RwLock<bool>>,
+
+    /// Cursor state for pagination
+    pub cursor_state: Arc<RwLock<Option<CursorState>>>,
 }
 
 impl SharedState {
@@ -62,7 +131,32 @@ impl SharedState {
             server_version: Arc::new(RwLock::new(None)),
             output_format: Arc::new(RwLock::new(OutputFormat::Shell)),
             color_enabled: Arc::new(RwLock::new(true)),
+            cursor_state: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// Get current cursor state
+    pub fn get_cursor_state(&self) -> Option<CursorState> {
+        let cursor_state = self.cursor_state.read().unwrap();
+        cursor_state.clone()
+    }
+
+    /// Set cursor state
+    pub fn set_cursor_state(&self, state: Option<CursorState>) {
+        let mut cursor_state = self.cursor_state.write().unwrap();
+        *cursor_state = state;
+    }
+
+    /// Clear cursor state
+    pub fn clear_cursor_state(&self) {
+        let mut cursor_state = self.cursor_state.write().unwrap();
+        *cursor_state = None;
+    }
+
+    /// Check if there's an active cursor
+    pub fn has_active_cursor(&self) -> bool {
+        let cursor_state = self.cursor_state.read().unwrap();
+        cursor_state.is_some()
     }
 
     /// Get current database name

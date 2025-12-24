@@ -123,6 +123,12 @@ impl TableFormatter {
                 }
                 self.format_documents(docs)
             }
+            ResultData::DocumentsWithPagination { documents, .. } => {
+                if documents.is_empty() {
+                    return Ok("(empty result set)".to_string());
+                }
+                self.format_documents(documents)
+            }
             ResultData::Document(doc) => self.format_documents(&[doc.clone()]),
             ResultData::Message(msg) => Ok(msg.clone()),
             _ => Ok(format!("{:?}", data)),

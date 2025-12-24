@@ -267,6 +267,9 @@ pub enum UtilityCommand {
 
     /// Get database version
     Version,
+
+    /// Iterate cursor (get next batch of results)
+    Iterate,
 }
 
 /// Configuration commands for runtime settings
@@ -528,6 +531,7 @@ impl UtilityCommand {
             UtilityCommand::HostInfo => "hostInfo",
             UtilityCommand::ConnectionStatus => "connectionStatus",
             UtilityCommand::Version => "version",
+            UtilityCommand::Iterate => "it",
         }
     }
 }

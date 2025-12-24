@@ -25,7 +25,7 @@ impl ShellCommandParser {
             || input.starts_with("format ")
             || input == "color"
             || input.starts_with("color ")
-            || matches!(input, "exit" | "quit")
+            || matches!(input, "exit" | "quit" | "it")
     }
 
     /// Parse a shell command
@@ -35,6 +35,13 @@ impl ShellCommandParser {
         // Exit commands
         if matches!(trimmed, "exit" | "quit") {
             return Ok(Command::Exit);
+        }
+
+        // Iteration command (for pagination)
+        if trimmed == "it" {
+            return Ok(Command::Utility(
+                crate::parser::command::UtilityCommand::Iterate,
+            ));
         }
 
         // Help command
@@ -94,7 +101,7 @@ impl ShellCommandParser {
                     "Unknown show command: show {}",
                     rest
                 ))
-                .into())
+                .into());
             }
         };
 

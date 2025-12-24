@@ -166,6 +166,46 @@ impl Formatter {
                 result.push(']');
                 Ok(result)
             }
+            ResultData::DocumentsWithPagination {
+                documents,
+                has_more,
+                displayed: _,
+                total,
+            } => {
+                if documents.is_empty() {
+                    return Ok("[]".to_string());
+                }
+
+                let mut result = String::from("[\n");
+                for (i, doc) in documents.iter().enumerate() {
+                    let formatted = shell_formatter.format_document(doc);
+                    // Indent each document
+                    let indented = formatted
+                        .lines()
+                        .map(|line| format!("  {}", line))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    result.push_str(&indented);
+
+                    if i < documents.len() - 1 {
+                        result.push_str(",\n");
+                    } else {
+                        result.push('\n');
+                    }
+                }
+                result.push(']');
+
+                // Add pagination info like MongoDB shell
+                if *has_more {
+                    let _total_info = if let Some(total) = total {
+                        format!(" of {}", total)
+                    } else {
+                        String::new()
+                    };
+                    result.push_str(&format!("\nType \"it\" for more\n"));
+                }
+                Ok(result)
+            }
             ResultData::Document(doc) => Ok(shell_formatter.format_document(doc)),
             ResultData::InsertOne { inserted_id } => Ok(format!(
                 "{{\n  acknowledged: true,\n  insertedId: {}\n}}",
@@ -233,6 +273,27 @@ impl Formatter {
     pub fn format_compact(&self, data: &ResultData) -> Result<String> {
         match data {
             ResultData::Documents(docs) => Ok(format!("{} document(s) returned", docs.len())),
+            ResultData::DocumentsWithPagination {
+                documents,
+                has_more,
+                displayed,
+                total,
+            } => {
+                let base = format!("{} document(s) returned", documents.len());
+                if *has_more {
+                    let total_info = if let Some(total) = total {
+                        format!(" of {}", total)
+                    } else {
+                        String::new()
+                    };
+                    Ok(format!(
+                        "{} ({} displayed{}, more available)",
+                        base, displayed, total_info
+                    ))
+                } else {
+                    Ok(base)
+                }
+            }
             ResultData::Document(doc) => Ok(format!("1 document: {}", doc)),
             ResultData::InsertOne { .. } => Ok("Inserted 1 document".to_string()),
             ResultData::InsertMany { inserted_ids } => {

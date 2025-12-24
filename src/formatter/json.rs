@@ -51,6 +51,9 @@ impl JsonFormatter {
     pub fn format(&self, data: &ResultData) -> Result<String> {
         match data {
             ResultData::Documents(docs) => self.format_documents(docs),
+            ResultData::DocumentsWithPagination { documents, .. } => {
+                self.format_documents(documents)
+            }
             ResultData::Document(doc) => self.format_document(doc),
             ResultData::Message(msg) => Ok(format!("\"{}\"", msg)),
             ResultData::List(items) => {

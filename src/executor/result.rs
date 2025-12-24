@@ -29,6 +29,14 @@ pub enum ResultData {
     /// List of documents
     Documents(Vec<Document>),
 
+    /// List of documents with pagination info
+    DocumentsWithPagination {
+        documents: Vec<Document>,
+        has_more: bool,
+        displayed: usize,
+        total: Option<usize>,
+    },
+
     /// Single document
     Document(Document),
 
@@ -58,8 +66,7 @@ pub enum ResultData {
 }
 
 /// Execution statistics
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct ExecutionStats {
     /// Execution time in milliseconds
     pub execution_time_ms: u64,
@@ -70,7 +77,6 @@ pub struct ExecutionStats {
     /// Number of documents affected
     pub documents_affected: Option<u64>,
 }
-
 
 impl ExecutionResult {
     /// Create a successful result

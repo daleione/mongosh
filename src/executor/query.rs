@@ -217,6 +217,9 @@ impl QueryExecutor {
             collection, filter
         );
 
+        // This function only handles NEW queries - clear any previous cursor state
+        self.context.shared_state.clear_cursor_state();
+
         // Get database and collection
         let db = self.context.get_database().await?;
         let coll: Collection<Document> = db.collection(&collection);
@@ -224,29 +227,31 @@ impl QueryExecutor {
         // Build MongoDB find options
         let mut find_opts = mongodb::options::FindOptions::default();
 
+        // Determine batch size (default 20 like MongoDB shell)
+        let batch_size = options.batch_size.unwrap_or(20);
+        find_opts.batch_size = Some(batch_size);
+        debug!("Applied batch_size: {}", batch_size);
+
+        // Apply user-specified limit if any
         if let Some(limit) = options.limit {
             find_opts.limit = Some(limit);
             debug!("Applied limit: {}", limit);
         }
 
+        // Apply skip if specified
         if let Some(skip) = options.skip {
             find_opts.skip = Some(skip);
             debug!("Applied skip: {}", skip);
         }
 
-        if let Some(sort) = options.sort {
-            find_opts.sort = Some(sort);
+        if let Some(ref sort) = options.sort {
+            find_opts.sort = Some(sort.clone());
             debug!("Applied sort");
         }
 
-        if let Some(projection) = options.projection {
-            find_opts.projection = Some(projection);
+        if let Some(ref projection) = options.projection {
+            find_opts.projection = Some(projection.clone());
             debug!("Applied projection");
-        }
-
-        if let Some(batch_size) = options.batch_size {
-            find_opts.batch_size = Some(batch_size);
-            debug!("Applied batch_size: {}", batch_size);
         }
 
         // Execute query
@@ -256,30 +261,122 @@ impl QueryExecutor {
             .await
             .map_err(|e| ExecutionError::QueryFailed(e.to_string()))?;
 
-        // Collect results
+        // Collect first batch of results
         let mut documents = Vec::new();
+        let mut batch_count = 0;
 
-        while let Some(doc) = cursor
-            .try_next()
-            .await
-            .map_err(|e| ExecutionError::CursorError(e.to_string()))?
-        {
-            documents.push(doc);
+        while batch_count < batch_size as usize {
+            match cursor
+                .try_next()
+                .await
+                .map_err(|e| ExecutionError::CursorError(e.to_string()))?
+            {
+                Some(doc) => {
+                    documents.push(doc);
+                    batch_count += 1;
+                }
+                None => break,
+            }
         }
 
-        let count = documents.len();
-        info!("Found {} documents", count);
+        info!("Retrieved {} documents in first batch", batch_count);
+
+        // Get total count ONCE at the beginning (optimization #1)
+        // Only if: no limit, reasonable batch size, and we got results
+        let total_matched = if options.limit.is_none() && batch_count > 0 && batch_count < 100 {
+            match coll.count_documents(filter.clone()).await {
+                Ok(count) => {
+                    debug!("Total documents matched: {}", count);
+                    Some(count as usize)
+                }
+                Err(e) => {
+                    debug!("Failed to get total count: {}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        // Determine if there are more documents (optimization #3: improved logic)
+        let has_more = self.has_more_documents(
+            batch_count,
+            batch_size as usize,
+            total_matched,
+            options.limit.map(|l| l as usize),
+        );
+
+        // Create cursor state for pagination if there are more documents
+        if has_more {
+            let mut cursor_state = crate::repl::CursorState::new(
+                collection.clone(),
+                filter.clone(),
+                options.clone(),
+                total_matched,
+            );
+            // Update with the first batch we just retrieved
+            cursor_state.update(batch_count, total_matched);
+            self.context
+                .shared_state
+                .set_cursor_state(Some(cursor_state));
+            debug!(
+                "Saved cursor state for pagination with {} documents retrieved",
+                batch_count
+            );
+        }
+
+        // Create result with pagination info
+        let result_data = if has_more {
+            ResultData::DocumentsWithPagination {
+                documents,
+                has_more: true,
+                displayed: batch_count,
+                total: total_matched,
+            }
+        } else {
+            ResultData::Documents(documents)
+        };
 
         Ok(ExecutionResult {
             success: true,
-            data: ResultData::Documents(documents),
+            data: result_data,
             stats: ExecutionStats {
                 execution_time_ms: 0, // Will be set by caller
-                documents_returned: count,
+                documents_returned: batch_count,
                 documents_affected: None,
             },
             error: None,
         })
+    }
+
+    /// Helper method to determine if there are more documents to fetch
+    /// This encapsulates the has_more logic (optimization #3)
+    fn has_more_documents(
+        &self,
+        batch_count: usize,
+        batch_size: usize,
+        total_matched: Option<usize>,
+        limit: Option<usize>,
+    ) -> bool {
+        // If we got less than a full batch, definitely no more
+        if batch_count < batch_size {
+            return false;
+        }
+
+        // If we know the total, compare with what we retrieved
+        if let Some(total) = total_matched {
+            return batch_count < total;
+        }
+
+        // If there's a limit and we've reached it, no more
+        if let Some(lim) = limit {
+            if batch_count >= lim {
+                return false;
+            }
+        }
+
+        // We got a full batch and don't know the total - assume there might be more
+        true
     }
 
     /// Execute count operation

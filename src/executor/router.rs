@@ -59,7 +59,7 @@ impl CommandRouter {
                 executor.execute(admin_cmd).await
             }
             Command::Utility(util_cmd) => {
-                let executor = UtilityExecutor::new();
+                let executor = UtilityExecutor::new(self.context.clone());
                 executor.execute(util_cmd).await
             }
             Command::Config(config_cmd) => self.execute_config(config_cmd).await,
