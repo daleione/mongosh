@@ -352,7 +352,7 @@ impl ExpressionConverter {
                     Err(ParseError::InvalidQuery("NumberInt requires argument".to_string()).into())
                 }
             }
-            "NumberLong" => {
+            "NumberLong" | "Long" => {
                 if let Some(arg) = call.arguments.first() {
                     if let Some(expr) = arg.as_expression() {
                         Self::parse_long_argument(expr)
