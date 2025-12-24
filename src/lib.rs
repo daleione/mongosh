@@ -55,7 +55,7 @@ pub use error::{MongoshError, Result};
 pub use executor::{CommandRouter, ExecutionResult};
 pub use formatter::Formatter;
 pub use parser::{Command, Parser};
-pub use repl::{ReplContext, ReplEngine};
+pub use repl::ReplEngine;
 
 /// Library version
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
