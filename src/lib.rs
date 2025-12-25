@@ -44,7 +44,6 @@ pub mod error;
 pub mod executor;
 pub mod formatter;
 pub mod parser;
-pub mod plugins;
 pub mod repl;
 pub mod utils;
 

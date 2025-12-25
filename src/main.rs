@@ -29,7 +29,6 @@ mod error;
 mod executor;
 mod formatter;
 mod parser;
-mod plugins;
 mod repl;
 mod utils;
 
