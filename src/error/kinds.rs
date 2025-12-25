@@ -1,19 +1,24 @@
+//! Error types for the MongoDB shell application.
+//!
+//! This module defines a streamlined error hierarchy that wraps MongoDB driver
+//! errors and provides additional application-specific error types.
+
 use std::{fmt, io};
 
 use crate::error::mongo::format_mongodb_error;
 
 /// Crate-wide `Result` type using [`MongoshError`] as the error.
-///
-/// This alias is re-exported by the parent `error` module and is intended
-/// to be used throughout the crate for fallible operations.
 pub type Result<T> = std::result::Result<T, MongoshError>;
 
 /// Top-level error type for mongosh operations.
 ///
-/// This type wraps more specific error kinds and provides a single
-/// error type that can be used throughout the crate.
+/// This type provides a unified error interface for the entire application,
+/// wrapping MongoDB driver errors and application-specific errors.
 #[derive(Debug)]
 pub enum MongoshError {
+    /// MongoDB driver errors (automatically formatted as structured JSON).
+    MongoDb(mongodb::error::Error),
+
     /// Connection-related errors.
     Connection(ConnectionError),
 
@@ -29,19 +34,7 @@ pub enum MongoshError {
     /// I/O errors.
     Io(io::Error),
 
-    /// MongoDB driver errors.
-    MongoDb(mongodb::error::Error),
-
-    /// Authentication errors.
-    Auth(AuthError),
-
-    /// Plugin-related errors.
-    Plugin(PluginError),
-
-    /// Script execution errors.
-    Script(ScriptError),
-
-    /// Generic error with a free-form message.
+    /// Generic error with a message.
     Generic(String),
 
     /// Feature not yet implemented.
@@ -60,20 +53,11 @@ pub enum ConnectionError {
     /// Invalid connection URI.
     InvalidUri(String),
 
-    /// Connection lost.
-    Disconnected,
-
-    /// Connection pool exhausted.
-    PoolExhausted,
-
     /// Not currently connected to MongoDB.
     NotConnected,
 
     /// Ping command failed.
     PingFailed(String),
-
-    /// Command execution failed.
-    CommandFailed(String),
 
     /// Session operation failed.
     SessionFailed(String),
@@ -85,14 +69,11 @@ pub enum ConnectionError {
 /// Parsing-specific errors.
 #[derive(Debug)]
 pub enum ParseError {
-    /// Syntax error in command.
+    /// Syntax error in input.
     SyntaxError(String),
 
     /// Invalid command format.
     InvalidCommand(String),
-
-    /// Unexpected token while parsing.
-    UnexpectedToken { expected: String, found: String },
 
     /// Invalid query syntax.
     InvalidQuery(String),
@@ -107,14 +88,8 @@ pub enum ExecutionError {
     /// Query execution failed.
     QueryFailed(String),
 
-    /// Operation not supported.
-    UnsupportedOperation(String),
-
     /// Invalid operation parameters.
     InvalidParameters(String),
-
-    /// Transaction error.
-    TransactionError(String),
 
     /// Cursor error.
     CursorError(String),
@@ -131,78 +106,23 @@ pub enum ConfigError {
 
     /// Missing required field.
     MissingField(String),
-
-    /// Invalid field value.
-    InvalidValue { field: String, value: String },
 }
 
-/// Authentication-specific errors.
-#[derive(Debug)]
-pub enum AuthError {
-    /// Authentication failed.
-    AuthenticationFailed(String),
-
-    /// Invalid credentials.
-    InvalidCredentials,
-
-    /// Permission denied.
-    PermissionDenied(String),
-
-    /// Token expired.
-    TokenExpired,
-}
-
-/// Plugin-specific errors.
-#[derive(Debug)]
-pub enum PluginError {
-    /// Plugin not found.
-    NotFound(String),
-
-    /// Plugin load failed.
-    LoadFailed(String),
-
-    /// Plugin initialization failed.
-    InitFailed(String),
-
-    /// Plugin execution failed.
-    ExecutionFailed(String),
-
-    /// Invalid plugin.
-    Invalid(String),
-}
-
-/// Script execution errors.
-#[derive(Debug)]
-pub enum ScriptError {
-    /// Script file not found.
-    FileNotFound(String),
-
-    /// Script parse error.
-    ParseError(String),
-
-    /// Script runtime error.
-    RuntimeError(String),
-
-    /// Script timeout.
-    Timeout,
-}
-
-/* ========================= Display & Error impls ========================= */
+// ============================================================================
+// Display implementations
+// ============================================================================
 
 impl fmt::Display for MongoshError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            MongoshError::Connection(e) => write!(f, "Connection error: {e}"),
-            MongoshError::Parse(e) => write!(f, "{e}"),
-            MongoshError::Execution(e) => write!(f, "Execution error: {e}"),
-            MongoshError::Config(e) => write!(f, "Configuration error: {e}"),
-            MongoshError::Io(e) => write!(f, "I/O error: {e}"),
             MongoshError::MongoDb(e) => format_mongodb_error(f, e),
-            MongoshError::Auth(e) => write!(f, "Authentication error: {e}"),
-            MongoshError::Plugin(e) => write!(f, "Plugin error: {e}"),
-            MongoshError::Script(e) => write!(f, "Script error: {e}"),
-            MongoshError::Generic(msg) => write!(f, "{msg}"),
-            MongoshError::NotImplemented(msg) => write!(f, "Not implemented: {msg}"),
+            MongoshError::Connection(e) => write!(f, "Connection error: {}", e),
+            MongoshError::Parse(e) => write!(f, "Parse error: {}", e),
+            MongoshError::Execution(e) => write!(f, "Execution error: {}", e),
+            MongoshError::Config(e) => write!(f, "Configuration error: {}", e),
+            MongoshError::Io(e) => write!(f, "I/O error: {}", e),
+            MongoshError::Generic(msg) => write!(f, "{}", msg),
+            MongoshError::NotImplemented(msg) => write!(f, "Not implemented: {}", msg),
         }
     }
 }
@@ -210,19 +130,14 @@ impl fmt::Display for MongoshError {
 impl fmt::Display for ConnectionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ConnectionError::ConnectionFailed(msg) => write!(f, "Failed to connect: {msg}"),
+            ConnectionError::ConnectionFailed(msg) => write!(f, "Failed to connect: {}", msg),
             ConnectionError::Timeout => write!(f, "Connection timeout"),
-            ConnectionError::InvalidUri(uri) => write!(f, "Invalid connection URI: {uri}"),
-            ConnectionError::Disconnected => write!(f, "Connection lost"),
-            ConnectionError::PoolExhausted => write!(f, "Connection pool exhausted"),
+            ConnectionError::InvalidUri(uri) => write!(f, "Invalid connection URI: {}", uri),
             ConnectionError::NotConnected => write!(f, "Not connected to MongoDB"),
-            ConnectionError::PingFailed(msg) => write!(f, "Ping failed: {msg}"),
-            ConnectionError::CommandFailed(msg) => write!(f, "Command failed: {msg}"),
-            ConnectionError::SessionFailed(msg) => {
-                write!(f, "Session operation failed: {msg}")
-            }
+            ConnectionError::PingFailed(msg) => write!(f, "Ping failed: {}", msg),
+            ConnectionError::SessionFailed(msg) => write!(f, "Session operation failed: {}", msg),
             ConnectionError::TransactionFailed(msg) => {
-                write!(f, "Transaction operation failed: {msg}")
+                write!(f, "Transaction operation failed: {}", msg)
             }
         }
     }
@@ -231,13 +146,10 @@ impl fmt::Display for ConnectionError {
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ParseError::SyntaxError(msg) => write!(f, "Syntax error: {msg}"),
-            ParseError::InvalidCommand(cmd) => write!(f, "Invalid command: {cmd}"),
-            ParseError::UnexpectedToken { expected, found } => {
-                write!(f, "Expected '{expected}', found '{found}'")
-            }
-            ParseError::InvalidQuery(msg) => write!(f, "Invalid query: {msg}"),
-            ParseError::InvalidPipeline(msg) => write!(f, "Invalid pipeline: {msg}"),
+            ParseError::SyntaxError(msg) => write!(f, "Syntax error: {}", msg),
+            ParseError::InvalidCommand(cmd) => write!(f, "Invalid command: {}", cmd),
+            ParseError::InvalidQuery(msg) => write!(f, "Invalid query: {}", msg),
+            ParseError::InvalidPipeline(msg) => write!(f, "Invalid pipeline: {}", msg),
         }
     }
 }
@@ -245,13 +157,9 @@ impl fmt::Display for ParseError {
 impl fmt::Display for ExecutionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ExecutionError::QueryFailed(msg) => write!(f, "Query failed: {msg}"),
-            ExecutionError::UnsupportedOperation(op) => {
-                write!(f, "Unsupported operation: {op}")
-            }
-            ExecutionError::InvalidParameters(msg) => write!(f, "Invalid parameters: {msg}"),
-            ExecutionError::TransactionError(msg) => write!(f, "Transaction error: {msg}"),
-            ExecutionError::CursorError(msg) => write!(f, "Cursor error: {msg}"),
+            ExecutionError::QueryFailed(msg) => write!(f, "Query failed: {}", msg),
+            ExecutionError::InvalidParameters(msg) => write!(f, "Invalid parameters: {}", msg),
+            ExecutionError::CursorError(msg) => write!(f, "Cursor error: {}", msg),
         }
     }
 }
@@ -259,70 +167,26 @@ impl fmt::Display for ExecutionError {
 impl fmt::Display for ConfigError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ConfigError::FileNotFound(path) => write!(f, "Config file not found: {path}"),
-            ConfigError::InvalidFormat(msg) => write!(f, "Invalid config format: {msg}"),
-            ConfigError::MissingField(field) => write!(f, "Missing required field: {field}"),
-            ConfigError::InvalidValue { field, value } => {
-                write!(f, "Invalid value '{value}' for field '{field}'")
-            }
+            ConfigError::FileNotFound(path) => write!(f, "Config file not found: {}", path),
+            ConfigError::InvalidFormat(msg) => write!(f, "Invalid config format: {}", msg),
+            ConfigError::MissingField(field) => write!(f, "Missing required field: {}", field),
         }
     }
 }
 
-impl fmt::Display for AuthError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            AuthError::AuthenticationFailed(msg) => {
-                write!(f, "Authentication failed: {msg}")
-            }
-            AuthError::InvalidCredentials => write!(f, "Invalid credentials"),
-            AuthError::PermissionDenied(msg) => write!(f, "Permission denied: {msg}"),
-            AuthError::TokenExpired => write!(f, "Authentication token expired"),
-        }
-    }
-}
-
-impl fmt::Display for PluginError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            PluginError::NotFound(name) => write!(f, "Plugin not found: {name}"),
-            PluginError::LoadFailed(msg) => write!(f, "Failed to load plugin: {msg}"),
-            PluginError::InitFailed(msg) => write!(f, "Failed to initialize plugin: {msg}"),
-            PluginError::ExecutionFailed(msg) => {
-                write!(f, "Plugin execution failed: {msg}")
-            }
-            PluginError::Invalid(msg) => write!(f, "Invalid plugin: {msg}"),
-        }
-    }
-}
-
-impl fmt::Display for ScriptError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ScriptError::FileNotFound(path) => write!(f, "Script file not found: {path}"),
-            ScriptError::ParseError(msg) => write!(f, "Script parse error: {msg}"),
-            ScriptError::RuntimeError(msg) => write!(f, "Script runtime error: {msg}"),
-            ScriptError::Timeout => write!(f, "Script execution timeout"),
-        }
-    }
-}
+// ============================================================================
+// Error trait implementations
+// ============================================================================
 
 impl std::error::Error for MongoshError {}
 impl std::error::Error for ConnectionError {}
 impl std::error::Error for ParseError {}
 impl std::error::Error for ExecutionError {}
 impl std::error::Error for ConfigError {}
-impl std::error::Error for AuthError {}
-impl std::error::Error for PluginError {}
-impl std::error::Error for ScriptError {}
 
-/* ========================= Conversions to MongoshError ========================= */
-
-impl From<io::Error> for MongoshError {
-    fn from(err: io::Error) -> Self {
-        MongoshError::Io(err)
-    }
-}
+// ============================================================================
+// Conversions to MongoshError
+// ============================================================================
 
 impl From<mongodb::error::Error> for MongoshError {
     fn from(err: mongodb::error::Error) -> Self {
@@ -354,21 +218,9 @@ impl From<ConfigError> for MongoshError {
     }
 }
 
-impl From<AuthError> for MongoshError {
-    fn from(err: AuthError) -> Self {
-        MongoshError::Auth(err)
-    }
-}
-
-impl From<PluginError> for MongoshError {
-    fn from(err: PluginError) -> Self {
-        MongoshError::Plugin(err)
-    }
-}
-
-impl From<ScriptError> for MongoshError {
-    fn from(err: ScriptError) -> Self {
-        MongoshError::Script(err)
+impl From<io::Error> for MongoshError {
+    fn from(err: io::Error) -> Self {
+        MongoshError::Io(err)
     }
 }
 
@@ -380,12 +232,24 @@ impl From<String> for MongoshError {
 
 impl From<&str> for MongoshError {
     fn from(msg: &str) -> Self {
-        MongoshError::Generic(msg.to_owned())
+        MongoshError::Generic(msg.to_string())
+    }
+}
+
+impl From<bson::ser::Error> for MongoshError {
+    fn from(err: bson::ser::Error) -> Self {
+        MongoshError::Generic(format!("BSON serialization error: {}", err))
+    }
+}
+
+impl From<bson::de::Error> for MongoshError {
+    fn from(err: bson::de::Error) -> Self {
+        MongoshError::Generic(format!("BSON deserialization error: {}", err))
     }
 }
 
 impl From<rustyline::error::ReadlineError> for MongoshError {
     fn from(err: rustyline::error::ReadlineError) -> Self {
-        MongoshError::Generic(format!("Readline error: {err}"))
+        MongoshError::Generic(format!("Readline error: {}", err))
     }
 }
