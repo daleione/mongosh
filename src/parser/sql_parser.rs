@@ -332,18 +332,25 @@ impl SqlParser {
 
                     // Check for AS alias
                     let alias = if self.match_keyword(&TokenKind::As) {
-                        if let Some(TokenKind::Ident(alias_name)) = self.peek_kind() {
-                            let alias = alias_name.clone();
-                            self.advance();
-                            Some(alias)
-                        } else if self.is_at_eof() {
-                            self.expected = vec![Expected::ColumnName];
-                            return ParseResult::Partial(
-                                SqlColumn::Field { name, alias: None },
-                                self.expected.clone(),
-                            );
-                        } else {
-                            None
+                        match self.peek_kind() {
+                            Some(TokenKind::Ident(alias_name)) => {
+                                let alias = alias_name.clone();
+                                self.advance();
+                                Some(alias)
+                            }
+                            Some(TokenKind::String(alias_name)) => {
+                                let alias = alias_name.clone();
+                                self.advance();
+                                Some(alias)
+                            }
+                            _ if self.is_at_eof() => {
+                                self.expected = vec![Expected::ColumnName];
+                                return ParseResult::Partial(
+                                    SqlColumn::Field { name, alias: None },
+                                    self.expected.clone(),
+                                );
+                            }
+                            _ => None,
                         }
                     } else {
                         None
@@ -454,22 +461,29 @@ impl SqlParser {
 
         // Check for AS alias
         let alias = if self.match_keyword(&TokenKind::As) {
-            if let Some(TokenKind::Ident(alias_name)) = self.peek_kind() {
-                let alias = alias_name.clone();
-                self.advance();
-                Some(alias)
-            } else if self.is_at_eof() {
-                self.expected = vec![Expected::ColumnName];
-                return ParseResult::Partial(
-                    SqlColumn::Aggregate {
-                        func,
-                        field,
-                        alias: None,
-                    },
-                    self.expected.clone(),
-                );
-            } else {
-                None
+            match self.peek_kind() {
+                Some(TokenKind::Ident(alias_name)) => {
+                    let alias = alias_name.clone();
+                    self.advance();
+                    Some(alias)
+                }
+                Some(TokenKind::String(alias_name)) => {
+                    let alias = alias_name.clone();
+                    self.advance();
+                    Some(alias)
+                }
+                _ if self.is_at_eof() => {
+                    self.expected = vec![Expected::ColumnName];
+                    return ParseResult::Partial(
+                        SqlColumn::Aggregate {
+                            func,
+                            field,
+                            alias: None,
+                        },
+                        self.expected.clone(),
+                    );
+                }
+                _ => None,
             }
         } else {
             None
@@ -855,9 +869,35 @@ impl SqlParser {
         }
 
         // Add $group stage for GROUP BY
-        if let Some(group_by) = ast.group_by {
-            let group_doc = SqlExprConverter::build_group_stage(&group_by, &ast.columns)?;
+        if let Some(ref group_by) = ast.group_by {
+            let group_doc = SqlExprConverter::build_group_stage(group_by, &ast.columns)?;
             pipeline.push(doc! { "$group": group_doc });
+
+            // Add $project stage to rename _id to the original field name(s)
+            let mut project_doc = Document::new();
+
+            if group_by.len() == 1 {
+                // Single field grouping - rename _id to the field name
+                project_doc.insert("_id", 0); // Exclude _id
+                project_doc.insert(group_by[0].clone(), "$_id");
+            } else {
+                // Multiple field grouping - expand _id object
+                project_doc.insert("_id", 0); // Exclude _id
+                for field in group_by {
+                    project_doc.insert(field.clone(), format!("$_id.{}", field));
+                }
+            }
+
+            // Include all aggregate function results
+            for col in &ast.columns {
+                if let SqlColumn::Aggregate { func, field, alias } = col {
+                    let output_name =
+                        SqlExprConverter::get_aggregate_output_name(func, field, alias);
+                    project_doc.insert(output_name.clone(), format!("${}", output_name));
+                }
+            }
+
+            pipeline.push(doc! { "$project": project_doc });
         }
 
         // Add $sort stage for ORDER BY
@@ -1040,5 +1080,24 @@ mod tests {
             context.expected.contains(&Expected::ColumnName)
                 || context.expected.contains(&Expected::Expression)
         );
+    }
+
+    #[test]
+    fn test_parse_with_string_alias() {
+        let result = SqlParser::parse_to_command(
+            "SELECT group_id AS 'group_id', COUNT(*) FROM templates GROUP BY group_id",
+        );
+        assert!(result.is_ok());
+        let cmd = result.unwrap();
+        assert!(matches!(
+            cmd,
+            Command::Query(QueryCommand::Aggregate { .. })
+        ));
+    }
+
+    #[test]
+    fn test_parse_aggregate_with_alias() {
+        let result = SqlParser::parse_to_command("SELECT COUNT(*) AS total FROM users");
+        assert!(result.is_ok());
     }
 }

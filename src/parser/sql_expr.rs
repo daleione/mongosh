@@ -246,6 +246,27 @@ impl SqlExprConverter {
         }
     }
 
+    /// Get the output field name for an aggregate column
+    pub fn get_aggregate_output_name(
+        func: &str,
+        field: &Option<String>,
+        alias: &Option<String>,
+    ) -> String {
+        if let Some(alias_value) = alias {
+            alias_value.clone()
+        } else {
+            let func_upper = func.to_uppercase();
+            match func_upper.as_str() {
+                "COUNT" => "count".to_string(),
+                "SUM" => format!("sum_{}", field.as_deref().unwrap_or("value")),
+                "AVG" => format!("avg_{}", field.as_deref().unwrap_or("value")),
+                "MIN" => format!("min_{}", field.as_deref().unwrap_or("value")),
+                "MAX" => format!("max_{}", field.as_deref().unwrap_or("value")),
+                _ => format!("{}_{}", func_upper, field.as_deref().unwrap_or("*")),
+            }
+        }
+    }
+
     /// Build aggregation $group stage from GROUP BY and aggregate functions
     pub fn build_group_stage(group_by: &[String], columns: &[SqlColumn]) -> Result<Document> {
         let mut group_doc = Document::new();
@@ -267,8 +288,7 @@ impl SqlExprConverter {
         for col in columns {
             if let SqlColumn::Aggregate { func, field, alias } = col {
                 let func_upper = func.to_uppercase();
-                let default_name = format!("{}_{}", func_upper, field.as_deref().unwrap_or("*"));
-                let output_name = alias.as_ref().unwrap_or(&default_name);
+                let output_name = Self::get_aggregate_output_name(func, field, alias);
 
                 let agg_expr = match func_upper.as_str() {
                     "COUNT" => {
@@ -311,7 +331,7 @@ impl SqlExprConverter {
                     }
                 };
 
-                group_doc.insert(output_name.clone(), agg_expr);
+                group_doc.insert(output_name, agg_expr);
             }
         }
 
@@ -423,5 +443,36 @@ mod tests {
         let lit = SqlLiteral::Boolean(true);
         let bson = SqlExprConverter::literal_to_bson(&lit);
         assert_eq!(bson, mongodb::bson::Bson::Boolean(true));
+    }
+
+    #[test]
+    fn test_get_aggregate_output_name_count() {
+        let name = SqlExprConverter::get_aggregate_output_name("COUNT", &None, &None);
+        assert_eq!(name, "count");
+    }
+
+    #[test]
+    fn test_get_aggregate_output_name_with_alias() {
+        let name =
+            SqlExprConverter::get_aggregate_output_name("COUNT", &None, &Some("total".to_string()));
+        assert_eq!(name, "total");
+    }
+
+    #[test]
+    fn test_get_aggregate_output_name_sum() {
+        let name =
+            SqlExprConverter::get_aggregate_output_name("SUM", &Some("price".to_string()), &None);
+        assert_eq!(name, "sum_price");
+    }
+
+    #[test]
+    fn test_build_group_stage_with_count() {
+        let group_by = vec!["category".to_string()];
+        let columns = vec![SqlColumn::aggregate("COUNT".to_string(), None)];
+        let result = SqlExprConverter::build_group_stage(&group_by, &columns);
+        assert!(result.is_ok());
+        let doc = result.unwrap();
+        assert!(doc.contains_key("_id"));
+        assert!(doc.contains_key("count"));
     }
 }
