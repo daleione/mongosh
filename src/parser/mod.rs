@@ -34,9 +34,15 @@ mod command;
 mod db_operation;
 mod expr_converter;
 mod shell_commands;
+mod sql_context;
+mod sql_expr;
+mod sql_lexer;
+mod sql_parser;
 
 // Re-export public API
 pub use command::*;
+pub use sql_context::{Expected, ParseResult, SqlContext};
+pub use sql_parser::SqlParser;
 
 use crate::error::{ParseError, Result};
 
@@ -126,6 +132,11 @@ impl Parser {
         // Handle empty input
         if trimmed.is_empty() {
             return Err(ParseError::InvalidCommand("Empty input".to_string()).into());
+        }
+
+        // Check if it's a SQL SELECT command
+        if sql_parser::SqlParser::is_sql_command(trimmed) {
+            return sql_parser::SqlParser::parse_to_command(trimmed);
         }
 
         // Check if it's a shell command (show, use, help, exit, quit)
