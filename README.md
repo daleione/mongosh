@@ -138,6 +138,67 @@ db.orders.aggregate([
 
 ---
 
+## 🔍 SQL Query Support
+
+This shell now supports SQL SELECT queries that are automatically translated to MongoDB queries!
+
+### Basic SELECT Queries
+
+```sql
+-- Simple query with filtering and sorting
+SELECT name, age FROM users WHERE age > 18 ORDER BY name ASC
+
+-- Pagination with LIMIT and OFFSET
+SELECT * FROM users LIMIT 10 OFFSET 5
+```
+
+### Aggregate Functions
+
+```sql
+-- Column aliases support both identifiers and quoted strings
+SELECT group_id AS 'group_id', COUNT(*) FROM templates GROUP BY group_id
+
+-- Group by with multiple aggregates
+SELECT
+  category,
+  COUNT(*) AS total,
+  SUM(price) AS revenue
+FROM products
+GROUP BY category
+```
+
+### Supported SQL Features
+
+- ✅ SELECT with column list or `*`
+- ✅ FROM clause
+- ✅ WHERE with comparison operators (`=`, `!=`, `>`, `<`, `>=`, `<=`)
+- ✅ Logical operators (AND, OR)
+- ✅ GROUP BY with aggregation functions (COUNT, SUM, AVG, MIN, MAX)
+- ✅ ORDER BY with ASC/DESC
+- ✅ LIMIT and OFFSET
+- ✅ Column aliases with AS (supports both identifiers and string literals)
+
+### SQL to MongoDB Translation Examples
+
+| SQL                                     | MongoDB                                                  |
+| --------------------------------------- | -------------------------------------------------------- |
+| `SELECT * FROM users`                   | `db.users.find({})`                                      |
+| `SELECT name, age FROM users`           | `db.users.find({}, {name: 1, age: 1})`                   |
+| `WHERE age > 18`                        | `{age: {$gt: 18}}`                                       |
+| `WHERE status = 'active' AND age >= 18` | `{$and: [{status: 'active'}, {age: {$gte: 18}}]}`        |
+| `ORDER BY name ASC`                     | `{name: 1}`                                              |
+| `LIMIT 10`                              | `limit(10)`                                              |
+| `GROUP BY category`                     | `aggregate([{$group: {_id: "$category"}}])`              |
+| `SELECT COUNT(*) FROM users`            | `aggregate([{$group: {_id: null, COUNT_*: {$sum: 1}}}])` |
+
+### Notes
+
+- SQL queries are automatically detected when starting with `SELECT`
+- Complex JOIN operations are not yet supported
+- Subqueries are not yet supported
+
+---
+
 ## 📄 License
 
 Licensed under the [MIT License](https://opensource.org/licenses/MIT).
