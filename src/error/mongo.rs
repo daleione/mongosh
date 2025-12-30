@@ -30,6 +30,7 @@ impl ErrorResponse {
     }
 
     /// Convert to compact JSON string (single line).
+    #[allow(dead_code)]
     pub fn to_json_compact(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string(&self.error)
     }

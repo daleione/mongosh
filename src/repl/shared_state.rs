@@ -9,9 +9,6 @@ pub struct SharedState {
     /// Current database name
     pub current_database: Arc<RwLock<String>>,
 
-    /// Current connection URI
-    pub connection_uri: String,
-
     /// Whether connected to server
     pub connected: Arc<RwLock<bool>>,
 
@@ -32,11 +29,9 @@ impl SharedState {
     /// Create a new shared state.
     ///
     /// * `database` - Initial database name
-    /// * `uri` - Connection URI
-    pub fn new(database: String, uri: String) -> Self {
+    pub fn new(database: String) -> Self {
         Self {
             current_database: Arc::new(RwLock::new(database)),
-            connection_uri: uri,
             connected: Arc::new(RwLock::new(false)),
             server_version: Arc::new(RwLock::new(None)),
             output_format: Arc::new(RwLock::new(OutputFormat::Shell)),
@@ -108,11 +103,5 @@ impl SharedState {
     pub fn set_connected(&mut self, version: Option<String>) {
         *self.connected.write().unwrap() = true;
         *self.server_version.write().unwrap() = version;
-    }
-
-    /// Mark as disconnected and clear server version.
-    pub fn set_disconnected(&mut self) {
-        *self.connected.write().unwrap() = false;
-        *self.server_version.write().unwrap() = None;
     }
 }

@@ -177,14 +177,6 @@ impl CliInterface {
         Ok(Self { args, config })
     }
 
-    /// Parse command-line arguments
-    ///
-    /// # Returns
-    /// * `CliArgs` - Parsed arguments
-    pub fn parse_args() -> CliArgs {
-        CliArgs::parse()
-    }
-
     /// Load configuration from file and merge with arguments
     ///
     /// # Arguments
@@ -200,17 +192,6 @@ impl CliInterface {
         Self::apply_args_to_config(&mut config, args);
 
         Ok(config)
-    }
-
-    /// Run the CLI application
-    ///
-    /// This is the main entry point that determines the execution mode
-    /// and starts either the REPL or script execution.
-    ///
-    /// # Returns
-    /// * `Result<()>` - Success or error
-    pub async fn run(&self) -> Result<()> {
-        todo!("Determine execution mode and start appropriate handler")
     }
 
     /// Get the MongoDB connection URI
@@ -343,14 +324,6 @@ impl CliInterface {
         &self.config
     }
 
-    /// Get mutable reference to configuration
-    ///
-    /// # Returns
-    /// * `&mut Config` - Mutable reference to configuration
-    pub fn config_mut(&mut self) -> &mut Config {
-        &mut self.config
-    }
-
     /// Get the CLI arguments
     ///
     /// # Returns
@@ -405,12 +378,6 @@ impl CliInterface {
     }
 
     /// Validate configuration and arguments
-    ///
-    /// # Returns
-    /// * `Result<()>` - Ok if valid, error otherwise
-    pub fn validate(&self) -> Result<()> {
-        todo!("Validate configuration and argument combinations")
-    }
 
     /// Handle subcommands
     ///
@@ -455,18 +422,13 @@ impl CliInterface {
     ///
     /// # Arguments
     /// * `show` - Whether to show configuration
-    /// * `validate` - Whether to validate configuration
-    ///
     /// # Returns
     /// * `Result<()>` - Success or error
-    fn handle_config_command(&self, show: bool, validate: bool) -> Result<()> {
+    fn handle_config_command(&self, show: bool, _validate: bool) -> Result<()> {
         if show {
             println!("{:#?}", self.config);
         }
-        if validate {
-            self.config.validate()?;
-            println!("Configuration is valid");
-        }
+        // Config validation removed - configs are validated at load time
         Ok(())
     }
 

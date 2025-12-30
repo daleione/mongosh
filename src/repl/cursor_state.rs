@@ -72,16 +72,4 @@ impl CursorState {
     pub fn has_more(&self) -> bool {
         self.has_more
     }
-
-    /// Get display information for the current cursor state
-    ///
-    /// # Returns
-    /// * `String` - Human-readable display info
-    pub fn get_display_info(&self) -> String {
-        if let Some(total) = self.total_matched {
-            format!("Displayed {}/{} documents", self.documents_retrieved, total)
-        } else {
-            format!("Displayed {} documents", self.documents_retrieved)
-        }
-    }
 }

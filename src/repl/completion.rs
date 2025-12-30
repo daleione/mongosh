@@ -6,6 +6,7 @@ use std::fmt;
 /// the rest of the REPL infrastructure and can be used independently anywhere
 /// a list of shell‑style completions is useful.
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct CommandCompleter {
     /// Available commands that can be suggested as completions.
     commands: Vec<String>,
@@ -55,6 +56,7 @@ impl CommandCompleter {
     /// # Returns
     ///
     /// A vector of matching command strings.
+    #[allow(dead_code)]
     pub fn get_completions(&self, partial: &str) -> Vec<String> {
         self.commands
             .iter()
@@ -64,6 +66,7 @@ impl CommandCompleter {
     }
 
     /// Expose an immutable view of the underlying commands list.
+    #[allow(dead_code)]
     pub fn commands(&self) -> &[String] {
         &self.commands
     }

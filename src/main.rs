@@ -30,7 +30,6 @@ mod executor;
 mod formatter;
 mod parser;
 mod repl;
-mod utils;
 
 use cli::CliInterface;
 
@@ -100,7 +99,7 @@ async fn run_interactive_mode(cli: &CliInterface) -> Result<()> {
     }
 
     // Create shared state for REPL and execution context
-    let mut shared_state = SharedState::new(database.clone(), uri);
+    let mut shared_state = SharedState::new(database.clone());
     shared_state.set_connected(None); // Mark as connected (version detection is optional)
 
     // Create execution context with shared state
@@ -116,11 +115,11 @@ async fn run_interactive_mode(cli: &CliInterface) -> Result<()> {
 
     // Create REPL engine with shared state
     let color_enabled = cli.config().display.color_output && !cli.args().no_color;
+    shared_state.set_color_enabled(color_enabled);
     let highlighting_enabled = true; // TODO: make configurable
     let mut repl = ReplEngine::new(
         shared_state.clone(),
         cli.config().history.clone(),
-        color_enabled,
         highlighting_enabled,
     )?;
 

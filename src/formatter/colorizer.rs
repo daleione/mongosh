@@ -252,14 +252,6 @@ impl Colorizer {
             text.to_string()
         }
     }
-
-    /// Enable or disable colors
-    ///
-    /// # Arguments
-    /// * `enabled` - Whether to enable colors
-    pub fn set_enabled(&mut self, enabled: bool) {
-        self.enabled = enabled;
-    }
 }
 
 #[cfg(test)]

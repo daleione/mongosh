@@ -7,7 +7,7 @@
 //! - Automatic reconnection with exponential backoff
 //! - Session management for transactions
 
-use mongodb::{Client, Database, options::ClientOptions};
+use mongodb::{Client, ClientSession, Database, options::ClientOptions};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
@@ -50,11 +50,13 @@ pub enum ConnectionState {
     Failed(String),
 
     /// Reconnecting after failure
+    #[allow(dead_code)]
     Reconnecting,
 }
 
 /// Connection pool configuration
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct PoolConfig {
     /// Maximum number of connections in the pool
     pub max_size: u32,
@@ -71,6 +73,7 @@ pub struct PoolConfig {
 
 /// Health check result
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct HealthStatus {
     /// Whether the connection is healthy
     pub is_healthy: bool,
@@ -140,6 +143,7 @@ impl ConnectionManager {
     ///
     /// # Returns
     /// * `Result<()>` - Success or error
+    #[allow(dead_code)]
     pub async fn disconnect(&mut self) -> Result<()> {
         info!("Disconnecting from MongoDB");
 
@@ -161,6 +165,7 @@ impl ConnectionManager {
     ///
     /// # Returns
     /// * `Result<()>` - Success or connection error
+    #[allow(dead_code)]
     pub async fn reconnect(&mut self) -> Result<()> {
         info!("Attempting to reconnect to MongoDB");
         self.set_state(ConnectionState::Reconnecting).await;
@@ -178,6 +183,7 @@ impl ConnectionManager {
     ///
     /// # Returns
     /// * `Result<HealthStatus>` - Health check results or error
+    #[allow(dead_code)]
     pub async fn health_check(&self) -> Result<HealthStatus> {
         let client = self.get_client()?;
         let start = Instant::now();
@@ -223,6 +229,7 @@ impl ConnectionManager {
     ///
     /// # Returns
     /// * `ConnectionState` - Current state
+    #[allow(dead_code)]
     pub async fn get_state(&self) -> ConnectionState {
         self.state.read().await.clone()
     }
@@ -231,6 +238,7 @@ impl ConnectionManager {
     ///
     /// # Returns
     /// * `bool` - True if connected
+    #[allow(dead_code)]
     pub async fn is_connected(&self) -> bool {
         matches!(*self.state.read().await, ConnectionState::Connected)
     }
@@ -406,9 +414,11 @@ impl ConnectionManager {
     ///
     /// # Arguments
     /// * `client` - MongoDB client
+    /// Get server version
     ///
     /// # Returns
-    /// * `Result<String>` - Server version string
+    /// * `Option<String>` - Server version string
+    #[allow(dead_code)]
     async fn get_server_version(&self, client: &Client) -> Result<String> {
         use mongodb::bson::doc;
 
@@ -482,6 +492,7 @@ impl From<&ConnectionConfig> for PoolConfig {
 /// Session manager for MongoDB transactions
 ///
 /// Manages client sessions for transaction support
+#[allow(dead_code)]
 pub struct SessionManager {
     /// Reference to MongoDB client
     client: Client,
@@ -495,6 +506,7 @@ impl SessionManager {
     ///
     /// # Returns
     /// * `Self` - New session manager
+    #[allow(dead_code)]
     pub fn new(client: Client) -> Self {
         Self { client }
     }
@@ -502,8 +514,9 @@ impl SessionManager {
     /// Start a new client session
     ///
     /// # Returns
-    /// * `Result<mongodb::ClientSession>` - New session or error
-    pub async fn start_session(&self) -> Result<mongodb::ClientSession> {
+    /// * `Result<ClientSession>` - New session or error
+    #[allow(dead_code)]
+    pub async fn start_session(&self) -> Result<ClientSession> {
         self.client
             .start_session()
             .await
@@ -511,13 +524,15 @@ impl SessionManager {
     }
 
     /// Start a transaction
+    /// Start a transaction within a session
     ///
     /// # Arguments
     /// * `session` - Client session
     ///
     /// # Returns
     /// * `Result<()>` - Success or error
-    pub async fn start_transaction(&self, session: &mut mongodb::ClientSession) -> Result<()> {
+    #[allow(dead_code)]
+    pub async fn start_transaction(&self, session: &mut ClientSession) -> Result<()> {
         session
             .start_transaction()
             .await
@@ -531,7 +546,8 @@ impl SessionManager {
     ///
     /// # Returns
     /// * `Result<()>` - Success or error
-    pub async fn commit_transaction(&self, session: &mut mongodb::ClientSession) -> Result<()> {
+    #[allow(dead_code)]
+    pub async fn commit_transaction(&self, session: &mut ClientSession) -> Result<()> {
         session
             .commit_transaction()
             .await
@@ -545,7 +561,8 @@ impl SessionManager {
     ///
     /// # Returns
     /// * `Result<()>` - Success or error
-    pub async fn abort_transaction(&self, session: &mut mongodb::ClientSession) -> Result<()> {
+    #[allow(dead_code)]
+    pub async fn abort_transaction(&self, session: &mut ClientSession) -> Result<()> {
         session
             .abort_transaction()
             .await

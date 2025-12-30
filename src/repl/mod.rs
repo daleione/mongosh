@@ -21,10 +21,8 @@ mod engine;
 mod helper;
 mod shared_state;
 
-pub use completion::CommandCompleter;
 pub use cursor_state::CursorState;
 pub use engine::ReplEngine;
-pub use helper::ReplHelper;
 pub use shared_state::SharedState;
 
 #[cfg(test)]

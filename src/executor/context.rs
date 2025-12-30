@@ -20,9 +20,6 @@ pub struct ExecutionContext {
 
     /// Shared state with REPL
     pub(crate) shared_state: SharedState,
-
-    /// Command execution history
-    history: Arc<RwLock<Vec<String>>>,
 }
 
 impl ExecutionContext {
@@ -38,7 +35,6 @@ impl ExecutionContext {
         Self {
             connection: Arc::new(RwLock::new(connection)),
             shared_state,
-            history: Arc::new(RwLock::new(Vec::new())),
         }
     }
 
@@ -77,38 +73,5 @@ impl ExecutionContext {
     pub async fn get_client(&self) -> Result<Client> {
         let conn = self.connection.read().await;
         Ok(conn.get_client()?.clone())
-    }
-
-    /// Add command to execution history
-    ///
-    /// # Arguments
-    /// * `command` - Command string to add
-    pub async fn add_to_history(&self, command: String) {
-        let mut history = self.history.write().await;
-        history.push(command);
-    }
-
-    /// Get execution history
-    ///
-    /// # Returns
-    /// * `Vec<String>` - List of executed commands
-    pub async fn get_history(&self) -> Vec<String> {
-        let history = self.history.read().await;
-        history.clone()
-    }
-
-    /// Clear execution history
-    pub async fn clear_history(&self) {
-        let mut history = self.history.write().await;
-        history.clear();
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #[tokio::test]
-    async fn test_history_management() {
-        // This is a placeholder test - would need proper setup with ConnectionManager
-        // and SharedState to fully test
     }
 }

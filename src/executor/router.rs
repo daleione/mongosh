@@ -10,7 +10,7 @@ use std::time::Instant;
 use tracing::debug;
 
 use crate::config::OutputFormat;
-use crate::error::{MongoshError, Result};
+use crate::error::Result;
 use crate::parser::{Command, ConfigCommand};
 
 use super::admin::AdminExecutor;
@@ -70,9 +70,6 @@ impl CommandRouter {
                 stats: ExecutionStats::default(),
                 error: None,
             }),
-            _ => Err(MongoshError::NotImplemented(
-                "Command type not yet implemented".to_string(),
-            )),
         };
 
         let elapsed = start.elapsed().as_millis() as u64;

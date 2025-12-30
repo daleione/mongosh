@@ -1,35 +1,25 @@
+use super::completion::CommandCompleter;
 use super::*;
 
 #[test]
 fn test_shared_state_creation() {
-    let state = SharedState::new("test".to_string(), "mongodb://localhost".to_string());
+    let state = SharedState::new("test".to_string());
     assert_eq!(state.get_database(), "test");
-    assert_eq!(state.connection_uri, "mongodb://localhost");
     assert!(!state.is_connected());
 }
 
 #[test]
 fn test_shared_state_connection() {
-    let mut state = SharedState::new("test".to_string(), "mongodb://localhost".to_string());
+    let mut state = SharedState::new("test".to_string());
     state.set_connected(Some("5.0.0".to_string()));
     assert!(state.is_connected());
 }
 
 #[test]
 fn test_shared_state_database_change() {
-    let mut state = SharedState::new("test".to_string(), "mongodb://localhost".to_string());
+    let mut state = SharedState::new("test".to_string());
     state.set_database("newdb".to_string());
     assert_eq!(state.get_database(), "newdb");
-}
-
-#[test]
-fn test_shared_state_disconnection() {
-    let mut state = SharedState::new("test".to_string(), "mongodb://localhost".to_string());
-    state.set_connected(Some("5.0.0".to_string()));
-    assert!(state.is_connected());
-
-    state.set_disconnected();
-    assert!(!state.is_connected());
 }
 
 #[test]
@@ -63,7 +53,7 @@ fn test_cursor_state_update() {
 
 #[test]
 fn test_shared_state_cursor_operations() {
-    let state = SharedState::new("test".to_string(), "mongodb://localhost".to_string());
+    let state = SharedState::new("test".to_string());
 
     assert!(!state.has_active_cursor());
     assert!(state.get_cursor_state().is_none());

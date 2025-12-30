@@ -46,9 +46,6 @@ impl UtilityExecutor {
                 error: None,
             }),
             UtilityCommand::Iterate => self.execute_iterate().await,
-            _ => Err(MongoshError::NotImplemented(
-                "Utility command not yet implemented".to_string(),
-            )),
         }
     }
 
@@ -200,10 +197,7 @@ impl Default for UtilityExecutor {
                 "mongodb://localhost:27017".to_string(),
                 crate::config::ConnectionConfig::default(),
             ),
-            crate::repl::SharedState::new(
-                "test".to_string(),
-                "mongodb://localhost:27017".to_string(),
-            ),
+            crate::repl::SharedState::new("test".to_string()),
         ))
     }
 }

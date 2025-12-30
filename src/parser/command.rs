@@ -21,9 +21,6 @@ pub enum Command {
     /// Configuration command (set format, color, etc.)
     Config(ConfigCommand),
 
-    /// Script execution command
-    Script(ScriptCommand),
-
     /// Help command with optional topic
     Help(Option<String>),
 
@@ -174,25 +171,6 @@ pub enum AdminCommand {
     /// Switch to a database
     UseDatabase(String),
 
-    /// Create a collection
-    CreateCollection {
-        name: String,
-        options: Option<Document>,
-    },
-
-    /// Drop a collection
-    DropCollection(String),
-
-    /// Drop current database
-    DropDatabase,
-
-    /// Rename a collection
-    RenameCollection {
-        from: String,
-        to: String,
-        drop_target: bool,
-    },
-
     /// Create an index
     CreateIndex {
         collection: String,
@@ -206,38 +184,8 @@ pub enum AdminCommand {
         indexes: Vec<Document>,
     },
 
-    /// Drop an index
-    DropIndex { collection: String, name: String },
-
-    /// Drop all indexes on a collection
-    DropIndexes(String),
-
     /// List indexes on a collection
     ListIndexes(String),
-
-    /// Get collection statistics
-    CollectionStats(String),
-
-    /// Get database statistics
-    DatabaseStats,
-
-    /// Get server status
-    ServerStatus,
-
-    /// Get current operations
-    CurrentOp { include_all: bool },
-
-    /// Kill an operation
-    KillOp(i64),
-
-    /// Validate a collection
-    ValidateCollection { collection: String, full: bool },
-
-    /// Compact a collection
-    CompactCollection(String),
-
-    /// Repair database
-    RepairDatabase,
 }
 
 /// Utility commands
@@ -245,30 +193,10 @@ pub enum AdminCommand {
 /// Utility commands for shell operations
 pub enum UtilityCommand {
     /// Print/echo a value
+    #[allow(dead_code)]
     Print(String),
 
-    /// Print in JSON format
-    PrintJson(Document),
-
-    /// Get current time
-    CurrentTime,
-
-    /// Execute a raw database command
-    RunCommand(Document),
-
-    /// Get build info
-    BuildInfo,
-
-    /// Get host info
-    HostInfo,
-
-    /// Get connection status
-    ConnectionStatus,
-
-    /// Get database version
-    Version,
-
-    /// Iterate cursor (get next batch of results)
+    /// Iterate through more results (it command)
     Iterate,
 }
 
@@ -289,16 +217,6 @@ pub enum ConfigCommand {
 
     /// Show all current settings
     ShowConfig,
-}
-
-/// Script execution command
-#[derive(Debug, Clone, PartialEq)]
-pub struct ScriptCommand {
-    /// Script content or file path
-    pub content: String,
-
-    /// Whether content is a file path
-    pub is_file: bool,
 }
 
 /// Options for find operations
@@ -402,149 +320,4 @@ pub struct FindAndModifyOptions {
 
     /// Hint for index to use
     pub hint: Option<Document>,
-}
-
-impl Command {
-    /// Check if this is an exit command
-    pub fn is_exit(&self) -> bool {
-        matches!(self, Command::Exit)
-    }
-
-    /// Check if this is a help command
-    pub fn is_help(&self) -> bool {
-        matches!(self, Command::Help(_))
-    }
-
-    /// Check if this is a query command
-    pub fn is_query(&self) -> bool {
-        matches!(self, Command::Query(_))
-    }
-
-    /// Check if this is an admin command
-    pub fn is_admin(&self) -> bool {
-        matches!(self, Command::Admin(_))
-    }
-
-    /// Get command name for display
-    pub fn name(&self) -> &str {
-        match self {
-            Command::Query(q) => q.name(),
-            Command::Admin(a) => a.name(),
-            Command::Utility(u) => u.name(),
-            Command::Config(_) => "config",
-            Command::Script(_) => "script",
-            Command::Help(_) => "help",
-            Command::Exit => "exit",
-        }
-    }
-}
-
-impl QueryCommand {
-    /// Get the collection name for this query command
-    pub fn collection(&self) -> &str {
-        match self {
-            QueryCommand::Find { collection, .. }
-            | QueryCommand::FindOne { collection, .. }
-            | QueryCommand::InsertOne { collection, .. }
-            | QueryCommand::InsertMany { collection, .. }
-            | QueryCommand::UpdateOne { collection, .. }
-            | QueryCommand::UpdateMany { collection, .. }
-            | QueryCommand::ReplaceOne { collection, .. }
-            | QueryCommand::DeleteOne { collection, .. }
-            | QueryCommand::DeleteMany { collection, .. }
-            | QueryCommand::Aggregate { collection, .. }
-            | QueryCommand::CountDocuments { collection, .. }
-            | QueryCommand::EstimatedDocumentCount { collection, .. }
-            | QueryCommand::FindOneAndDelete { collection, .. }
-            | QueryCommand::FindOneAndUpdate { collection, .. }
-            | QueryCommand::FindOneAndReplace { collection, .. }
-            | QueryCommand::Distinct { collection, .. }
-            | QueryCommand::BulkWrite { collection, .. } => collection,
-        }
-    }
-
-    /// Get command name
-    pub fn name(&self) -> &str {
-        match self {
-            QueryCommand::Find { .. } => "find",
-            QueryCommand::FindOne { .. } => "findOne",
-            QueryCommand::InsertOne { .. } => "insertOne",
-            QueryCommand::InsertMany { .. } => "insertMany",
-            QueryCommand::UpdateOne { .. } => "updateOne",
-            QueryCommand::UpdateMany { .. } => "updateMany",
-            QueryCommand::ReplaceOne { .. } => "replaceOne",
-            QueryCommand::DeleteOne { .. } => "deleteOne",
-            QueryCommand::DeleteMany { .. } => "deleteMany",
-            QueryCommand::Aggregate { .. } => "aggregate",
-            QueryCommand::CountDocuments { .. } => "countDocuments",
-            QueryCommand::EstimatedDocumentCount { .. } => "estimatedDocumentCount",
-            QueryCommand::FindOneAndDelete { .. } => "findOneAndDelete",
-            QueryCommand::FindOneAndUpdate { .. } => "findOneAndUpdate",
-            QueryCommand::FindOneAndReplace { .. } => "findOneAndReplace",
-            QueryCommand::Distinct { .. } => "distinct",
-            QueryCommand::BulkWrite { .. } => "bulkWrite",
-        }
-    }
-}
-
-impl AdminCommand {
-    /// Get command name
-    pub fn name(&self) -> &str {
-        match self {
-            AdminCommand::ShowDatabases => "show dbs",
-            AdminCommand::ShowCollections => "show collections",
-            AdminCommand::ShowUsers => "show users",
-            AdminCommand::ShowRoles => "show roles",
-            AdminCommand::ShowProfile => "show profile",
-            AdminCommand::ShowLogs(_) => "show logs",
-            AdminCommand::UseDatabase(_) => "use",
-            AdminCommand::CreateCollection { .. } => "createCollection",
-            AdminCommand::DropCollection(_) => "dropCollection",
-            AdminCommand::DropDatabase => "dropDatabase",
-            AdminCommand::RenameCollection { .. } => "renameCollection",
-            AdminCommand::CreateIndex { .. } => "createIndex",
-            AdminCommand::CreateIndexes { .. } => "createIndexes",
-            AdminCommand::DropIndex { .. } => "dropIndex",
-            AdminCommand::DropIndexes(_) => "dropIndexes",
-            AdminCommand::ListIndexes(_) => "listIndexes",
-            AdminCommand::CollectionStats(_) => "collStats",
-            AdminCommand::DatabaseStats => "dbStats",
-            AdminCommand::ServerStatus => "serverStatus",
-            AdminCommand::CurrentOp { .. } => "currentOp",
-            AdminCommand::KillOp(_) => "killOp",
-            AdminCommand::ValidateCollection { .. } => "validate",
-            AdminCommand::CompactCollection(_) => "compact",
-            AdminCommand::RepairDatabase => "repairDatabase",
-        }
-    }
-}
-
-impl UtilityCommand {
-    /// Get command name
-    pub fn name(&self) -> &str {
-        match self {
-            UtilityCommand::Print(_) => "print",
-            UtilityCommand::PrintJson(_) => "printjson",
-            UtilityCommand::CurrentTime => "Date",
-            UtilityCommand::RunCommand(_) => "runCommand",
-            UtilityCommand::BuildInfo => "buildInfo",
-            UtilityCommand::HostInfo => "hostInfo",
-            UtilityCommand::ConnectionStatus => "connectionStatus",
-            UtilityCommand::Version => "version",
-            UtilityCommand::Iterate => "it",
-        }
-    }
-}
-
-impl ConfigCommand {
-    /// Get command name
-    pub fn name(&self) -> &str {
-        match self {
-            ConfigCommand::SetFormat(_) => "setFormat",
-            ConfigCommand::GetFormat => "getFormat",
-            ConfigCommand::SetColor(_) => "setColor",
-            ConfigCommand::GetColor => "getColor",
-            ConfigCommand::ShowConfig => "config",
-        }
-    }
 }

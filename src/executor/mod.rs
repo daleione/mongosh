@@ -66,8 +66,13 @@ mod utility;
 
 // Re-export public types
 pub use context::ExecutionContext;
-pub use result::{ExecutionResult, ExecutionStats, ResultData};
+pub use result::{ExecutionResult, ResultData};
 pub use router::CommandRouter;
+
+// ExecutionStats is part of the public API (used in lib and tests)
+// but not directly used by the bin target, so we suppress the bin warning
+#[cfg_attr(not(test), allow(unused_imports))]
+pub use result::ExecutionStats;
 
 // Re-export for convenience
 use crate::error::Result;

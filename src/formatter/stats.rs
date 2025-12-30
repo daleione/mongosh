@@ -51,9 +51,10 @@ impl StatsFormatter {
         }
 
         if self.show_count
-            && let Some(count) = result.stats.documents_affected {
-                parts.push(format!("Documents affected: {}", count));
-            }
+            && let Some(count) = result.stats.documents_affected
+        {
+            parts.push(format!("Documents affected: {}", count));
+        }
 
         if parts.is_empty() {
             String::new()

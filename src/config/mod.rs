@@ -12,10 +12,7 @@
 //! 4. Default values
 
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
-use std::time::Duration;
-
-use crate::error::Result;
+use std::path::PathBuf;
 
 /// Main configuration structure
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -335,104 +332,6 @@ impl Default for PluginConfig {
     }
 }
 
-impl Config {
-    /// Create a new configuration with default values
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Load configuration from a file
-    ///
-    /// # Arguments
-    /// * `path` - Path to the configuration file (TOML format)
-    ///
-    /// # Returns
-    /// * `Result<Config>` - Loaded configuration or error
-    pub fn from_file<P: AsRef<Path>>(_path: P) -> Result<Self> {
-        todo!("Load configuration from TOML file")
-    }
-
-    /// Load configuration from multiple sources with proper precedence
-    ///
-    /// # Returns
-    /// * `Result<Config>` - Merged configuration or error
-    pub fn load() -> Result<Self> {
-        todo!("Load configuration from all sources with precedence")
-    }
-
-    /// Load configuration from environment variables
-    ///
-    /// Environment variables are prefixed with MONGOSH_
-    /// Example: MONGOSH_CONNECTION_TIMEOUT=60
-    ///
-    /// # Returns
-    /// * `Result<Config>` - Configuration from environment or default
-    pub fn from_env() -> Result<Self> {
-        todo!("Load configuration from environment variables")
-    }
-
-    /// Get the default configuration file path
-    ///
-    /// # Returns
-    /// * `PathBuf` - Path to default configuration file
-    pub fn default_path() -> PathBuf {
-        dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".mongosh")
-            .join("config.toml")
-    }
-
-    /// Save configuration to a file
-    ///
-    /// # Arguments
-    /// * `path` - Path where to save the configuration
-    ///
-    /// # Returns
-    /// * `Result<()>` - Success or error
-    pub fn save<P: AsRef<Path>>(&self, _path: P) -> Result<()> {
-        todo!("Save configuration to TOML file")
-    }
-
-    /// Merge this configuration with another, giving priority to the other
-    ///
-    /// # Arguments
-    /// * `other` - Configuration to merge with (takes precedence)
-    ///
-    /// # Returns
-    /// * `Config` - Merged configuration
-    pub fn merge(&self, _other: &Config) -> Config {
-        todo!("Merge two configurations with proper precedence")
-    }
-
-    /// Validate the configuration
-    ///
-    /// # Returns
-    /// * `Result<()>` - Ok if valid, error otherwise
-    pub fn validate(&self) -> Result<()> {
-        todo!("Validate configuration values")
-    }
-
-    /// Get connection timeout as Duration
-    pub fn connection_timeout(&self) -> Duration {
-        Duration::from_secs(self.connection.timeout)
-    }
-
-    /// Get idle timeout as Duration
-    pub fn idle_timeout(&self) -> Duration {
-        Duration::from_secs(self.connection.idle_timeout)
-    }
-}
-
-impl ConnectionConfig {
-    /// Parse and validate the connection URI
-    ///
-    /// # Returns
-    /// * `Result<()>` - Ok if URI is valid, error otherwise
-    pub fn validate_uri(&self) -> Result<()> {
-        todo!("Validate MongoDB connection URI format")
-    }
-}
-
 impl LogLevel {
     /// Convert to tracing::Level
     pub fn to_tracing_level(&self) -> tracing::Level {
@@ -446,18 +345,6 @@ impl LogLevel {
     }
 }
 
-impl OutputFormat {
-    /// Check if format requires pretty printing
-    pub fn is_pretty(&self) -> bool {
-        matches!(self, OutputFormat::JsonPretty | OutputFormat::Table)
-    }
-
-    /// Check if format is JSON-based
-    pub fn is_json(&self) -> bool {
-        matches!(self, OutputFormat::Json | OutputFormat::JsonPretty)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -468,19 +355,5 @@ mod tests {
         assert_eq!(config.connection.default_uri, "mongodb://localhost:27017");
         assert_eq!(config.display.format, OutputFormat::Shell);
         assert!(config.display.color_output);
-    }
-
-    #[test]
-    fn test_output_format_checks() {
-        assert!(OutputFormat::JsonPretty.is_pretty());
-        assert!(OutputFormat::JsonPretty.is_json());
-        assert!(!OutputFormat::Compact.is_pretty());
-        assert!(OutputFormat::Table.is_pretty());
-    }
-
-    #[test]
-    fn test_connection_timeout() {
-        let config = Config::default();
-        assert_eq!(config.connection_timeout(), Duration::from_secs(30));
     }
 }

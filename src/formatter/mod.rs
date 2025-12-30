@@ -45,8 +45,6 @@ pub use shell::ShellFormatter;
 pub use stats::StatsFormatter;
 pub use table::TableFormatter;
 
-use mongodb::bson::Document;
-
 use crate::config::OutputFormat;
 use crate::error::Result;
 use crate::executor::{ExecutionResult, ResultData};
@@ -338,46 +336,6 @@ impl Formatter {
     fn format_stats(&self, result: &ExecutionResult) -> String {
         let formatter = StatsFormatter::new(true, true);
         formatter.format(result)
-    }
-
-    /// Format a single BSON document
-    ///
-    /// # Arguments
-    /// * `doc` - Document to format
-    ///
-    /// # Returns
-    /// * `String` - Formatted document
-    pub fn format_document(&self, doc: &Document) -> String {
-        match self.format_type {
-            OutputFormat::Shell => {
-                let shell_formatter = ShellFormatter::new(self.use_colors);
-                shell_formatter.format_document(doc)
-            }
-            OutputFormat::JsonPretty | OutputFormat::Json => {
-                let json_formatter = JsonFormatter::new(true, self.use_colors, self.json_indent);
-                json_formatter
-                    .format_document(doc)
-                    .unwrap_or_else(|_| format!("{}", doc))
-            }
-            _ => format!("{}", doc),
-        }
-    }
-
-    /// Set output format
-    ///
-    /// # Arguments
-    /// * `format_type` - New output format
-    pub fn set_format(&mut self, format_type: OutputFormat) {
-        self.format_type = format_type;
-    }
-
-    /// Enable or disable colors
-    ///
-    /// # Arguments
-    /// * `enabled` - Whether to enable colors
-    pub fn set_colors(&mut self, enabled: bool) {
-        self.use_colors = enabled;
-        self.colorizer.set_enabled(enabled);
     }
 }
 

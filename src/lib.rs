@@ -14,7 +14,6 @@
 //! - `parser`: Command and query parsing
 //! - `plugins`: Plugin system for extensibility
 //! - `repl`: Interactive REPL engine
-//! - `utils`: Utility functions and helpers
 //!
 //! # Example
 //!
@@ -45,7 +44,6 @@ pub mod executor;
 pub mod formatter;
 pub mod parser;
 pub mod repl;
-pub mod utils;
 
 // Re-export commonly used types
 pub use config::Config;

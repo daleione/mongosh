@@ -84,6 +84,7 @@ impl SqlParser {
     }
 
     /// Parse with context for autocomplete
+    #[allow(dead_code)]
     pub fn parse_with_context(input: &str) -> (ParseResult<SqlSelect>, SqlContext) {
         let tokens = SqlLexer::tokenize(input);
         let mut parser = Self::new(tokens);

@@ -32,26 +32,8 @@ pub struct TableFormatter {
     #[allow(dead_code)]
     max_table_width: usize,
 
-    /// Table style
-    style: TableStyle,
-
     /// Enable colored output
     use_colors: bool,
-}
-
-/// Available table styles
-#[derive(Debug, Clone, Copy)]
-pub enum TableStyle {
-    /// Modern style with rounded corners
-    Modern,
-    /// ASCII style with basic characters
-    Ascii,
-    /// Rounded style
-    Rounded,
-    /// Markdown style
-    Markdown,
-    /// Psql style
-    Psql,
 }
 
 impl TableFormatter {
@@ -63,49 +45,8 @@ impl TableFormatter {
         Self {
             max_column_width: DEFAULT_MAX_COLUMN_WIDTH,
             max_table_width: DEFAULT_MAX_TABLE_WIDTH,
-            style: TableStyle::Modern,
             use_colors: false,
         }
-    }
-
-    /// Create a new table formatter with color support
-    ///
-    /// # Arguments
-    /// * `use_colors` - Enable colored output
-    ///
-    /// # Returns
-    /// * `Self` - New table formatter
-    pub fn with_colors(use_colors: bool) -> Self {
-        Self {
-            max_column_width: DEFAULT_MAX_COLUMN_WIDTH,
-            max_table_width: DEFAULT_MAX_TABLE_WIDTH,
-            style: TableStyle::Modern,
-            use_colors,
-        }
-    }
-
-    /// Set the table style
-    ///
-    /// # Arguments
-    /// * `style` - Table style to use
-    ///
-    /// # Returns
-    /// * `Self` - Modified formatter
-    pub fn with_style(mut self, style: TableStyle) -> Self {
-        self.style = style;
-        self
-    }
-
-    /// Set maximum column width
-    ///
-    /// # Arguments
-    /// * `width` - Maximum column width
-    ///
-    /// # Returns
-    /// * `Self` - Modified formatter
-    pub fn with_max_column_width(mut self, width: usize) -> Self {
-        self.max_column_width = width;
-        self
     }
 
     /// Format result data as table
@@ -315,13 +256,7 @@ impl TableFormatter {
     /// # Arguments
     /// * `table` - Table to style
     fn apply_style(&self, table: &mut Table) {
-        match self.style {
-            TableStyle::Modern => table.with(Style::modern()),
-            TableStyle::Ascii => table.with(Style::ascii()),
-            TableStyle::Rounded => table.with(Style::rounded()),
-            TableStyle::Markdown => table.with(Style::markdown()),
-            TableStyle::Psql => table.with(Style::psql()),
-        };
+        table.with(Style::modern());
     }
 }
 
@@ -456,21 +391,6 @@ mod tests {
         let result = formatter.format(&ResultData::Documents(docs)).unwrap();
         assert!(result.contains("Alice"));
         assert!(result.contains("Bob"));
-    }
-
-    #[test]
-    fn test_with_style() {
-        let formatter = TableFormatter::new().with_style(TableStyle::Ascii);
-        let doc = doc! { "name": "Alice" };
-        let result = formatter.format(&ResultData::Document(doc)).unwrap();
-        assert!(result.contains("+"));
-        assert!(result.contains("|"));
-    }
-
-    #[test]
-    fn test_with_max_column_width() {
-        let formatter = TableFormatter::new().with_max_column_width(20);
-        assert_eq!(formatter.max_column_width, 20);
     }
 
     #[test]

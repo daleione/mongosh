@@ -3,6 +3,8 @@
 //! This module defines the SQL AST (Abstract Syntax Tree) and context
 //! models used for parsing, autocomplete, and error reporting.
 
+#![allow(dead_code)]
+
 use std::ops::Range;
 
 /// SQL parsing context - tracks where we are in the parse tree

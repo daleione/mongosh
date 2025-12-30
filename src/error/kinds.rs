@@ -48,6 +48,7 @@ pub enum ConnectionError {
     ConnectionFailed(String),
 
     /// Connection timeout.
+    #[allow(dead_code)]
     Timeout,
 
     /// Invalid connection URI.
@@ -60,9 +61,11 @@ pub enum ConnectionError {
     PingFailed(String),
 
     /// Session operation failed.
+    #[allow(dead_code)]
     SessionFailed(String),
 
     /// Transaction operation failed.
+    #[allow(dead_code)]
     TransactionFailed(String),
 }
 
@@ -79,6 +82,7 @@ pub enum ParseError {
     InvalidQuery(String),
 
     /// Invalid aggregation pipeline.
+    #[allow(dead_code)]
     InvalidPipeline(String),
 }
 
@@ -99,12 +103,15 @@ pub enum ExecutionError {
 #[derive(Debug)]
 pub enum ConfigError {
     /// Config file not found.
+    #[allow(dead_code)]
     FileNotFound(String),
 
     /// Invalid config format.
+    #[allow(dead_code)]
     InvalidFormat(String),
 
     /// Missing required field.
+    #[allow(dead_code)]
     MissingField(String),
 }
 

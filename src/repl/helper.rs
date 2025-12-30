@@ -19,9 +19,6 @@ pub struct ReplHelper {
     /// Available collections for completion
     pub(crate) collections: Vec<String>,
 
-    /// Enable colored output
-    pub(crate) color_enabled: bool,
-
     /// Enable syntax highlighting
     pub(crate) highlighting_enabled: bool,
 }
@@ -31,12 +28,11 @@ impl ReplHelper {
     ///
     /// # Arguments
     /// * `shared_state` - Shared state
-    /// * `color_enabled` - Enable colored output
     /// * `highlighting_enabled` - Enable syntax highlighting
     ///
     /// # Returns
     /// * `Self` - New helper
-    pub fn new(shared_state: SharedState, color_enabled: bool, highlighting_enabled: bool) -> Self {
+    pub fn new(shared_state: SharedState, highlighting_enabled: bool) -> Self {
         let commands = vec![
             "show".to_string(),
             "use".to_string(),
@@ -50,27 +46,8 @@ impl ReplHelper {
             shared_state,
             commands,
             collections: Vec::new(),
-            color_enabled,
             highlighting_enabled,
         }
-    }
-
-    /// Add collection for completion
-    ///
-    /// # Arguments
-    /// * `collection` - Collection name
-    pub fn add_collection(&mut self, collection: String) {
-        if !self.collections.contains(&collection) {
-            self.collections.push(collection);
-        }
-    }
-
-    /// Set collections for completion
-    ///
-    /// # Arguments
-    /// * `collections` - List of collection names
-    pub fn set_collections(&mut self, collections: Vec<String>) {
-        self.collections = collections;
     }
 
     /// Check if input is a complete statement

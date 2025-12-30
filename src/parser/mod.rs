@@ -41,8 +41,6 @@ mod sql_parser;
 
 // Re-export public API
 pub use command::*;
-pub use sql_context::{Expected, ParseResult, SqlContext};
-pub use sql_parser::SqlParser;
 
 use crate::error::{ParseError, Result};
 
@@ -53,10 +51,7 @@ use crate::error::{ParseError, Result};
 /// - Administrative commands (show, use, create, drop, etc.)
 /// - Utility commands (print, help, etc.)
 /// - Script execution
-pub struct Parser {
-    /// Current database context
-    current_database: Option<String>,
-}
+pub struct Parser {}
 
 impl Parser {
     /// Create a new parser instance
@@ -69,34 +64,7 @@ impl Parser {
     /// let parser = Parser::new();
     /// ```
     pub fn new() -> Self {
-        Self {
-            current_database: None,
-        }
-    }
-
-    /// Set the current database context
-    ///
-    /// This is useful for validation and context-aware parsing.
-    ///
-    /// # Arguments
-    ///
-    /// * `database` - The name of the database to set as current context
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// use mongosh::parser::Parser;
-    ///
-    /// let mut parser = Parser::new();
-    /// parser.set_database("mydb".to_string());
-    /// ```
-    pub fn set_database(&mut self, database: String) {
-        self.current_database = Some(database);
-    }
-
-    /// Get the current database context
-    pub fn current_database(&self) -> Option<&str> {
-        self.current_database.as_deref()
+        Self {}
     }
 
     /// Parse an input string into a Command
@@ -152,142 +120,6 @@ impl Parser {
         // If nothing matches, it's an invalid command
         Err(ParseError::InvalidCommand(trimmed.to_string()).into())
     }
-
-    /// Parse a query filter document from a string
-    ///
-    /// This is a convenience method for parsing standalone query documents.
-    ///
-    /// # Arguments
-    ///
-    /// * `input` - JSON-like query string
-    ///
-    /// # Returns
-    ///
-    /// * `Result<Document>` - Parsed BSON document
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// use mongosh::parser::Parser;
-    ///
-    /// let parser = Parser::new();
-    /// let filter = parser.parse_query("{ age: { $gt: 18 } }").unwrap();
-    /// ```
-    pub fn parse_query(&self, input: &str) -> Result<mongodb::bson::Document> {
-        use expr_converter::ExpressionConverter;
-        use oxc::allocator::Allocator;
-        use oxc::parser::Parser as OxcParser;
-        use oxc::span::SourceType;
-
-        let allocator = Allocator::default();
-        let source_type = SourceType::default();
-        let parser = OxcParser::new(&allocator, input, source_type);
-
-        let ret = parser.parse();
-
-        if !ret.errors.is_empty() {
-            return Err(
-                ParseError::SyntaxError(format!("Invalid query syntax: {:?}", ret.errors)).into(),
-            );
-        }
-
-        let stmt = ret
-            .program
-            .body
-            .first()
-            .ok_or_else(|| ParseError::InvalidQuery("Empty query".to_string()))?;
-
-        if let oxc::ast::ast::Statement::ExpressionStatement(expr_stmt) = stmt {
-            let bson = ExpressionConverter::expr_to_bson(&expr_stmt.expression)?;
-            if let mongodb::bson::Bson::Document(doc) = bson {
-                Ok(doc)
-            } else {
-                Err(ParseError::InvalidQuery("Query must be an object".to_string()).into())
-            }
-        } else {
-            Err(ParseError::InvalidQuery("Expected expression".to_string()).into())
-        }
-    }
-
-    /// Parse an aggregation pipeline from a string
-    ///
-    /// # Arguments
-    ///
-    /// * `input` - JSON-like array of pipeline stages
-    ///
-    /// # Returns
-    ///
-    /// * `Result<Vec<Document>>` - Parsed pipeline stages
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// use mongosh::parser::Parser;
-    ///
-    /// let parser = Parser::new();
-    /// let pipeline = parser.parse_aggregation("[{ $match: { age: { $gt: 18 } } }]").unwrap();
-    /// ```
-    pub fn parse_aggregation(&self, input: &str) -> Result<Vec<mongodb::bson::Document>> {
-        use expr_converter::ExpressionConverter;
-        use oxc::allocator::Allocator;
-        use oxc::parser::Parser as OxcParser;
-        use oxc::span::SourceType;
-
-        let allocator = Allocator::default();
-        let source_type = SourceType::default();
-        let parser = OxcParser::new(&allocator, input, source_type);
-
-        let ret = parser.parse();
-
-        if !ret.errors.is_empty() {
-            return Err(ParseError::SyntaxError(format!(
-                "Invalid pipeline syntax: {:?}",
-                ret.errors
-            ))
-            .into());
-        }
-
-        let stmt = ret
-            .program
-            .body
-            .first()
-            .ok_or_else(|| ParseError::InvalidPipeline("Empty pipeline".to_string()))?;
-
-        if let oxc::ast::ast::Statement::ExpressionStatement(expr_stmt) = stmt {
-            let bson = ExpressionConverter::expr_to_bson(&expr_stmt.expression)?;
-            if let mongodb::bson::Bson::Array(arr) = bson {
-                let mut pipeline = Vec::new();
-                for item in arr {
-                    if let mongodb::bson::Bson::Document(doc) = item {
-                        pipeline.push(doc);
-                    } else {
-                        return Err(ParseError::InvalidPipeline(
-                            "Pipeline stages must be objects".to_string(),
-                        )
-                        .into());
-                    }
-                }
-                Ok(pipeline)
-            } else {
-                Err(ParseError::InvalidPipeline("Pipeline must be an array".to_string()).into())
-            }
-        } else {
-            Err(ParseError::InvalidPipeline("Expected expression".to_string()).into())
-        }
-    }
-
-    /// Parse a document from a string
-    ///
-    /// # Arguments
-    ///
-    /// * `input` - JSON-like document string
-    ///
-    /// # Returns
-    ///
-    /// * `Result<Document>` - Parsed BSON document
-    pub fn parse_document(&self, input: &str) -> Result<mongodb::bson::Document> {
-        self.parse_query(input)
-    }
 }
 
 impl Default for Parser {
@@ -302,15 +134,8 @@ mod tests {
 
     #[test]
     fn test_parser_creation() {
-        let parser = Parser::new();
-        assert!(parser.current_database.is_none());
-    }
-
-    #[test]
-    fn test_set_database() {
-        let mut parser = Parser::new();
-        parser.set_database("testdb".to_string());
-        assert_eq!(parser.current_database(), Some("testdb"));
+        let _parser = Parser::new();
+        // Parser created successfully
     }
 
     #[test]
@@ -503,23 +328,6 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_query_standalone() {
-        let parser = Parser::new();
-        let doc = parser.parse_query("({ age: { $gte: 18 } })").unwrap();
-        let age_cond = doc.get_document("age").unwrap();
-        assert_eq!(age_cond.get_i64("$gte").unwrap(), 18);
-    }
-
-    #[test]
-    fn test_parse_aggregation_standalone() {
-        let parser = Parser::new();
-        let pipeline = parser
-            .parse_aggregation("[{ $match: { age: 18 } }, { $sort: { name: 1 } }]")
-            .unwrap();
-        assert_eq!(pipeline.len(), 2);
-    }
-
-    #[test]
     fn test_parse_empty_input() {
         let mut parser = Parser::new();
         assert!(parser.parse("").is_err());
@@ -539,17 +347,6 @@ mod tests {
         let mut parser = Parser::new();
         let cmd = parser.parse("db.users.find();").unwrap();
         assert!(matches!(cmd, Command::Query(QueryCommand::Find { .. })));
-    }
-
-    #[test]
-    fn test_command_helpers() {
-        let cmd = Command::Exit;
-        assert!(cmd.is_exit());
-        assert_eq!(cmd.name(), "exit");
-
-        let cmd = Command::Help(None);
-        assert!(cmd.is_help());
-        assert_eq!(cmd.name(), "help");
     }
 
     #[test]

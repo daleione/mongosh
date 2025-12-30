@@ -72,6 +72,7 @@ pub struct ExecutionStats {
     pub execution_time_ms: u64,
 
     /// Number of documents returned
+    #[allow(dead_code)]
     pub documents_returned: usize,
 
     /// Number of documents affected
@@ -80,6 +81,7 @@ pub struct ExecutionStats {
 
 impl ExecutionResult {
     /// Create a successful result
+    #[allow(dead_code)]
     pub fn success(data: ResultData, stats: ExecutionStats) -> Self {
         Self {
             success: true,
@@ -90,6 +92,7 @@ impl ExecutionResult {
     }
 
     /// Create a failed result
+    #[allow(dead_code)]
     pub fn error(error: String) -> Self {
         Self {
             success: false,
