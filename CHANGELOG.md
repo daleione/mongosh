@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0] - 2025-12-30
+
+### Added
+
+- **SQL query support** - Query MongoDB using SQL syntax (SELECT, FROM, WHERE, GROUP BY, ORDER BY, LIMIT)
+- **Automatic cursor pagination** - Find results now show first 20 documents with "Type 'it' for more" prompt
+- **`Long()` alias** - Added as shorthand for `NumberLong()`
+
+### Changed
+
+- **Code quality improvements** - Refactored REPL and error modules, removed plugin system, eliminated all compiler warnings
+
 ## [0.2.4] - 2025-12-23
 
 ### Added
