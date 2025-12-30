@@ -12,6 +12,7 @@ use tracing::info;
 use crate::error::{ExecutionError, MongoshError, Result};
 use crate::parser::AdminCommand;
 
+use super::confirmation::confirm_admin_operation;
 use super::context::ExecutionContext;
 use super::result::{ExecutionResult, ExecutionStats, ResultData};
 
@@ -41,6 +42,16 @@ impl AdminExecutor {
     /// # Returns
     /// * `Result<ExecutionResult>` - Execution result or error
     pub async fn execute(&self, cmd: AdminCommand) -> Result<ExecutionResult> {
+        // Check if operation requires confirmation
+        if !confirm_admin_operation(&cmd)? {
+            return Ok(ExecutionResult {
+                success: true,
+                data: ResultData::Message("Operation cancelled by user".to_string()),
+                stats: ExecutionStats::default(),
+                error: None,
+            });
+        }
+
         match cmd {
             AdminCommand::ShowDatabases => self.show_databases().await,
             AdminCommand::ShowCollections => self.show_collections().await,

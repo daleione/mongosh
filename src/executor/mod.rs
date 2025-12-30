@@ -9,6 +9,7 @@
 //! - `context`: ExecutionContext for managing state and connections
 //! - `result`: Result types (ExecutionResult, ResultData, ExecutionStats)
 //! - `router`: CommandRouter for dispatching commands to executors
+//! - `confirmation`: User confirmation for dangerous operations
 //! - `query`: QueryExecutor for CRUD operations
 //! - `admin`: AdminExecutor for administrative commands
 //! - `utility`: UtilityExecutor for utility commands
@@ -58,6 +59,7 @@
 
 // Module declarations
 mod admin;
+mod confirmation;
 mod context;
 mod query;
 mod result;

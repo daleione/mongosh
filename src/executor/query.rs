@@ -16,6 +16,7 @@ use tracing::{debug, info};
 use crate::error::{ExecutionError, MongoshError, Result};
 use crate::parser::{AggregateOptions, FindOptions, QueryCommand};
 
+use super::confirmation::confirm_query_operation;
 use super::context::ExecutionContext;
 use super::result::{ExecutionResult, ExecutionStats, ResultData};
 
@@ -45,6 +46,16 @@ impl QueryExecutor {
     /// # Returns
     /// * `Result<ExecutionResult>` - Execution result or error
     pub async fn execute(&self, cmd: QueryCommand) -> Result<ExecutionResult> {
+        // Check if operation requires confirmation
+        if !confirm_query_operation(&cmd)? {
+            return Ok(ExecutionResult {
+                success: true,
+                data: ResultData::Message("Operation cancelled by user".to_string()),
+                stats: ExecutionStats::default(),
+                error: None,
+            });
+        }
+
         let start = Instant::now();
 
         let result = match cmd {
