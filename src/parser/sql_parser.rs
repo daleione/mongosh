@@ -188,7 +188,13 @@ impl SqlParser {
             None
         };
 
+        // After GROUP BY, check for out-of-order clauses
+        if let Some(err) = self.validate_clause_order(&[TokenKind::Where]) {
+            return ParseResult::Error(err);
+        }
+
         // Parse ORDER BY clause (optional)
+
         self.current_clause = SqlClause::OrderBy;
         let order_by = if self.match_keyword(&TokenKind::OrderBy) {
             match self.parse_order_by_clause() {
@@ -213,7 +219,13 @@ impl SqlParser {
             None
         };
 
+        // After ORDER BY, check for out-of-order clauses
+        if let Some(err) = self.validate_clause_order(&[TokenKind::Where, TokenKind::GroupBy]) {
+            return ParseResult::Error(err);
+        }
+
         // Parse LIMIT clause (optional)
+
         self.current_clause = SqlClause::Limit;
         let limit = if self.match_keyword(&TokenKind::Limit) {
             match self.parse_limit_clause() {
@@ -984,7 +996,56 @@ impl SqlParser {
         }
     }
 
-    /// Get current position
+    /// Validate SQL clause order after parsing the current clause
+    /// Returns an error if any of the specified clauses appear out of order
+    fn validate_clause_order(&self, invalid_clauses: &[TokenKind]) -> Option<ParseError> {
+        for clause_kind in invalid_clauses {
+            if self.check_token(clause_kind) {
+                let clause_name = Self::clause_name(clause_kind);
+                let current_name = Self::current_clause_name(&self.current_clause);
+                let position = self.current_position();
+
+                let error_msg = format!(
+                    "{} clause must appear before {}.",
+                    clause_name, current_name
+                );
+
+                return Some(
+                    ParseError::new(error_msg, position..position + 1).with_hint(format!(
+                        "Move the {} clause before {}",
+                        clause_name, current_name
+                    )),
+                );
+            }
+        }
+        None
+    }
+
+    /// Get the name of a clause token kind
+    fn clause_name(kind: &TokenKind) -> &'static str {
+        match kind {
+            TokenKind::Where => "WHERE",
+            TokenKind::GroupBy => "GROUP BY",
+            TokenKind::OrderBy => "ORDER BY",
+            TokenKind::Limit => "LIMIT",
+            TokenKind::Offset => "OFFSET",
+            _ => "clause",
+        }
+    }
+
+    /// Get the name of the current SQL clause
+    fn current_clause_name(clause: &SqlClause) -> &'static str {
+        match clause {
+            SqlClause::Select => "SELECT",
+            SqlClause::From => "FROM",
+            SqlClause::Where => "WHERE",
+            SqlClause::GroupBy => "GROUP BY",
+            SqlClause::OrderBy => "ORDER BY",
+            SqlClause::Limit => "LIMIT",
+            SqlClause::Offset => "OFFSET",
+        }
+    }
+
     fn current_position(&self) -> usize {
         if let Some(token) = self.peek() {
             token.span.start
@@ -1099,6 +1160,44 @@ mod tests {
     #[test]
     fn test_parse_aggregate_with_alias() {
         let result = SqlParser::parse_to_command("SELECT COUNT(*) AS total FROM users");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_reject_where_after_group_by() {
+        let result = SqlParser::parse_to_command(
+            "SELECT status, COUNT(*) FROM tasks GROUP BY status WHERE template_id='123'",
+        );
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("WHERE clause must appear before GROUP BY"));
+    }
+
+    #[test]
+    fn test_reject_group_by_after_order_by() {
+        let result =
+            SqlParser::parse_to_command("SELECT * FROM tasks ORDER BY created_at GROUP BY status");
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("GROUP BY clause must appear before ORDER BY"));
+    }
+
+    #[test]
+    fn test_reject_where_after_order_by() {
+        let result = SqlParser::parse_to_command(
+            "SELECT * FROM tasks ORDER BY created_at WHERE status='active'",
+        );
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("WHERE clause must appear before"));
+    }
+
+    #[test]
+    fn test_correct_clause_order_accepted() {
+        // This should be accepted - correct order
+        let result = SqlParser::parse_to_command(
+            "SELECT status, COUNT(*) FROM tasks WHERE template_id='123' GROUP BY status",
+        );
         assert!(result.is_ok());
     }
 }
