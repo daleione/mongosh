@@ -881,8 +881,9 @@ impl SqlParser {
             pipeline.push(doc! { "$match": filter });
         }
 
-        // Add $group stage for GROUP BY
+        // Add $group stage
         if let Some(ref group_by) = ast.group_by {
+            // GROUP BY case: group by specific fields
             let group_doc = SqlExprConverter::build_group_stage(group_by, &ast.columns)?;
             pipeline.push(doc! { "$group": group_doc });
 
@@ -902,6 +903,36 @@ impl SqlParser {
             }
 
             // Include all aggregate function results
+            for col in &ast.columns {
+                if let SqlColumn::Aggregate { func, field, alias } = col {
+                    let output_name =
+                        SqlExprConverter::get_aggregate_output_name(func, field, alias);
+                    project_doc.insert(output_name.clone(), format!("${}", output_name));
+                }
+            }
+
+            pipeline.push(doc! { "$project": project_doc });
+        } else {
+            // No GROUP BY: aggregate over entire collection (e.g., SELECT COUNT(*) FROM ...)
+            let mut group_doc = Document::new();
+            group_doc.insert("_id", mongodb::bson::Bson::Null); // Group all documents together
+
+            // Add aggregate functions
+            for col in &ast.columns {
+                if let SqlColumn::Aggregate { func, field, alias } = col {
+                    let output_name =
+                        SqlExprConverter::get_aggregate_output_name(func, field, alias);
+                    let aggregate_expr = SqlExprConverter::build_aggregate_expr(func, field)?;
+                    group_doc.insert(output_name, aggregate_expr);
+                }
+            }
+
+            pipeline.push(doc! { "$group": group_doc });
+
+            // Add $project stage to exclude _id and keep only aggregate results
+            let mut project_doc = Document::new();
+            project_doc.insert("_id", 0); // Exclude _id
+
             for col in &ast.columns {
                 if let SqlColumn::Aggregate { func, field, alias } = col {
                     let output_name =
@@ -1199,5 +1230,31 @@ mod tests {
             "SELECT status, COUNT(*) FROM tasks WHERE template_id='123' GROUP BY status",
         );
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_count_without_group_by() {
+        // COUNT(*) without GROUP BY should generate proper aggregate pipeline
+        let result =
+            SqlParser::parse_to_command("SELECT COUNT(*) FROM tasks WHERE status='failed'");
+        assert!(result.is_ok());
+        let cmd = result.unwrap();
+
+        // Should be an Aggregate command
+        if let Command::Query(QueryCommand::Aggregate { pipeline, .. }) = cmd {
+            // Should have $match and $group stages
+            assert!(
+                pipeline.len() >= 2,
+                "Pipeline should have at least $match and $group stages"
+            );
+
+            // First stage should be $match
+            assert!(pipeline[0].contains_key("$match"));
+
+            // Second stage should be $group
+            assert!(pipeline[1].contains_key("$group"));
+        } else {
+            panic!("Expected Aggregate command");
+        }
     }
 }

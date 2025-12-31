@@ -267,6 +267,54 @@ impl SqlExprConverter {
         }
     }
 
+    /// Build a MongoDB aggregate expression for a SQL aggregate function
+    pub fn build_aggregate_expr(func: &str, field: &Option<String>) -> Result<Document> {
+        let func_upper = func.to_uppercase();
+
+        let agg_expr = match func_upper.as_str() {
+            "COUNT" => {
+                if field.is_none() {
+                    doc! { "$sum": 1 }
+                } else {
+                    doc! { "$sum": { "$cond": [{ "$ifNull": [format!("${}", field.as_ref().unwrap()), false] }, 1, 0] } }
+                }
+            }
+            "SUM" => {
+                let field_name = field.as_ref().ok_or_else(|| {
+                    ParseError::InvalidCommand("SUM requires a field".to_string())
+                })?;
+                doc! { "$sum": format!("${}", field_name) }
+            }
+            "AVG" => {
+                let field_name = field.as_ref().ok_or_else(|| {
+                    ParseError::InvalidCommand("AVG requires a field".to_string())
+                })?;
+                doc! { "$avg": format!("${}", field_name) }
+            }
+            "MIN" => {
+                let field_name = field.as_ref().ok_or_else(|| {
+                    ParseError::InvalidCommand("MIN requires a field".to_string())
+                })?;
+                doc! { "$min": format!("${}", field_name) }
+            }
+            "MAX" => {
+                let field_name = field.as_ref().ok_or_else(|| {
+                    ParseError::InvalidCommand("MAX requires a field".to_string())
+                })?;
+                doc! { "$max": format!("${}", field_name) }
+            }
+            _ => {
+                return Err(ParseError::InvalidCommand(format!(
+                    "Unsupported aggregate function: {}",
+                    func
+                ))
+                .into());
+            }
+        };
+
+        Ok(agg_expr)
+    }
+
     /// Build aggregation $group stage from GROUP BY and aggregate functions
     pub fn build_group_stage(group_by: &[String], columns: &[SqlColumn]) -> Result<Document> {
         let mut group_doc = Document::new();
@@ -287,50 +335,8 @@ impl SqlExprConverter {
         // Add aggregate functions
         for col in columns {
             if let SqlColumn::Aggregate { func, field, alias } = col {
-                let func_upper = func.to_uppercase();
                 let output_name = Self::get_aggregate_output_name(func, field, alias);
-
-                let agg_expr = match func_upper.as_str() {
-                    "COUNT" => {
-                        if field.is_none() {
-                            doc! { "$sum": 1 }
-                        } else {
-                            doc! { "$sum": { "$cond": [{ "$ifNull": [format!("${}", field.as_ref().unwrap()), false] }, 1, 0] } }
-                        }
-                    }
-                    "SUM" => {
-                        let field_name = field.as_ref().ok_or_else(|| {
-                            ParseError::InvalidCommand("SUM requires a field".to_string())
-                        })?;
-                        doc! { "$sum": format!("${}", field_name) }
-                    }
-                    "AVG" => {
-                        let field_name = field.as_ref().ok_or_else(|| {
-                            ParseError::InvalidCommand("AVG requires a field".to_string())
-                        })?;
-                        doc! { "$avg": format!("${}", field_name) }
-                    }
-                    "MIN" => {
-                        let field_name = field.as_ref().ok_or_else(|| {
-                            ParseError::InvalidCommand("MIN requires a field".to_string())
-                        })?;
-                        doc! { "$min": format!("${}", field_name) }
-                    }
-                    "MAX" => {
-                        let field_name = field.as_ref().ok_or_else(|| {
-                            ParseError::InvalidCommand("MAX requires a field".to_string())
-                        })?;
-                        doc! { "$max": format!("${}", field_name) }
-                    }
-                    _ => {
-                        return Err(ParseError::InvalidCommand(format!(
-                            "Unsupported aggregate function: {}",
-                            func
-                        ))
-                        .into());
-                    }
-                };
-
+                let agg_expr = Self::build_aggregate_expr(func, field)?;
                 group_doc.insert(output_name, agg_expr);
             }
         }
