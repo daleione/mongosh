@@ -94,13 +94,29 @@ async fn run_interactive_mode(cli: &CliInterface) -> Result<()> {
     // Connect to MongoDB
     let mut conn_manager = ConnectionManager::new(uri.clone(), cli.config().connection.clone());
 
-    if !cli.args().no_connect {
+    let server_version = if !cli.args().no_connect {
         conn_manager.connect().await?;
-    }
+
+        // Get MongoDB server version
+        let version = if let Ok(client) = conn_manager.get_client() {
+            conn_manager.get_server_version(client).await.ok()
+        } else {
+            None
+        };
+
+        // Print connection info with MongoDB version
+        if let Some(ref ver) = version {
+            cli.print_connection_info(ver);
+        }
+
+        version
+    } else {
+        None
+    };
 
     // Create shared state for REPL and execution context
     let mut shared_state = SharedState::new(database.clone());
-    shared_state.set_connected(None); // Mark as connected (version detection is optional)
+    shared_state.set_connected(server_version);
 
     // Create execution context with shared state
     let exec_context = ExecutionContext::new(conn_manager, shared_state.clone());

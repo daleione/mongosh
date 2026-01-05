@@ -208,6 +208,39 @@ impl CliInterface {
         }
     }
 
+    /// Get sanitized connection URI for display (hides credentials)
+    ///
+    /// # Returns
+    /// * `String` - Sanitized URI with credentials replaced by ***
+    pub fn get_sanitized_connection_uri(&self) -> String {
+        let uri = self.get_connection_uri();
+        Self::sanitize_uri(&uri)
+    }
+
+    /// Sanitize URI by hiding credentials
+    ///
+    /// # Arguments
+    /// * `uri` - The URI to sanitize
+    ///
+    /// # Returns
+    /// * `String` - Sanitized URI
+    fn sanitize_uri(uri: &str) -> String {
+        // Hide everything between :// and @
+        if let Some(proto_end) = uri.find("://") {
+            if let Some(host_start) = uri.find('@') {
+                let proto = &uri[..proto_end + 3];
+                let host = &uri[host_start..];
+                return format!("{}***{}", proto, host);
+            }
+        }
+        // If no @ found but contains credentials pattern, hide it
+        if uri.contains('@') {
+            "mongodb://***".to_string()
+        } else {
+            uri.to_string()
+        }
+    }
+
     /// Build connection URI from individual arguments
     ///
     /// Constructs a MongoDB connection URI from CLI arguments including:
@@ -435,8 +468,18 @@ impl CliInterface {
     /// Print banner with version and connection info
     pub fn print_banner(&self) {
         if !self.args.quiet {
-            println!("MongoDB Shell v{}", env!("CARGO_PKG_VERSION"));
-            println!("Connecting to: {}", self.get_connection_uri());
+            println!("Connecting to: {}", self.get_sanitized_connection_uri());
+            println!("Using Mongosh: {}", env!("CARGO_PKG_VERSION"));
+        }
+    }
+
+    /// Print version information after connection
+    ///
+    /// # Arguments
+    /// * `mongodb_version` - MongoDB server version
+    pub fn print_connection_info(&self, mongodb_version: &str) {
+        if !self.args.quiet {
+            println!("Using MongoDB: {}", mongodb_version);
         }
     }
 }
@@ -685,5 +728,48 @@ mod tests {
         let config = Config::default();
         let cli = CliInterface { args, config };
         assert_eq!(cli.get_connection_uri(), "mongodb://example.com:27017/db");
+    }
+
+    #[test]
+    fn test_sanitize_uri_with_credentials() {
+        let uri = "mongodb://user:password@localhost:27017/db";
+        let sanitized = CliInterface::sanitize_uri(uri);
+        assert_eq!(sanitized, "mongodb://***@localhost:27017/db");
+        assert!(!sanitized.contains("password"));
+        assert!(!sanitized.contains("user"));
+    }
+
+    #[test]
+    fn test_sanitize_uri_without_credentials() {
+        let uri = "mongodb://localhost:27017/db";
+        let sanitized = CliInterface::sanitize_uri(uri);
+        assert_eq!(sanitized, "mongodb://localhost:27017/db");
+    }
+
+    #[test]
+    fn test_sanitize_uri_srv_with_credentials() {
+        let uri = "mongodb+srv://myuser:mypass@cluster0.ab123.mongodb.net/myFirstDatabase";
+        let sanitized = CliInterface::sanitize_uri(uri);
+        assert_eq!(
+            sanitized,
+            "mongodb+srv://***@cluster0.ab123.mongodb.net/myFirstDatabase"
+        );
+        assert!(!sanitized.contains("myuser"));
+        assert!(!sanitized.contains("mypass"));
+    }
+
+    #[test]
+    fn test_get_sanitized_connection_uri() {
+        let args = CliArgs::try_parse_from(vec![
+            "mongosh",
+            "mongodb://admin:secret@localhost:27017/testdb",
+        ])
+        .unwrap();
+        let config = Config::default();
+        let cli = CliInterface { args, config };
+        let sanitized = cli.get_sanitized_connection_uri();
+        assert!(!sanitized.contains("admin"));
+        assert!(!sanitized.contains("secret"));
+        assert!(sanitized.contains("***"));
     }
 }

@@ -419,7 +419,7 @@ impl ConnectionManager {
     /// # Returns
     /// * `Option<String>` - Server version string
     #[allow(dead_code)]
-    async fn get_server_version(&self, client: &Client) -> Result<String> {
+    pub async fn get_server_version(&self, client: &Client) -> Result<String> {
         use mongodb::bson::doc;
 
         // Try to get server version, but don't fail if it requires Primary
