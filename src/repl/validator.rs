@@ -101,54 +101,63 @@ mod tests {
     #[test]
     fn test_empty_input() {
         let validator = MongoValidator::new();
-        assert_eq!(validator.validate(""), ValidationResult::Complete);
-        assert_eq!(validator.validate("   "), ValidationResult::Complete);
+        assert!(matches!(validator.validate(""), ValidationResult::Complete));
+        assert!(matches!(
+            validator.validate("   "),
+            ValidationResult::Complete
+        ));
     }
 
     #[test]
     fn test_simple_command() {
         let validator = MongoValidator::new();
-        assert_eq!(validator.validate("show dbs"), ValidationResult::Complete);
-        assert_eq!(validator.validate("use test"), ValidationResult::Complete);
+        assert!(matches!(
+            validator.validate("show dbs"),
+            ValidationResult::Complete
+        ));
+        assert!(matches!(
+            validator.validate("use test"),
+            ValidationResult::Complete
+        ));
     }
 
     #[test]
     fn test_balanced_braces() {
         let validator = MongoValidator::new();
-        assert_eq!(
+        assert!(matches!(
             validator.validate("db.users.find({})"),
             ValidationResult::Complete
-        );
-        assert_eq!(
+        ));
+        assert!(matches!(
             validator.validate("db.users.insertOne({name: 'test'})"),
             ValidationResult::Complete
-        );
+        ));
     }
 
     #[test]
     fn test_unbalanced_braces() {
         let validator = MongoValidator::new();
-        assert_eq!(
+        assert!(matches!(
             validator.validate("db.users.find({"),
             ValidationResult::Incomplete
-        );
-        assert_eq!(
+        ));
+        assert!(matches!(
             validator.validate("db.users.find("),
             ValidationResult::Incomplete
-        );
+        ));
     }
 
     #[test]
     fn test_nested_braces() {
         let validator = MongoValidator::new();
-        assert_eq!(
+        assert!(matches!(
             validator.validate("db.users.find({filter: {age: {$gt: 18}}})"),
             ValidationResult::Complete
-        );
-        assert_eq!(
+        ));
+        assert!(matches!(
             validator.validate("db.users.find({filter: {age: {$gt: 18}}}"),
             ValidationResult::Incomplete
-        );
+        ));
     }
 
     #[test]
@@ -156,37 +165,37 @@ mod tests {
         let validator = MongoValidator::new();
 
         // Braces inside strings should be ignored
-        assert_eq!(
+        assert!(matches!(
             validator.validate(r#"db.users.find({name: "{test}"})"#),
             ValidationResult::Complete
-        );
+        ));
 
         // Unclosed string
-        assert_eq!(
+        assert!(matches!(
             validator.validate(r#"db.users.find({name: "test)"#),
             ValidationResult::Incomplete
-        );
+        ));
     }
 
     #[test]
     fn test_escaped_quotes() {
         let validator = MongoValidator::new();
-        assert_eq!(
+        assert!(matches!(
             validator.validate(r#"db.users.find({name: "test\"quote"})"#),
             ValidationResult::Complete
-        );
+        ));
     }
 
     #[test]
     fn test_mixed_brackets() {
         let validator = MongoValidator::new();
-        assert_eq!(
+        assert!(matches!(
             validator.validate("db.users.aggregate([{$match: {age: 18}}])"),
             ValidationResult::Complete
-        );
-        assert_eq!(
+        ));
+        assert!(matches!(
             validator.validate("db.users.aggregate([{$match: {age: 18}}"),
             ValidationResult::Incomplete
-        );
+        ));
     }
 }

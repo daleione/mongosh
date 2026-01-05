@@ -120,7 +120,7 @@ mod tests {
         // Create a temporary in-memory history for testing
         Box::new(
             FileBackedHistory::with_file(100, PathBuf::from("/tmp/test_history.txt"))
-                .unwrap_or_else(|_| FileBackedHistory::new(100)),
+                .unwrap_or_else(|_| FileBackedHistory::new(100).expect("Failed to create history")),
         )
     }
 
