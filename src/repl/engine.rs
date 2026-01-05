@@ -1,5 +1,5 @@
 use rustyline::history::DefaultHistory;
-use rustyline::{Config, Editor};
+use rustyline::{CompletionType, Config, Editor};
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -48,6 +48,8 @@ impl ReplEngine {
             .max_history_size(history_config.max_size)?
             .history_ignore_space(true)
             .auto_add_history(true)
+            .completion_type(CompletionType::List)
+            .completion_prompt_limit(50)
             .build();
 
         let helper = ReplHelper::new(
