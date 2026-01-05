@@ -47,9 +47,16 @@ impl CompletionEngine {
         let context = state.to_context(&stream);
 
         // 4. Fetch candidates based on context
-        let candidates = self.fetch_candidates(&context);
+        let mut candidates = self.fetch_candidates(&context);
 
-        // 5. Convert to rustyline Pairs
+        // 5. Optimize: if prefix exactly matches a candidate, remove it from the list
+        // This way, TAB will cycle through other options without showing the already-typed text
+        let prefix = stream.current_prefix();
+        if !prefix.is_empty() {
+            candidates.retain(|c| c != &prefix);
+        }
+
+        // 6. Convert to rustyline Pairs
         let pairs: Vec<Pair> = candidates
             .into_iter()
             .map(|c| Pair {
@@ -58,7 +65,7 @@ impl CompletionEngine {
             })
             .collect();
 
-        // 6. Return completion start position and pairs
+        // 7. Return completion start position and pairs
         (stream.completion_start(), pairs)
     }
 
@@ -108,12 +115,12 @@ mod tests {
     #[test]
     fn test_complete_db_dot() {
         let engine = create_test_engine();
-        let (start, pairs) = engine.complete("db.", 3);
+        let (start, _pairs) = engine.complete("db.", 3);
 
         // Should complete collection names
         // Since we don't have a real DB, we won't have any collections
         assert_eq!(start, 3);
-        assert!(pairs.is_empty() || pairs.len() >= 0); // May be empty without DB
+        // May be empty without DB (no assertion needed, just documenting)
     }
 
     #[test]
@@ -170,6 +177,22 @@ mod tests {
     }
 
     #[test]
+    fn test_complete_exact_match_optimization() {
+        let engine = create_test_engine();
+
+        // When "find" is typed completely, "find" should be removed from candidates
+        let (_start, pairs) = engine.complete("db.users.find", 13);
+
+        // "find" should not be in the candidate list at all
+        assert!(!pairs.iter().any(|p| p.replacement == "find"));
+        // Other operations starting with "find" should still be available
+        if !pairs.is_empty() {
+            assert!(pairs.iter().all(|p| p.replacement.starts_with("find")));
+            assert!(pairs.iter().any(|p| p.replacement == "findOne"));
+        }
+    }
+
+    #[test]
     fn test_complete_show_command() {
         let engine = create_test_engine();
         let (start, pairs) = engine.complete("show ", 5);
@@ -203,12 +226,11 @@ mod tests {
     #[test]
     fn test_complete_sql_from() {
         let engine = create_test_engine();
-        let (start, pairs) = engine.complete("SELECT * FROM ", 14);
+        let (start, _pairs) = engine.complete("SELECT * FROM ", 14);
 
         // Should complete collection/table names
         assert_eq!(start, 14);
-        // May be empty without actual DB collections
-        assert!(pairs.is_empty() || pairs.len() >= 0);
+        // May be empty without actual DB collections (no assertion needed, just documenting)
     }
 
     #[test]
