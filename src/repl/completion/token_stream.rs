@@ -51,6 +51,22 @@ impl UnifiedToken {
         }
     }
 
+    /// Check if this token is an opening parenthesis
+    pub fn is_open_paren(&self) -> bool {
+        match self {
+            UnifiedToken::Mongo(t) => matches!(t.kind, MongoTokenKind::LParen),
+            _ => false,
+        }
+    }
+
+    /// Check if this token is a closing parenthesis
+    pub fn is_close_paren(&self) -> bool {
+        match self {
+            UnifiedToken::Mongo(t) => matches!(t.kind, MongoTokenKind::RParen),
+            _ => false,
+        }
+    }
+
     /// Check if this token is "db" keyword
     pub fn is_db(&self) -> bool {
         match self {
