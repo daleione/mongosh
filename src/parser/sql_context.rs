@@ -262,11 +262,12 @@ pub enum SqlColumn {
     /// SELECT column_name [AS alias]
     Field { name: String, alias: Option<String> },
 
-    /// SELECT COUNT(*), SUM(col), etc.
+    /// SELECT COUNT(*), SUM(col), COUNT(DISTINCT col), etc.
     Aggregate {
         func: String,
         field: Option<String>,
         alias: Option<String>,
+        distinct: bool,
     },
 }
 
@@ -282,6 +283,7 @@ impl SqlColumn {
             func,
             field,
             alias: None,
+            distinct: false,
         }
     }
 }
@@ -427,9 +429,12 @@ mod tests {
         assert!(select.needs_aggregate());
 
         let mut select2 = SqlSelect::new();
-        select2
-            .columns
-            .push(SqlColumn::aggregate("COUNT".to_string(), None));
+        select2.columns.push(SqlColumn::Aggregate {
+            func: "COUNT".to_string(),
+            field: None,
+            alias: None,
+            distinct: false,
+        });
         assert!(select2.needs_aggregate());
     }
 

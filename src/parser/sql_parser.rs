@@ -419,6 +419,7 @@ impl SqlParser {
                         func,
                         field: None,
                         alias: None,
+                        distinct: false,
                     },
                     self.expected.clone(),
                 );
@@ -429,8 +430,17 @@ impl SqlParser {
             ));
         }
 
+        // Check for DISTINCT keyword
+        let distinct = self.match_token(&TokenKind::Distinct);
+
         // Parse field or *
         let field = if self.match_token(&TokenKind::Star) {
+            if distinct {
+                return ParseResult::Error(ParseError::new(
+                    "DISTINCT cannot be used with *".to_string(),
+                    self.current_position()..self.current_position(),
+                ));
+            }
             None
         } else if let Some(TokenKind::Ident(name)) = self.peek_kind() {
             let name = name.clone();
@@ -443,6 +453,7 @@ impl SqlParser {
                     func,
                     field: None,
                     alias: None,
+                    distinct,
                 },
                 self.expected.clone(),
             );
@@ -462,6 +473,7 @@ impl SqlParser {
                         func,
                         field,
                         alias: None,
+                        distinct,
                     },
                     self.expected.clone(),
                 );
@@ -492,6 +504,7 @@ impl SqlParser {
                             func,
                             field,
                             alias: None,
+                            distinct,
                         },
                         self.expected.clone(),
                     );
@@ -502,7 +515,12 @@ impl SqlParser {
             None
         };
 
-        ParseResult::Ok(SqlColumn::Aggregate { func, field, alias })
+        ParseResult::Ok(SqlColumn::Aggregate {
+            func,
+            field,
+            alias,
+            distinct,
+        })
     }
 
     /// Parse FROM clause
@@ -904,10 +922,24 @@ impl SqlParser {
 
             // Include all aggregate function results
             for col in &ast.columns {
-                if let SqlColumn::Aggregate { func, field, alias } = col {
+                if let SqlColumn::Aggregate {
+                    func,
+                    field,
+                    alias,
+                    distinct,
+                } = col
+                {
                     let output_name =
-                        SqlExprConverter::get_aggregate_output_name(func, field, alias);
-                    project_doc.insert(output_name.clone(), format!("${}", output_name));
+                        SqlExprConverter::get_aggregate_output_name(func, field, alias, *distinct);
+                    // For COUNT(DISTINCT), we need to count the array size
+                    if *distinct && func.to_uppercase() == "COUNT" {
+                        project_doc.insert(
+                            output_name.clone(),
+                            doc! { "$size": format!("${}", output_name) },
+                        );
+                    } else {
+                        project_doc.insert(output_name.clone(), format!("${}", output_name));
+                    }
                 }
             }
 
@@ -919,10 +951,17 @@ impl SqlParser {
 
             // Add aggregate functions
             for col in &ast.columns {
-                if let SqlColumn::Aggregate { func, field, alias } = col {
+                if let SqlColumn::Aggregate {
+                    func,
+                    field,
+                    alias,
+                    distinct,
+                } = col
+                {
                     let output_name =
-                        SqlExprConverter::get_aggregate_output_name(func, field, alias);
-                    let aggregate_expr = SqlExprConverter::build_aggregate_expr(func, field)?;
+                        SqlExprConverter::get_aggregate_output_name(func, field, alias, *distinct);
+                    let aggregate_expr =
+                        SqlExprConverter::build_aggregate_expr(func, field, *distinct)?;
                     group_doc.insert(output_name, aggregate_expr);
                 }
             }
@@ -934,10 +973,24 @@ impl SqlParser {
             project_doc.insert("_id", 0); // Exclude _id
 
             for col in &ast.columns {
-                if let SqlColumn::Aggregate { func, field, alias } = col {
+                if let SqlColumn::Aggregate {
+                    func,
+                    field,
+                    alias,
+                    distinct,
+                } = col
+                {
                     let output_name =
-                        SqlExprConverter::get_aggregate_output_name(func, field, alias);
-                    project_doc.insert(output_name.clone(), format!("${}", output_name));
+                        SqlExprConverter::get_aggregate_output_name(func, field, alias, *distinct);
+                    // For COUNT(DISTINCT), we need to count the array size
+                    if *distinct && func.to_uppercase() == "COUNT" {
+                        project_doc.insert(
+                            output_name.clone(),
+                            doc! { "$size": format!("${}", output_name) },
+                        );
+                    } else {
+                        project_doc.insert(output_name.clone(), format!("${}", output_name));
+                    }
                 }
             }
 

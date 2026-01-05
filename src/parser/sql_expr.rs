@@ -251,13 +251,15 @@ impl SqlExprConverter {
         func: &str,
         field: &Option<String>,
         alias: &Option<String>,
+        distinct: bool,
     ) -> String {
         if let Some(alias_value) = alias {
             alias_value.clone()
         } else {
             let func_upper = func.to_uppercase();
+            let prefix = if distinct { "distinct_" } else { "" };
             match func_upper.as_str() {
-                "COUNT" => "count".to_string(),
+                "COUNT" => format!("{}count", prefix),
                 "SUM" => format!("sum_{}", field.as_deref().unwrap_or("value")),
                 "AVG" => format!("avg_{}", field.as_deref().unwrap_or("value")),
                 "MIN" => format!("min_{}", field.as_deref().unwrap_or("value")),
@@ -268,12 +270,22 @@ impl SqlExprConverter {
     }
 
     /// Build a MongoDB aggregate expression for a SQL aggregate function
-    pub fn build_aggregate_expr(func: &str, field: &Option<String>) -> Result<Document> {
+    pub fn build_aggregate_expr(
+        func: &str,
+        field: &Option<String>,
+        distinct: bool,
+    ) -> Result<Document> {
         let func_upper = func.to_uppercase();
 
         let agg_expr = match func_upper.as_str() {
             "COUNT" => {
-                if field.is_none() {
+                if distinct {
+                    // COUNT(DISTINCT field) - use $addToSet to collect unique values
+                    let field_name = field.as_ref().ok_or_else(|| {
+                        ParseError::InvalidCommand("COUNT(DISTINCT) requires a field".to_string())
+                    })?;
+                    doc! { "$addToSet": format!("${}", field_name) }
+                } else if field.is_none() {
                     doc! { "$sum": 1 }
                 } else {
                     doc! { "$sum": { "$cond": [{ "$ifNull": [format!("${}", field.as_ref().unwrap()), false] }, 1, 0] } }
@@ -334,9 +346,15 @@ impl SqlExprConverter {
 
         // Add aggregate functions
         for col in columns {
-            if let SqlColumn::Aggregate { func, field, alias } = col {
-                let output_name = Self::get_aggregate_output_name(func, field, alias);
-                let agg_expr = Self::build_aggregate_expr(func, field)?;
+            if let SqlColumn::Aggregate {
+                func,
+                field,
+                alias,
+                distinct,
+            } = col
+            {
+                let output_name = Self::get_aggregate_output_name(func, field, alias, *distinct);
+                let agg_expr = Self::build_aggregate_expr(func, field, *distinct)?;
                 group_doc.insert(output_name, agg_expr);
             }
         }
@@ -453,28 +471,41 @@ mod tests {
 
     #[test]
     fn test_get_aggregate_output_name_count() {
-        let name = SqlExprConverter::get_aggregate_output_name("COUNT", &None, &None);
+        let name = SqlExprConverter::get_aggregate_output_name("COUNT", &None, &None, false);
         assert_eq!(name, "count");
     }
 
     #[test]
     fn test_get_aggregate_output_name_with_alias() {
-        let name =
-            SqlExprConverter::get_aggregate_output_name("COUNT", &None, &Some("total".to_string()));
+        let name = SqlExprConverter::get_aggregate_output_name(
+            "COUNT",
+            &None,
+            &Some("total".to_string()),
+            false,
+        );
         assert_eq!(name, "total");
     }
 
     #[test]
     fn test_get_aggregate_output_name_sum() {
-        let name =
-            SqlExprConverter::get_aggregate_output_name("SUM", &Some("price".to_string()), &None);
+        let name = SqlExprConverter::get_aggregate_output_name(
+            "SUM",
+            &Some("price".to_string()),
+            &None,
+            false,
+        );
         assert_eq!(name, "sum_price");
     }
 
     #[test]
     fn test_build_group_stage_with_count() {
         let group_by = vec!["category".to_string()];
-        let columns = vec![SqlColumn::aggregate("COUNT".to_string(), None)];
+        let columns = vec![SqlColumn::Aggregate {
+            func: "COUNT".to_string(),
+            field: None,
+            alias: None,
+            distinct: false,
+        }];
         let result = SqlExprConverter::build_group_stage(&group_by, &columns);
         assert!(result.is_ok());
         let doc = result.unwrap();
