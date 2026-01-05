@@ -1,7 +1,9 @@
-use rustyline::history::DefaultHistory;
-use rustyline::{CompletionType, Config, Editor};
+use nu_ansi_term::Color;
+use reedline::{
+    EditCommand, Emacs, FileBackedHistory, IdeMenu, KeyCode, KeyModifiers, MenuBuilder, Reedline,
+    ReedlineEvent, ReedlineMenu, Signal, default_emacs_keybindings,
+};
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::config::HistoryConfig;
@@ -9,13 +11,17 @@ use crate::error::{MongoshError, Result};
 use crate::executor::ExecutionContext;
 use crate::parser::{Command, Parser};
 
-use super::helper::ReplHelper;
+use super::completer::MongoCompleter;
+use super::highlighter::MongoHighlighter;
+use super::hinter::MongoHinter;
+use super::prompt::MongoPrompt;
 use super::shared_state::SharedState;
+use super::validator::MongoValidator;
 
 /// REPL engine for interactive command execution
 pub struct ReplEngine {
     /// Line editor for command input
-    editor: Editor<ReplHelper, DefaultHistory>,
+    editor: Reedline,
 
     /// Shared state with execution context
     shared_state: SharedState,
@@ -44,26 +50,95 @@ impl ReplEngine {
         highlighting_enabled: bool,
         execution_context: Option<Arc<ExecutionContext>>,
     ) -> Result<Self> {
-        let config = Config::builder()
-            .max_history_size(history_config.max_size)?
-            .history_ignore_space(true)
-            .auto_add_history(true)
-            .completion_type(CompletionType::List)
-            .completion_prompt_limit(50)
-            .build();
+        // Setup history
+        let history = if history_config.persist {
+            Box::new(
+                FileBackedHistory::with_file(
+                    history_config.max_size,
+                    history_config.file_path.clone(),
+                )
+                .map_err(|e| MongoshError::Generic(format!("Failed to setup history: {}", e)))?,
+            )
+        } else {
+            Box::new(
+                FileBackedHistory::new(history_config.max_size).map_err(|e| {
+                    MongoshError::Generic(format!("Failed to create history: {}", e))
+                })?,
+            )
+        };
 
-        let helper = ReplHelper::new(
+        // Create completer
+        let completer = Box::new(MongoCompleter::new(
             shared_state.clone(),
-            highlighting_enabled,
-            execution_context,
-        );
-        let mut editor = Editor::<ReplHelper, DefaultHistory>::with_config(config)?;
-        editor.set_helper(Some(helper));
+            execution_context.clone(),
+        ));
 
-        // Load history if persistent
-        if history_config.persist {
-            let _ = editor.load_history(&history_config.file_path);
-        }
+        // Create completion menu with IdeMenu for better Tab completion behavior
+        // IdeMenu completes on each Tab press without needing Enter
+        let completion_menu = Box::new(
+            IdeMenu::default()
+                .with_name("completion_menu")
+                .with_text_style(Color::Cyan.normal()) // Cyan text for candidates
+                .with_selected_text_style(Color::Black.on(Color::Cyan).bold()) // Black on cyan for selected
+                .with_description_text_style(Color::DarkGray.normal()) // Gray for descriptions
+                .with_marker(""), // Empty marker to avoid mode indicator change
+        );
+
+        // Setup keybindings
+        let mut keybindings = default_emacs_keybindings();
+
+        // Tab key triggers completion menu and cycles through options
+        // Each Tab press moves to next item and inserts it
+        keybindings.add_binding(
+            KeyModifiers::NONE,
+            KeyCode::Tab,
+            ReedlineEvent::UntilFound(vec![
+                ReedlineEvent::MenuNext, // Navigate menu and insert
+                ReedlineEvent::Menu("completion_menu".to_string()), // Open menu if not active
+            ]),
+        );
+
+        // Shift+Tab for previous completion
+        keybindings.add_binding(
+            KeyModifiers::SHIFT,
+            KeyCode::BackTab,
+            ReedlineEvent::MenuPrevious,
+        );
+
+        // Ctrl+F to accept hint (complete suggestion from history)
+        // If no hint, move cursor forward (default behavior)
+        keybindings.add_binding(
+            KeyModifiers::CONTROL,
+            KeyCode::Char('f'),
+            ReedlineEvent::UntilFound(vec![
+                ReedlineEvent::HistoryHintComplete,
+                ReedlineEvent::Edit(vec![EditCommand::MoveRight { select: false }]),
+            ]),
+        );
+
+        let edit_mode = Box::new(Emacs::new(keybindings));
+
+        // Create highlighter
+        let highlighter = Box::new(MongoHighlighter::new(highlighting_enabled));
+
+        // Create hinter
+        let hinter = Box::new(MongoHinter::new());
+
+        // Create validator
+        let validator = Box::new(MongoValidator::new());
+
+        // Build the editor
+        let editor = Reedline::create()
+            .with_history(history)
+            .with_completer(completer)
+            .with_menu(ReedlineMenu::EngineCompleter(completion_menu))
+            .with_edit_mode(edit_mode)
+            .with_highlighter(highlighter)
+            .with_hinter(hinter)
+            .with_validator(validator)
+            .with_quick_completions(true) // Show completions without waiting
+            .with_partial_completions(true) // Allow partial completion
+            .use_kitty_keyboard_enhancement(false); // Disable for better compatibility
 
         Ok(Self {
             editor,
@@ -78,19 +153,14 @@ impl ReplEngine {
     /// # Returns
     /// * `Result<Option<String>>` - Input line or None on EOF / interrupt
     pub fn read_line(&mut self) -> Result<Option<String>> {
-        let prompt = self.generate_prompt();
-        match self.editor.readline(&prompt) {
-            Ok(line) => {
-                // Add to history
-                let _ = self.editor.add_history_entry(line.as_str());
-                Ok(Some(line))
-            }
-            Err(rustyline::error::ReadlineError::Interrupted) => {
-                // Ctrl-C
-                Ok(None)
-            }
-            Err(rustyline::error::ReadlineError::Eof) => {
-                // Ctrl-D
+        let database = self.shared_state.get_database();
+        let connected = self.shared_state.is_connected();
+        let prompt = MongoPrompt::new(database, connected);
+
+        match self.editor.read_line(&prompt) {
+            Ok(Signal::Success(buffer)) => Ok(Some(buffer)),
+            Ok(Signal::CtrlD) | Ok(Signal::CtrlC) => {
+                // Ctrl-D or Ctrl-C
                 Ok(None)
             }
             Err(err) => Err(MongoshError::Generic(format!("Read error: {}", err))),
@@ -108,38 +178,11 @@ impl ReplEngine {
         self.parser.parse(input)
     }
 
-    /// Save history to file
-    ///
-    /// # Arguments
-    /// * `path` - Path to history file
-    ///
-    /// # Returns
-    /// * `Result<()>` - Success or error
-    pub fn save_history(&mut self, path: &PathBuf) -> Result<()> {
-        self.editor.save_history(path)?;
-        Ok(())
-    }
-
     /// Check if REPL is still running
     ///
     /// # Returns
     /// * `bool` - True if running
     pub fn is_running(&self) -> bool {
         self.running
-    }
-
-    /// Generate prompt string based on shared state
-    ///
-    /// # Returns
-    /// * `String` - Prompt string
-    fn generate_prompt(&self) -> String {
-        let database = self.shared_state.get_database();
-        let connected = self.shared_state.is_connected();
-
-        if connected {
-            format!("{}> ", database)
-        } else {
-            format!("{} (disconnected)> ", database)
-        }
     }
 }

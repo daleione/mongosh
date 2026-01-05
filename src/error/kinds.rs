@@ -255,8 +255,8 @@ impl From<bson::de::Error> for MongoshError {
     }
 }
 
-impl From<rustyline::error::ReadlineError> for MongoshError {
-    fn from(err: rustyline::error::ReadlineError) -> Self {
-        MongoshError::Generic(format!("Readline error: {}", err))
+impl From<reedline::ReedlineError> for MongoshError {
+    fn from(err: reedline::ReedlineError) -> Self {
+        MongoshError::Generic(format!("Reedline error: {}", err))
     }
 }

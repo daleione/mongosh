@@ -202,10 +202,7 @@ async fn run_interactive_mode(cli: &CliInterface) -> Result<()> {
         }
     }
 
-    // Save history before exit
-    let history_path = &cli.config().history.file_path;
-    let _ = repl.save_history(history_path);
-
+    // History is automatically saved by FileBackedHistory
     // ConnectionManager will be disconnected automatically when ExecutionContext is dropped
     println!("Goodbye!");
     Ok(())

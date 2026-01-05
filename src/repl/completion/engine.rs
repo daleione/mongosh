@@ -5,13 +5,22 @@
 
 use std::sync::Arc;
 
-use rustyline::completion::Pair;
-
 use super::context::CompletionContext;
 use super::fsm::CompletionState;
 use super::provider::CandidateProvider;
 use super::token_stream::TokenStream;
 use crate::parser::{MongoLexer, SqlLexer};
+
+/// Completion pair representing a candidate suggestion
+#[derive(Debug, Clone, PartialEq)]
+pub struct CompletionPair {
+    /// Display text for the candidate
+    pub display: String,
+    /// Replacement text to insert
+    pub replacement: String,
+    /// Optional description for the candidate
+    pub description: Option<String>,
+}
 
 /// Main completion engine
 pub struct CompletionEngine {
@@ -35,8 +44,8 @@ impl CompletionEngine {
     /// * `pos` - Cursor position (byte index)
     ///
     /// # Returns
-    /// * `(usize, Vec<Pair>)` - Completion start position and candidate pairs
-    pub fn complete(&self, line: &str, pos: usize) -> (usize, Vec<Pair>) {
+    /// * `(usize, Vec<CompletionPair>)` - Completion start position and candidate pairs
+    pub fn complete(&self, line: &str, pos: usize) -> (usize, Vec<CompletionPair>) {
         // 1. Determine input type and tokenize
         let stream = self.tokenize(line, pos);
 
@@ -56,12 +65,13 @@ impl CompletionEngine {
             candidates.retain(|c| c != &prefix);
         }
 
-        // 6. Convert to rustyline Pairs
-        let pairs: Vec<Pair> = candidates
+        // 6. Convert to CompletionPairs
+        let pairs: Vec<CompletionPair> = candidates
             .into_iter()
-            .map(|c| Pair {
+            .map(|c| CompletionPair {
                 display: c.clone(),
                 replacement: c,
+                description: None,
             })
             .collect();
 
