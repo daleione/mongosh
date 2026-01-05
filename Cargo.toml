@@ -23,20 +23,14 @@ colored_json = "5"
 bson = "2.15"
 hex = "0.4"
 base64 = "0.22"
-regex = "1.10"
 futures = "0.3"
-toml = "0.9"
 dirs = "6.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-thiserror = "2.0"
-anyhow = "1.0"
 oxc = { version = "0.106", features = ["full"] }
 tabled = "0.20.0"
 
 [dev-dependencies]
-tokio-test = "0.4"
-mockall = "0.13"
 
 [profile.release]
 opt-level = 3
