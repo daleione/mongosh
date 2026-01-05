@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use rustyline::Helper as RustyHelper;
 use rustyline::completion::{Completer, Pair};
+use rustyline::highlight::CmdKind;
 use rustyline::highlight::Highlighter;
 use rustyline::hint::Hinter;
 use rustyline::validate::Validator;
@@ -133,8 +134,8 @@ impl Highlighter for ReplHelper {
     ///
     /// # Returns
     /// * `bool` - Whether to highlight
-    fn highlight_char(&self, _line: &str, _pos: usize, _ctx: bool) -> bool {
-        self.highlighting_enabled && _ctx
+    fn highlight_char(&self, _line: &str, _pos: usize, _ctx: CmdKind) -> bool {
+        self.highlighting_enabled
     }
 }
 
