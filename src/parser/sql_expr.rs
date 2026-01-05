@@ -246,29 +246,6 @@ impl SqlExprConverter {
         }
     }
 
-    /// Get the output field name for an aggregate column
-    pub fn get_aggregate_output_name(
-        func: &str,
-        field: &Option<String>,
-        alias: &Option<String>,
-        distinct: bool,
-    ) -> String {
-        if let Some(alias_value) = alias {
-            alias_value.clone()
-        } else {
-            let func_upper = func.to_uppercase();
-            let prefix = if distinct { "distinct_" } else { "" };
-            match func_upper.as_str() {
-                "COUNT" => format!("{}count", prefix),
-                "SUM" => format!("sum_{}", field.as_deref().unwrap_or("value")),
-                "AVG" => format!("avg_{}", field.as_deref().unwrap_or("value")),
-                "MIN" => format!("min_{}", field.as_deref().unwrap_or("value")),
-                "MAX" => format!("max_{}", field.as_deref().unwrap_or("value")),
-                _ => format!("{}_{}", func_upper, field.as_deref().unwrap_or("*")),
-            }
-        }
-    }
-
     /// Build a MongoDB aggregate expression for a SQL aggregate function
     pub fn build_aggregate_expr(
         func: &str,
@@ -353,7 +330,7 @@ impl SqlExprConverter {
                 distinct,
             } = col
             {
-                let output_name = Self::get_aggregate_output_name(func, field, alias, *distinct);
+                let output_name = alias.clone().unwrap_or_else(|| func.to_lowercase());
                 let agg_expr = Self::build_aggregate_expr(func, field, *distinct)?;
                 group_doc.insert(output_name, agg_expr);
             }
@@ -467,34 +444,6 @@ mod tests {
         let lit = SqlLiteral::Boolean(true);
         let bson = SqlExprConverter::literal_to_bson(&lit);
         assert_eq!(bson, mongodb::bson::Bson::Boolean(true));
-    }
-
-    #[test]
-    fn test_get_aggregate_output_name_count() {
-        let name = SqlExprConverter::get_aggregate_output_name("COUNT", &None, &None, false);
-        assert_eq!(name, "count");
-    }
-
-    #[test]
-    fn test_get_aggregate_output_name_with_alias() {
-        let name = SqlExprConverter::get_aggregate_output_name(
-            "COUNT",
-            &None,
-            &Some("total".to_string()),
-            false,
-        );
-        assert_eq!(name, "total");
-    }
-
-    #[test]
-    fn test_get_aggregate_output_name_sum() {
-        let name = SqlExprConverter::get_aggregate_output_name(
-            "SUM",
-            &Some("price".to_string()),
-            &None,
-            false,
-        );
-        assert_eq!(name, "sum_price");
     }
 
     #[test]

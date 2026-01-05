@@ -924,13 +924,12 @@ impl SqlParser {
             for col in &ast.columns {
                 if let SqlColumn::Aggregate {
                     func,
-                    field,
                     alias,
                     distinct,
+                    ..
                 } = col
                 {
-                    let output_name =
-                        SqlExprConverter::get_aggregate_output_name(func, field, alias, *distinct);
+                    let output_name = alias.clone().unwrap_or_else(|| func.to_lowercase());
                     // For COUNT(DISTINCT), we need to count the array size
                     if *distinct && func.to_uppercase() == "COUNT" {
                         project_doc.insert(
@@ -958,8 +957,7 @@ impl SqlParser {
                     distinct,
                 } = col
                 {
-                    let output_name =
-                        SqlExprConverter::get_aggregate_output_name(func, field, alias, *distinct);
+                    let output_name = alias.clone().unwrap_or_else(|| func.to_lowercase());
                     let aggregate_expr =
                         SqlExprConverter::build_aggregate_expr(func, field, *distinct)?;
                     group_doc.insert(output_name, aggregate_expr);
@@ -975,13 +973,12 @@ impl SqlParser {
             for col in &ast.columns {
                 if let SqlColumn::Aggregate {
                     func,
-                    field,
                     alias,
                     distinct,
+                    ..
                 } = col
                 {
-                    let output_name =
-                        SqlExprConverter::get_aggregate_output_name(func, field, alias, *distinct);
+                    let output_name = alias.clone().unwrap_or_else(|| func.to_lowercase());
                     // For COUNT(DISTINCT), we need to count the array size
                     if *distinct && func.to_uppercase() == "COUNT" {
                         project_doc.insert(
