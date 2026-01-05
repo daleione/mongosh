@@ -2,9 +2,11 @@ use rustyline::history::DefaultHistory;
 use rustyline::{Config, Editor};
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use crate::config::HistoryConfig;
 use crate::error::{MongoshError, Result};
+use crate::executor::ExecutionContext;
 use crate::parser::{Command, Parser};
 
 use super::helper::ReplHelper;
@@ -32,6 +34,7 @@ impl ReplEngine {
     /// * `shared_state` - Shared state with execution context
     /// * `history_config` - History configuration
     /// * `highlighting_enabled` - Enable syntax highlighting
+    /// * `execution_context` - Optional execution context for completion
     ///
     /// # Returns
     /// * `Result<Self>` - New REPL engine or error
@@ -39,6 +42,7 @@ impl ReplEngine {
         shared_state: SharedState,
         history_config: HistoryConfig,
         highlighting_enabled: bool,
+        execution_context: Option<Arc<ExecutionContext>>,
     ) -> Result<Self> {
         let config = Config::builder()
             .max_history_size(history_config.max_size)?
@@ -46,7 +50,11 @@ impl ReplEngine {
             .auto_add_history(true)
             .build();
 
-        let helper = ReplHelper::new(shared_state.clone(), highlighting_enabled);
+        let helper = ReplHelper::new(
+            shared_state.clone(),
+            highlighting_enabled,
+            execution_context,
+        );
         let mut editor = Editor::<ReplHelper, DefaultHistory>::with_config(config)?;
         editor.set_helper(Some(helper));
 

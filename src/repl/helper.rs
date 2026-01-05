@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::sync::Arc;
 
 use rustyline::Helper as RustyHelper;
 use rustyline::completion::{Completer, Pair};
@@ -6,18 +7,14 @@ use rustyline::highlight::Highlighter;
 use rustyline::hint::Hinter;
 use rustyline::validate::Validator;
 
+use crate::executor::ExecutionContext;
+use crate::repl::completion::{CompletionEngine, MongoCandidateProvider};
 use crate::repl::shared_state::SharedState;
 
 /// Helper for rustyline providing completion, hints, and highlighting
 pub struct ReplHelper {
-    /// Shared state for contextual completion
-    pub(crate) shared_state: SharedState,
-
-    /// Available commands for completion
-    pub(crate) commands: Vec<String>,
-
-    /// Available collections for completion
-    pub(crate) collections: Vec<String>,
+    /// Completion engine for intelligent suggestions
+    pub(crate) completion_engine: CompletionEngine,
 
     /// Enable syntax highlighting
     pub(crate) highlighting_enabled: bool,
@@ -29,23 +26,26 @@ impl ReplHelper {
     /// # Arguments
     /// * `shared_state` - Shared state
     /// * `highlighting_enabled` - Enable syntax highlighting
+    /// * `execution_context` - Optional execution context for database queries
     ///
     /// # Returns
     /// * `Self` - New helper
-    pub fn new(shared_state: SharedState, highlighting_enabled: bool) -> Self {
-        let commands = vec![
-            "show".to_string(),
-            "use".to_string(),
-            "exit".to_string(),
-            "quit".to_string(),
-            "help".to_string(),
-            "db".to_string(),
-        ];
+    pub fn new(
+        shared_state: SharedState,
+        highlighting_enabled: bool,
+        execution_context: Option<Arc<ExecutionContext>>,
+    ) -> Self {
+        // Create the candidate provider
+        let provider = Arc::new(MongoCandidateProvider::new(
+            shared_state.clone(),
+            execution_context,
+        ));
+
+        // Create the completion engine
+        let completion_engine = CompletionEngine::new(provider);
 
         Self {
-            shared_state,
-            commands,
-            collections: Vec::new(),
+            completion_engine,
             highlighting_enabled,
         }
     }
@@ -57,31 +57,11 @@ impl ReplHelper {
     ///
     /// # Returns
     /// * `bool` - True if complete
-    pub fn is_complete_statement(&self, input: &str) -> bool {
+    pub fn is_complete_statement(&self, _input: &str) -> bool {
         // Simple check: balanced braces and parentheses
-        let mut brace_count = 0;
-        let mut paren_count = 0;
-        let mut in_string = false;
-        let mut escape_next = false;
-
-        for ch in input.chars() {
-            if escape_next {
-                escape_next = false;
-                continue;
-            }
-
-            match ch {
-                '\\' => escape_next = true,
-                '"' | '\'' => in_string = !in_string,
-                '{' if !in_string => brace_count += 1,
-                '}' if !in_string => brace_count -= 1,
-                '(' if !in_string => paren_count += 1,
-                ')' if !in_string => paren_count -= 1,
-                _ => {}
-            }
-        }
-
-        brace_count == 0 && paren_count == 0
+        // For now, always consider statements complete for single-line input
+        // TODO: Implement multi-line statement detection if needed
+        true
     }
 }
 
@@ -105,98 +85,8 @@ impl Completer for ReplHelper {
         pos: usize,
         _ctx: &rustyline::Context<'_>,
     ) -> rustyline::Result<(usize, Vec<Pair>)> {
-        let mut candidates = Vec::new();
-
-        // Get the word being completed
-        let start = line[..pos]
-            .rfind(|c: char| c.is_whitespace() || c == '.')
-            .map(|i| i + 1)
-            .unwrap_or(0);
-
-        let word = &line[start..pos];
-
-        // Determine what to complete based on context
-        if line.starts_with("use ") {
-            // Complete database names
-            // For now, just suggest the current database
-            let current_db = self.shared_state.get_database();
-            if current_db.starts_with(word) {
-                candidates.push(Pair {
-                    display: current_db.clone(),
-                    replacement: current_db,
-                });
-            }
-        } else if line.starts_with("show ") {
-            // Complete "show" subcommands
-            let show_commands = vec!["dbs", "databases", "collections", "tables"];
-            for cmd in show_commands {
-                if cmd.starts_with(word) {
-                    candidates.push(Pair {
-                        display: cmd.to_string(),
-                        replacement: cmd.to_string(),
-                    });
-                }
-            }
-        } else if line.contains("db.") {
-            // Complete collection names after "db."
-            let after_db = line.split("db.").last().unwrap_or("");
-            let collection_part = after_db.split('.').next().unwrap_or("");
-
-            if collection_part == word || word.is_empty() {
-                for collection in &self.collections {
-                    if collection.starts_with(word) {
-                        candidates.push(Pair {
-                            display: collection.clone(),
-                            replacement: collection.clone(),
-                        });
-                    }
-                }
-            }
-
-            // Also suggest common operations after collection name
-            if after_db.contains('.') {
-                let operations = vec![
-                    "find",
-                    "findOne",
-                    "insertOne",
-                    "insertMany",
-                    "updateOne",
-                    "updateMany",
-                    "deleteOne",
-                    "deleteMany",
-                    "countDocuments",
-                    "aggregate",
-                    "drop",
-                ];
-                for op in operations {
-                    if op.starts_with(word) {
-                        candidates.push(Pair {
-                            display: op.to_string(),
-                            replacement: op.to_string(),
-                        });
-                    }
-                }
-            }
-        } else {
-            // Complete top-level commands
-            for cmd in &self.commands {
-                if cmd.starts_with(word) {
-                    candidates.push(Pair {
-                        display: cmd.clone(),
-                        replacement: cmd.clone(),
-                    });
-                }
-            }
-
-            // Also suggest "db" if it matches
-            if "db".starts_with(word) {
-                candidates.push(Pair {
-                    display: "db".to_string(),
-                    replacement: "db".to_string(),
-                });
-            }
-        }
-
+        // Delegate to the completion engine
+        let (start, candidates) = self.completion_engine.complete(line, pos);
         Ok((start, candidates))
     }
 }

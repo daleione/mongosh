@@ -1,4 +1,3 @@
-use super::completion::CommandCompleter;
 use super::*;
 
 #[test]
@@ -71,20 +70,4 @@ fn test_shared_state_cursor_operations() {
 
     state.clear_cursor_state();
     assert!(!state.has_active_cursor());
-}
-
-#[test]
-fn test_command_completer() {
-    let completer = CommandCompleter::new();
-    let completions = completer.get_completions("show");
-    assert!(!completions.is_empty());
-    assert!(completions.iter().all(|c| c.starts_with("show")));
-}
-
-#[test]
-fn test_command_completer_custom() {
-    let completer = CommandCompleter::with_commands(["alpha", "beta", "gamma"]);
-    let completions = completer.get_completions("b");
-    assert_eq!(completions.len(), 1);
-    assert_eq!(completions[0], "beta");
 }

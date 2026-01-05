@@ -5,17 +5,16 @@
 //!
 //! - `cursor_state`  : pagination cursor state
 //! - `shared_state`  : shared mutable state between REPL and execution context
-
 //! - `engine`        : `ReplEngine`, the main interactive loop and editor
 //! - `helper`        : `ReplHelper` and trait impls (completion, hints, etc.)
-//! - `completion`    : `CommandCompleter` for simple command completions
+//! - `completion`    : Intelligent completion system for MongoDB shell and SQL
 //!
 //! External code should typically depend on `ReplEngine` and `SharedState`.
 //! More specialized types (e.g. helpers, prompt generator, command completer)
 //! are re‑exported for convenience but are mostly internal details of the
 //! REPL implementation.
 
-mod completion;
+pub mod completion;
 mod cursor_state;
 mod engine;
 mod helper;

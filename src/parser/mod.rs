@@ -33,6 +33,7 @@
 mod command;
 mod db_operation;
 mod expr_converter;
+mod mongo_lexer;
 mod shell_commands;
 mod sql_context;
 mod sql_expr;
@@ -41,6 +42,8 @@ mod sql_parser;
 
 // Re-export public API
 pub use command::*;
+pub use mongo_lexer::{MongoLexer, MongoToken, MongoTokenKind};
+pub use sql_lexer::{SqlLexer, Token as SqlToken, TokenKind as SqlTokenKind};
 
 use crate::error::{ParseError, Result};
 

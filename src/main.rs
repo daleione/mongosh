@@ -20,6 +20,7 @@
 //! mongosh mongodb://localhost:27017
 //! ```
 
+use std::sync::Arc;
 use tracing::Level;
 
 mod cli;
@@ -137,6 +138,7 @@ async fn run_interactive_mode(cli: &CliInterface) -> Result<()> {
         shared_state.clone(),
         cli.config().history.clone(),
         highlighting_enabled,
+        Some(Arc::new(exec_context.clone())),
     )?;
 
     // Main REPL loop
