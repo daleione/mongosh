@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0] - 2026-01-05
+
+### Added
+
+- **Intelligent auto-completion** - Smart auto-completion for MongoDB shell commands and SQL syntax with context-aware suggestions
+- **URI sanitization** - Automatic sanitization of MongoDB connection URIs to protect sensitive information
+- **Server version display** - Show MongoDB server version information on connection
+- **User confirmation for dangerous operations** - Added safety prompts for potentially destructive commands
+- **SQL aggregate queries without GROUP BY** - Support for SQL aggregate functions (COUNT, SUM, AVG, etc.) without requiring GROUP BY clause
+
+### Changed
+
+- **Optimized completion system** - Removed exact prefix matches from auto-completion suggestions for better user experience
+- **SQL clause order validation** - Enhanced validation to ensure correct SQL clause ordering (SELECT, FROM, WHERE, GROUP BY, ORDER BY, LIMIT)
+
 ## [0.3.0] - 2025-12-30
 
 ### Added

@@ -4,24 +4,9 @@
 [![Rust](https://img.shields.io/badge/rust-1.91%2B-orange.svg)](https://www.rust-lang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A power-user oriented MongoDB CLI written in Rust, focused on productivity, scripting, and rich output.
+A powerful MongoDB CLI written in Rust, featuring intelligent auto-completion, SQL query support, and enhanced security features for productive database operations.
 
 > **Note:** This project is an independent, community-driven tool. It is **NOT** affiliated with MongoDB, and it is not intended to be a drop-in replacement for the official `mongosh`.
-
----
-
-## ✨ Why Another MongoDB CLI?
-
-The official MongoDB Shell (`mongosh`) is excellent for compatibility and JavaScript workflows. This project exists for engineers who want a faster, more scriptable, and CLI-native experience:
-
-- 🧠 **Power-user workflows** — Batch queries, automation, CI/CD
-- 📊 **Readable output** — Tables, highlighted JSON
-- ⚡ **Fast startup & execution** — Compiled Rust binary
-- 🧩 **Extensible architecture** — Plugins & future extensions
-
-> If you rely heavily on JavaScript execution inside the shell, you should continue using the official `mongosh`.
-
----
 
 ## 🔍 Key Differences vs Official mongosh
 
@@ -36,29 +21,14 @@ The official MongoDB Shell (`mongosh`) is excellent for compatibility and JavaSc
 
 ---
 
-## 🚧 Project Status
-
-> ⚠️ **Active Development – Not Production Ready**
->
-> - APIs and commands may change
-> - Some MongoDB features are incomplete
-> - Bugs and panics may exist
->
-> Feedback, testing, and contributions are highly welcome.
-
----
-
 ## ✨ Features
 
 - ⚡ **High Performance** — Native Rust, async I/O
 - 💾 **Lightweight** — Small static binary
-- 🔒 **Type Safety** — Memory-safe by design
-- 🧵 **Async Execution** — Powered by Tokio
 - 🎨 **Syntax Highlighting** — Readable command & JSON output
-- 🧠 **Smart Completion** — Context-aware auto-completion
-- 📊 **Rich Output** — Table & structured views (WIP)
-- 🔌 **Extensible** — Plugin-friendly design
-- 🌍 **Cross-Platform** — Linux, macOS, Windows
+- 📊 **Rich Output Formats** — JSON (pretty/compact), shell-style, and table views
+- 🗄️ **SQL Query Support** — Query MongoDB using familiar SQL SELECT syntax
+- 🧠 **Intelligent Auto-Completion** — Context-aware suggestions for MongoDB shell and SQL commands
 
 ---
 
@@ -83,7 +53,7 @@ mongosh
 # Connect to a specific host
 mongosh mongodb://localhost:27017
 
-# Connect with authentication
+# Connect with authentication (credentials are automatically sanitized in logs)
 mongosh mongodb://username:password@localhost:27017/dbname
 ```
 
