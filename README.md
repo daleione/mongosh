@@ -61,45 +61,26 @@ mongosh mongodb://username:password@localhost:27017/dbname
 
 ## 🧪 Example Commands
 
-### Show Databases
-
 ```javascript
+// Show Databases
 show dbs
-```
 
-### Switch Database
-
-```javascript
+// Switch Database
 use mydb
-```
 
-### Show Collections
-
-```javascript
+// Show Collections
 show collections
-```
 
-### Insert a Document
-
-```javascript
+// Insert a Document
 db.users.insertOne({ name: "John Doe", age: 25 });
-```
 
-### Query Documents
-
-```javascript
+// Query Documents
 db.users.find({ age: { $gte: 18 } });
-```
 
-### Update Documents
-
-```javascript
+// Update Documents
 db.users.updateOne({ name: "John Doe" }, { $set: { age: 26 } });
-```
 
-### Aggregation Pipeline
-
-```javascript
+// Aggregation Pipeline
 db.orders.aggregate([
   { $match: { status: "completed" } },
   { $group: { _id: "$userId", total: { $sum: "$amount" } } },
