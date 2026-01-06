@@ -12,7 +12,7 @@ use crate::executor::ExecutionContext;
 use crate::parser::{Command, Parser};
 
 use super::completer::MongoCompleter;
-use super::highlighter::MongoHighlighter;
+use super::highlighter::{SyntaxHighlighter, SyntaxMode};
 use super::hinter::MongoHinter;
 use super::prompt::MongoPrompt;
 use super::shared_state::SharedState;
@@ -118,8 +118,11 @@ impl ReplEngine {
 
         let edit_mode = Box::new(Emacs::new(keybindings));
 
-        // Create highlighter
-        let highlighter = Box::new(MongoHighlighter::new(highlighting_enabled));
+        // Create highlighter with auto-detect mode
+        let highlighter = Box::new(SyntaxHighlighter::new(
+            SyntaxMode::Auto,
+            highlighting_enabled,
+        ));
 
         // Create hinter
         let hinter = Box::new(MongoHinter::new());
