@@ -288,4 +288,92 @@ mod tests {
         assert!(!stream.is_empty());
         assert_eq!(stream.cursor, 19);
     }
+
+    #[test]
+    fn test_no_completion_after_sql_semicolon() {
+        let engine = create_test_engine();
+
+        // Test with semicolon at the end
+        let (_start, pairs) = engine.complete("SELECT * FROM users;", 20);
+        assert!(pairs.is_empty(), "Should not complete after semicolon");
+
+        // Test with semicolon and whitespace
+        let (_start, pairs) = engine.complete("SELECT * FROM users; ", 21);
+        assert!(
+            pairs.is_empty(),
+            "Should not complete after semicolon with space"
+        );
+
+        // Test with semicolon and multiple spaces
+        let (_start, pairs) = engine.complete("SELECT * FROM users;   ", 23);
+        assert!(
+            pairs.is_empty(),
+            "Should not complete after semicolon with multiple spaces"
+        );
+    }
+
+    #[test]
+    fn test_no_completion_after_sql_limit() {
+        let engine = create_test_engine();
+
+        // Test after LIMIT - should not complete (expects number)
+        let (_start, pairs) = engine.complete("SELECT * FROM users LIMIT ", 26);
+        assert!(
+            pairs.is_empty(),
+            "Should not complete after LIMIT (expects number)"
+        );
+
+        // Test after LIMIT with partial number
+        let (_start, pairs) = engine.complete("SELECT * FROM users LIMIT 1", 27);
+        assert!(
+            pairs.is_empty(),
+            "Should not complete after LIMIT with number"
+        );
+    }
+
+    #[test]
+    fn test_no_completion_after_sql_offset() {
+        let engine = create_test_engine();
+
+        // Test after OFFSET - should not complete (expects number)
+        let (_start, pairs) = engine.complete("SELECT * FROM users OFFSET ", 27);
+        assert!(
+            pairs.is_empty(),
+            "Should not complete after OFFSET (expects number)"
+        );
+    }
+
+    #[test]
+    fn test_no_completion_after_table_name() {
+        let engine = create_test_engine();
+
+        // After table name, before WHERE/JOIN/etc - no completion
+        let (_start, pairs) = engine.complete("SELECT * FROM users ", 20);
+        assert!(
+            pairs.is_empty(),
+            "Should not complete after table name (expects WHERE, JOIN, etc.)"
+        );
+    }
+
+    #[test]
+    fn test_completion_at_from() {
+        let engine = create_test_engine();
+
+        // Should complete table names after FROM
+        let (start, _pairs) = engine.complete("SELECT * FROM ", 14);
+        assert_eq!(start, 14, "Should start completion after FROM");
+        // Pairs may be empty without real DB, but position should be correct
+    }
+
+    #[test]
+    fn test_no_completion_in_where_clause() {
+        let engine = create_test_engine();
+
+        // After WHERE - no completion (would need column name completion, not implemented yet)
+        let (_start, pairs) = engine.complete("SELECT * FROM users WHERE ", 26);
+        assert!(
+            pairs.is_empty(),
+            "Should not complete in WHERE clause (column completion not implemented)"
+        );
+    }
 }

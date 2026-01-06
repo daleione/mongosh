@@ -36,6 +36,14 @@ pub enum CompletionState {
     SqlJoin,
     /// After "WHERE" keyword
     SqlWhere,
+    /// After table name in FROM/JOIN - expect WHERE, JOIN, ORDER, LIMIT, etc. - no completion
+    SqlAfterTableName,
+    /// After LIMIT/OFFSET - expect numbers - no completion
+    SqlAfterLimit,
+    /// After ORDER BY - expect column names
+    SqlOrderBy,
+    /// After semicolon or complete statement - no completion
+    SqlComplete,
 
     // === Shell Command States ===
     /// After "show" command - should complete subcommands
@@ -58,6 +66,16 @@ impl CompletionState {
             // Stay inside parentheses for any other token
             (InsideParentheses, _) => InsideParentheses,
 
+            // === Check for semicolon (statement terminator) ===
+            (_, t) if t.is_semicolon() => SqlComplete,
+            // After semicolon, any keyword starts a new statement
+            (SqlComplete, t) if t.is_sql_keyword("SELECT") => Start,
+            (SqlComplete, t) if t.is_sql_keyword("INSERT") => Start,
+            (SqlComplete, t) if t.is_sql_keyword("UPDATE") => Start,
+            (SqlComplete, t) if t.is_sql_keyword("DELETE") => Start,
+            // Stay in SqlComplete for whitespace/identifiers after semicolon
+            (SqlComplete, _) => SqlComplete,
+
             // === Mongo Shell Transitions ===
             (Start, t) if t.is_db() => AfterDb,
             (AfterDb, t) if t.is_dot() => AfterDbDot,
@@ -67,6 +85,19 @@ impl CompletionState {
             // === SQL Transitions ===
             (Start, t) if t.is_sql_keyword("SELECT") => Start, // Stay in Start after SELECT
             (_, t) if t.is_sql_keyword("FROM") => SqlFrom,
+
+            // After FROM, when we see an identifier (table name), transition to SqlAfterTableName
+            (SqlFrom, t) if t.is_ident() => SqlAfterTableName,
+
+            // JOIN keywords can come from various states
+            (SqlAfterTableName, t)
+                if t.is_sql_keyword("JOIN")
+                    || t.is_sql_keyword("INNER")
+                    || t.is_sql_keyword("LEFT")
+                    || t.is_sql_keyword("RIGHT") =>
+            {
+                SqlJoin
+            }
             (_, t)
                 if t.is_sql_keyword("JOIN")
                     || t.is_sql_keyword("INNER")
@@ -75,16 +106,34 @@ impl CompletionState {
             {
                 SqlJoin
             }
+
+            // After JOIN, when we see an identifier (table name), transition to SqlAfterTableName
+            (SqlJoin, t) if t.is_ident() => SqlAfterTableName,
+
+            // WHERE can come after table name
+            (SqlAfterTableName, t) if t.is_sql_keyword("WHERE") => SqlWhere,
             (SqlFrom, t) if t.is_sql_keyword("WHERE") => SqlWhere,
-            (SqlJoin, t) if t.is_sql_keyword("WHERE") => SqlWhere,
+            (SqlWhere, t) if t.is_ident() => SqlWhere, // Stay in WHERE for column names, etc.
+
+            // LIMIT/OFFSET expect numbers - no completion
+            (_, t) if t.is_sql_keyword("LIMIT") || t.is_sql_keyword("OFFSET") => SqlAfterLimit,
+            (SqlAfterLimit, t) if t.is_number() => SqlAfterLimit, // Stay after seeing number
+
+            // ORDER BY for column names
+            (_, t) if t.is_sql_keyword("ORDER") => Start, // Wait for BY
+            (Start, t) if t.is_sql_keyword("BY") => SqlOrderBy,
+            (SqlAfterTableName, t) if t.is_sql_keyword("ORDER") => Start,
+            (SqlOrderBy, t) if t.is_ident() => SqlOrderBy, // Column names
+
+            // GROUP BY similar to ORDER BY
+            (_, t) if t.is_sql_keyword("GROUP") => Start,
+            (SqlAfterTableName, t) if t.is_sql_keyword("GROUP") => Start,
 
             // === Shell Command Transitions ===
             (Start, t) if t.ident_value() == Some("show".to_string()) => ShowCommand,
             (Start, t) if t.ident_value() == Some("use".to_string()) => UseCommand,
 
             // === Stay in current state for identifiers after certain states ===
-            (SqlFrom, t) if t.is_ident() => SqlFrom,
-            (SqlJoin, t) if t.is_ident() => SqlJoin,
             (ShowCommand, t) if t.is_ident() => ShowCommand,
             (UseCommand, t) if t.is_ident() => UseCommand,
 
@@ -131,6 +180,11 @@ impl CompletionState {
             // At the start, complete top-level commands
             Start if !stream.current_prefix().is_empty() => {
                 CompletionContext::command(stream.current_prefix())
+            }
+
+            // No completion for these states
+            SqlAfterTableName | SqlAfterLimit | SqlWhere | SqlOrderBy | SqlComplete => {
+                CompletionContext::None
             }
 
             // No completion

@@ -18,6 +18,12 @@ use std::ops::Range;
 pub enum TokenKind {
     // SQL Keywords (case-insensitive)
     Select,
+    Insert,
+    Update,
+    Delete,
+    Create,
+    Drop,
+    Alter,
     From,
     Where,
     GroupBy,
@@ -48,6 +54,8 @@ pub enum TokenKind {
     Null,
     True,
     False,
+    Group,
+    Order,
 
     // Identifiers and Literals
     Ident(String),
@@ -287,6 +295,12 @@ impl SqlLexer {
         // Check if it's a keyword (case-insensitive)
         let kind = match value.to_uppercase().as_str() {
             "SELECT" => TokenKind::Select,
+            "INSERT" => TokenKind::Insert,
+            "UPDATE" => TokenKind::Update,
+            "DELETE" => TokenKind::Delete,
+            "CREATE" => TokenKind::Create,
+            "DROP" => TokenKind::Drop,
+            "ALTER" => TokenKind::Alter,
             "FROM" => TokenKind::From,
             "WHERE" => TokenKind::Where,
             "GROUP" => {
@@ -298,7 +312,7 @@ impl SqlLexer {
                     TokenKind::GroupBy
                 } else {
                     self.pos = saved_pos;
-                    TokenKind::Ident(value)
+                    TokenKind::Group
                 }
             }
             "ORDER" => {
@@ -310,7 +324,7 @@ impl SqlLexer {
                     TokenKind::OrderBy
                 } else {
                     self.pos = saved_pos;
-                    TokenKind::Ident(value)
+                    TokenKind::Order
                 }
             }
             "BY" => TokenKind::By,

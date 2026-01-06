@@ -80,15 +80,39 @@ impl UnifiedToken {
         match self {
             UnifiedToken::Sql(t) => match keyword.to_uppercase().as_str() {
                 "SELECT" => matches!(t.kind, SqlTokenKind::Select),
+                "INSERT" => matches!(t.kind, SqlTokenKind::Insert),
+                "UPDATE" => matches!(t.kind, SqlTokenKind::Update),
+                "DELETE" => matches!(t.kind, SqlTokenKind::Delete),
                 "FROM" => matches!(t.kind, SqlTokenKind::From),
                 "WHERE" => matches!(t.kind, SqlTokenKind::Where),
                 "JOIN" => matches!(t.kind, SqlTokenKind::Join),
                 "INNER" => matches!(t.kind, SqlTokenKind::Inner),
                 "LEFT" => matches!(t.kind, SqlTokenKind::Left),
                 "RIGHT" => matches!(t.kind, SqlTokenKind::Right),
+                "LIMIT" => matches!(t.kind, SqlTokenKind::Limit),
+                "OFFSET" => matches!(t.kind, SqlTokenKind::Offset),
+                "ORDER" => matches!(t.kind, SqlTokenKind::Order),
+                "BY" => matches!(t.kind, SqlTokenKind::By),
+                "GROUP" => matches!(t.kind, SqlTokenKind::Group),
                 _ => false,
             },
             _ => false,
+        }
+    }
+
+    /// Check if this token is a semicolon
+    pub fn is_semicolon(&self) -> bool {
+        match self {
+            UnifiedToken::Sql(t) => matches!(t.kind, SqlTokenKind::Semicolon),
+            UnifiedToken::Mongo(t) => matches!(t.kind, MongoTokenKind::Semicolon),
+        }
+    }
+
+    /// Check if this token is a number
+    pub fn is_number(&self) -> bool {
+        match self {
+            UnifiedToken::Sql(t) => matches!(t.kind, SqlTokenKind::Number(_)),
+            UnifiedToken::Mongo(t) => matches!(t.kind, MongoTokenKind::Number(_)),
         }
     }
 

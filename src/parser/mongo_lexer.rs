@@ -37,6 +37,8 @@ pub enum MongoTokenKind {
     Comma,
     /// Colon
     Colon,
+    /// Semicolon
+    Semicolon,
     /// String literal
     String(String),
     /// Number literal
@@ -141,6 +143,10 @@ impl MongoLexer {
             ':' => {
                 self.advance();
                 MongoToken::new(MongoTokenKind::Colon, start..self.pos)
+            }
+            ';' => {
+                self.advance();
+                MongoToken::new(MongoTokenKind::Semicolon, start..self.pos)
             }
             '\'' | '"' => self.scan_string(ch, start),
             '0'..='9' => self.scan_number(start),
