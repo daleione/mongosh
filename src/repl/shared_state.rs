@@ -1,6 +1,6 @@
 use std::sync::{Arc, RwLock};
 
-use crate::config::OutputFormat;
+use crate::config::{DisplayConfig, OutputFormat};
 use crate::repl::CursorState;
 
 /// Shared state between REPL and execution context.
@@ -30,12 +30,20 @@ impl SharedState {
     ///
     /// * `database` - Initial database name
     pub fn new(database: String) -> Self {
+        Self::with_config(database, &DisplayConfig::default())
+    }
+
+    /// Create a new shared state with display configuration.
+    ///
+    /// * `database` - Initial database name
+    /// * `display_config` - Display configuration settings
+    pub fn with_config(database: String, display_config: &DisplayConfig) -> Self {
         Self {
             current_database: Arc::new(RwLock::new(database)),
             connected: Arc::new(RwLock::new(false)),
             server_version: Arc::new(RwLock::new(None)),
-            output_format: Arc::new(RwLock::new(OutputFormat::Shell)),
-            color_enabled: Arc::new(RwLock::new(true)),
+            output_format: Arc::new(RwLock::new(display_config.format)),
+            color_enabled: Arc::new(RwLock::new(display_config.color_output)),
             cursor_state: Arc::new(RwLock::new(None)),
         }
     }

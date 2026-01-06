@@ -27,4 +27,4 @@ pub mod kinds;
 pub mod mongo;
 
 // Re-export commonly used types
-pub use kinds::{ConnectionError, ExecutionError, MongoshError, ParseError, Result};
+pub use kinds::{ConfigError, ConnectionError, ExecutionError, MongoshError, ParseError, Result};

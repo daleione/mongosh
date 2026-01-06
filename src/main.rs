@@ -81,83 +81,94 @@ async fn run() -> Result<()> {
 }
 
 /// Run application in interactive REPL mode
-///
-/// # Arguments
-/// * `cli` - CLI interface with configuration
-///
-/// # Returns
-/// * `Result<()>` - Success or error
 async fn run_interactive_mode(cli: &CliInterface) -> Result<()> {
-    // Get connection URI and database
+    let (conn_manager, server_version) = setup_connection(cli).await?;
+    let shared_state = initialize_shared_state(cli, server_version)?;
+    let exec_context = create_execution_context(conn_manager, shared_state.clone()).await?;
+    let mut repl = create_repl_engine(cli, shared_state.clone(), exec_context.clone())?;
+
+    run_repl_loop(cli, &mut repl, &exec_context, &shared_state).await?;
+
+    println!("Goodbye!");
+    Ok(())
+}
+
+/// Setup connection to MongoDB
+async fn setup_connection(cli: &CliInterface) -> Result<(ConnectionManager, Option<String>)> {
     let uri = cli.get_connection_uri();
+    let mut conn_manager = ConnectionManager::new(uri, cli.config().connection.clone());
+
+    if cli.args().no_connect {
+        return Ok((conn_manager, None));
+    }
+
+    conn_manager.connect().await?;
+
+    let version = conn_manager.get_client().ok().and_then(|client| {
+        futures::executor::block_on(conn_manager.get_server_version(client)).ok()
+    });
+
+    if let Some(ref ver) = version {
+        cli.print_connection_info(ver);
+    }
+
+    Ok((conn_manager, version))
+}
+
+/// Initialize shared state with configuration
+fn initialize_shared_state(
+    cli: &CliInterface,
+    server_version: Option<String>,
+) -> Result<SharedState> {
     let database = cli.get_database();
-
-    // Connect to MongoDB
-    let mut conn_manager = ConnectionManager::new(uri.clone(), cli.config().connection.clone());
-
-    let server_version = if !cli.args().no_connect {
-        conn_manager.connect().await?;
-
-        // Get MongoDB server version
-        let version = if let Ok(client) = conn_manager.get_client() {
-            conn_manager.get_server_version(client).await.ok()
-        } else {
-            None
-        };
-
-        // Print connection info with MongoDB version
-        if let Some(ref ver) = version {
-            cli.print_connection_info(ver);
-        }
-
-        version
-    } else {
-        None
-    };
-
-    // Create shared state for REPL and execution context
-    let mut shared_state = SharedState::new(database.clone());
+    let mut shared_state = SharedState::with_config(database, &cli.config().display);
     shared_state.set_connected(server_version);
 
-    // Create execution context with shared state
-    let exec_context = ExecutionContext::new(conn_manager, shared_state.clone());
+    if cli.args().no_color {
+        shared_state.set_color_enabled(false);
+    }
 
-    // Create command router
-    let _router = CommandRouter::new(exec_context.clone()).await?;
+    Ok(shared_state)
+}
 
-    // Create and configure formatter
-    let format = cli.config().display.format;
-    let use_colors = cli.config().display.color_output && !cli.args().no_color;
-    let _formatter = Formatter::new(format, use_colors);
+/// Create execution context with connected manager
+async fn create_execution_context(
+    conn_manager: ConnectionManager,
+    shared_state: SharedState,
+) -> Result<ExecutionContext> {
+    let exec_context = ExecutionContext::new(conn_manager, shared_state);
+    CommandRouter::new(exec_context.clone()).await?;
+    Ok(exec_context)
+}
 
-    // Create REPL engine with shared state
-    let color_enabled = cli.config().display.color_output && !cli.args().no_color;
-    shared_state.set_color_enabled(color_enabled);
-    let highlighting_enabled = true; // TODO: make configurable
-    let mut repl = ReplEngine::new(
-        shared_state.clone(),
+/// Create REPL engine with configuration
+fn create_repl_engine(
+    cli: &CliInterface,
+    shared_state: SharedState,
+    exec_context: ExecutionContext,
+) -> Result<ReplEngine> {
+    ReplEngine::new(
+        shared_state,
         cli.config().history.clone(),
-        highlighting_enabled,
-        Some(Arc::new(exec_context.clone())),
-    )?;
+        cli.config().display.syntax_highlighting,
+        Some(Arc::new(exec_context)),
+    )
+}
 
-    // Main REPL loop
+/// Main REPL loop
+async fn run_repl_loop(
+    cli: &CliInterface,
+    repl: &mut ReplEngine,
+    exec_context: &ExecutionContext,
+    shared_state: &SharedState,
+) -> Result<()> {
     while repl.is_running() {
-        // Read user input
         let input = match repl.read_line()? {
-            Some(line) => line,
-            None => {
-                // EOF reached (Ctrl+D)
-                break;
-            }
+            Some(line) if !line.trim().is_empty() => line,
+            Some(_) => continue,
+            None => break,
         };
 
-        // Skip empty lines
-        if input.trim().is_empty() {
-            continue;
-        }
-
-        // Parse command
         let command = match repl.process_input(&input) {
             Ok(cmd) => cmd,
             Err(e) => {
@@ -166,46 +177,55 @@ async fn run_interactive_mode(cli: &CliInterface) -> Result<()> {
             }
         };
 
-        // Check for exit command
         if matches!(command, parser::Command::Exit) {
             break;
         }
 
-        // Check if this is a config command - output directly without formatting
-        let is_config_cmd = matches!(command, parser::Command::Config(_));
-
-        // Execute command
-        match exec_context.execute(command).await {
-            Ok(result) => {
-                if is_config_cmd {
-                    // Config commands output directly, no formatting
-                    if let executor::ResultData::Message(msg) = &result.data {
-                        println!("{}", msg);
-                    }
-                } else {
-                    // Update formatter with current settings from shared_state
-                    let current_format = shared_state.get_format();
-                    let current_color = shared_state.get_color_enabled();
-                    let current_formatter = Formatter::new(current_format, current_color);
-
-                    // Format and display result
-                    match current_formatter.format(&result) {
-                        Ok(output) => println!("{}", output),
-                        Err(e) => eprintln!("Format error: {}", e),
-                    }
-                }
-                // No need to manually sync - shared_state is automatically updated!
-            }
-            Err(e) => {
-                eprintln!("Execution error: {}", e);
-            }
-        }
+        execute_and_display(cli, exec_context, shared_state, command).await;
     }
 
-    // History is automatically saved by FileBackedHistory
-    // ConnectionManager will be disconnected automatically when ExecutionContext is dropped
-    println!("Goodbye!");
     Ok(())
+}
+
+/// Execute command and display result
+async fn execute_and_display(
+    cli: &CliInterface,
+    exec_context: &ExecutionContext,
+    shared_state: &SharedState,
+    command: parser::Command,
+) {
+    let is_config_cmd = matches!(command, parser::Command::Config(_));
+
+    match exec_context.execute(command).await {
+        Ok(result) => {
+            if is_config_cmd {
+                if let executor::ResultData::Message(msg) = &result.data {
+                    println!("{}", msg);
+                }
+            } else {
+                display_result(cli, shared_state, &result);
+            }
+        }
+        Err(e) => eprintln!("Execution error: {}", e),
+    }
+}
+
+/// Display execution result with proper formatting
+fn display_result(
+    cli: &CliInterface,
+    shared_state: &SharedState,
+    result: &executor::ExecutionResult,
+) {
+    let mut display_config = cli.config().display.clone();
+    display_config.format = shared_state.get_format();
+    display_config.color_output = shared_state.get_color_enabled();
+
+    let formatter = Formatter::from_config(&display_config);
+
+    match formatter.format(result) {
+        Ok(output) => println!("{}", output),
+        Err(e) => eprintln!("Format error: {}", e),
+    }
 }
 
 /// Initialize logging system based on verbosity level

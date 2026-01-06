@@ -54,7 +54,7 @@ pub struct Formatter {
     /// Output format type
     format_type: OutputFormat,
 
-    /// Colorizer for output highlighting
+    /// Colorizer for syntax highlighting
     colorizer: Colorizer,
 
     /// Enable colored output
@@ -62,41 +62,29 @@ pub struct Formatter {
 
     /// JSON indentation (number of spaces)
     json_indent: usize,
+
+    /// Show execution timing
+    show_timing: bool,
 }
 
 impl Formatter {
-    /// Create a new formatter
+    /// Create a new formatter from display configuration.
+    ///
+    /// This is the recommended way to create a formatter as it ensures
+    /// all display settings from the configuration are properly applied.
     ///
     /// # Arguments
-    /// * `format_type` - Output format type
-    /// * `use_colors` - Enable colored output
+    /// * `display_config` - Display configuration settings
     ///
     /// # Returns
     /// * `Self` - New formatter instance
-    pub fn new(format_type: OutputFormat, use_colors: bool) -> Self {
+    pub fn from_config(display_config: &crate::config::DisplayConfig) -> Self {
         Self {
-            format_type,
-            colorizer: Colorizer::new(use_colors),
-            use_colors,
-            json_indent: 2, // Default to 2 spaces
-        }
-    }
-
-    /// Create a new formatter with custom JSON indentation
-    ///
-    /// # Arguments
-    /// * `format_type` - Output format type
-    /// * `use_colors` - Enable colored output
-    /// * `json_indent` - Number of spaces for JSON indentation
-    ///
-    /// # Returns
-    /// * `Self` - New formatter instance
-    pub fn with_indent(format_type: OutputFormat, use_colors: bool, json_indent: usize) -> Self {
-        Self {
-            format_type,
-            colorizer: Colorizer::new(use_colors),
-            use_colors,
-            json_indent,
+            format_type: display_config.format,
+            colorizer: Colorizer::new(display_config.color_output),
+            use_colors: display_config.color_output,
+            json_indent: display_config.json_indent,
+            show_timing: display_config.show_timing,
         }
     }
 
@@ -334,14 +322,14 @@ impl Formatter {
     /// # Returns
     /// * `String` - Formatted statistics
     fn format_stats(&self, result: &ExecutionResult) -> String {
-        let formatter = StatsFormatter::new(true, true);
+        let formatter = StatsFormatter::new(self.show_timing, true);
         formatter.format(result)
     }
 }
 
 impl Default for Formatter {
     fn default() -> Self {
-        Self::with_indent(OutputFormat::Shell, true, 2)
+        Self::from_config(&crate::config::DisplayConfig::default())
     }
 }
 
@@ -352,13 +340,19 @@ mod tests {
 
     #[test]
     fn test_formatter_creation() {
-        let formatter = Formatter::new(OutputFormat::Json, false);
+        let mut config = crate::config::DisplayConfig::default();
+        config.format = OutputFormat::Json;
+        config.color_output = false;
+        let formatter = Formatter::from_config(&config);
         assert!(!formatter.use_colors);
     }
 
     #[test]
     fn test_format_compact() {
-        let formatter = Formatter::new(OutputFormat::Compact, false);
+        let mut config = crate::config::DisplayConfig::default();
+        config.format = OutputFormat::Compact;
+        config.color_output = false;
+        let formatter = Formatter::from_config(&config);
         let docs = vec![doc! { "name": "test" }];
         let result = formatter
             .format_compact(&ResultData::Documents(docs))
@@ -368,7 +362,10 @@ mod tests {
 
     #[test]
     fn test_format_shell_documents_as_array() {
-        let formatter = Formatter::new(OutputFormat::Shell, false);
+        let mut config = crate::config::DisplayConfig::default();
+        config.format = OutputFormat::Shell;
+        config.color_output = false;
+        let formatter = Formatter::from_config(&config);
         let docs = vec![
             doc! { "name": "Alice", "age": 25 },
             doc! { "name": "Bob", "age": 30 },
@@ -391,7 +388,10 @@ mod tests {
 
     #[test]
     fn test_format_shell_empty_documents() {
-        let formatter = Formatter::new(OutputFormat::Shell, false);
+        let mut config = crate::config::DisplayConfig::default();
+        config.format = OutputFormat::Shell;
+        config.color_output = false;
+        let formatter = Formatter::from_config(&config);
         let docs: Vec<mongodb::bson::Document> = vec![];
         let result = formatter
             .format_shell(&ResultData::Documents(docs))

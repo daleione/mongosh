@@ -185,8 +185,16 @@ impl CliInterface {
     /// # Returns
     /// * `Result<Config>` - Loaded configuration or error
     fn load_config(args: &CliArgs) -> Result<Config> {
-        // Load default config
-        let mut config = Config::default();
+        // Load config from file (or create default if not exists)
+        let config_path = args.config_file.as_deref();
+        let mut config = Config::load_from_file(config_path)?;
+
+        // Validate loaded configuration
+        if let Err(e) = config.validate() {
+            eprintln!("Warning: Configuration validation failed: {}", e);
+            eprintln!("Using default configuration instead.");
+            config = Config::default();
+        }
 
         // Apply CLI arguments to override config values
         Self::apply_args_to_config(&mut config, args);
@@ -372,42 +380,57 @@ impl CliInterface {
     /// # Arguments
     /// * `config` - Configuration to modify
     fn apply_args_to_config(config: &mut Config, args: &CliArgs) {
-        // Display configuration
+        Self::apply_display_args(config, args);
+        Self::apply_logging_args(config, args);
+        Self::apply_connection_args(config, args);
+    }
+
+    /// Apply display-related CLI arguments to configuration
+    fn apply_display_args(config: &mut Config, args: &CliArgs) {
         if let Some(format_str) = &args.format {
-            // Parse format string to OutputFormat
-            config.display.format = match format_str.to_lowercase().as_str() {
-                "shell" => OutputFormat::Shell,
-                "json" => OutputFormat::Json,
-                "json-pretty" | "jsonpretty" => OutputFormat::JsonPretty,
-                "table" => OutputFormat::Table,
-                "compact" => OutputFormat::Compact,
-                _ => {
-                    eprintln!("Warning: Unknown format '{}', using default", format_str);
-                    OutputFormat::Shell
-                }
-            };
+            config.display.format = Self::parse_output_format(format_str);
         }
 
         if args.no_color {
             config.display.color_output = false;
         }
+    }
 
-        // Logging configuration based on verbosity
-        if args.very_verbose {
-            config.logging.level = crate::config::LogLevel::Trace;
+    /// Apply logging-related CLI arguments to configuration
+    fn apply_logging_args(config: &mut Config, args: &CliArgs) {
+        use crate::config::LogLevel;
+
+        config.logging.level = if args.very_verbose {
+            LogLevel::Trace
         } else if args.verbose {
-            config.logging.level = crate::config::LogLevel::Debug;
+            LogLevel::Debug
         } else if args.quiet {
-            config.logging.level = crate::config::LogLevel::Error;
-        }
+            LogLevel::Error
+        } else {
+            config.logging.level
+        };
+    }
 
-        // Connection configuration
+    /// Apply connection-related CLI arguments to configuration
+    fn apply_connection_args(config: &mut Config, args: &CliArgs) {
         if let Some(timeout) = args.timeout {
             config.connection.timeout = timeout;
         }
+    }
 
-        // TLS configuration would go here when TLS config is added to Config
-        // For now, these are handled separately in get_connection_uri()
+    /// Parse output format string
+    fn parse_output_format(format_str: &str) -> OutputFormat {
+        match format_str.to_lowercase().as_str() {
+            "shell" => OutputFormat::Shell,
+            "json" => OutputFormat::Json,
+            "json-pretty" | "jsonpretty" => OutputFormat::JsonPretty,
+            "table" => OutputFormat::Table,
+            "compact" => OutputFormat::Compact,
+            _ => {
+                eprintln!("Warning: Unknown format '{}', using default", format_str);
+                OutputFormat::Shell
+            }
+        }
     }
 
     /// Validate configuration and arguments
@@ -455,14 +478,69 @@ impl CliInterface {
     ///
     /// # Arguments
     /// * `show` - Whether to show configuration
+    /// * `validate` - Whether to validate configuration
+    ///
     /// # Returns
     /// * `Result<()>` - Success or error
-    fn handle_config_command(&self, show: bool, _validate: bool) -> Result<()> {
-        if show {
-            println!("{:#?}", self.config);
+    fn handle_config_command(&self, show: bool, validate: bool) -> Result<()> {
+        if validate {
+            self.validate_config_file()?;
         }
-        // Config validation removed - configs are validated at load time
+
+        if show {
+            self.show_config()?;
+        }
+
         Ok(())
+    }
+
+    /// Validate configuration file
+    fn validate_config_file(&self) -> Result<()> {
+        let path = self.get_config_path();
+        println!("Validating configuration file: {}", path.display());
+
+        if !path.exists() {
+            println!("❌ Configuration file does not exist");
+            return Ok(());
+        }
+
+        match Config::load_from_file(self.args.config_file.as_deref()) {
+            Ok(config) => match config.validate() {
+                Ok(_) => println!("✅ Configuration is valid"),
+                Err(e) => println!("❌ Configuration validation failed: {}", e),
+            },
+            Err(e) => println!("❌ Failed to load configuration: {}", e),
+        }
+
+        Ok(())
+    }
+
+    /// Show effective configuration
+    fn show_config(&self) -> Result<()> {
+        let path = self.get_config_path();
+        println!("Configuration file: {}", path.display());
+        println!();
+        println!("=== Effective Configuration ===");
+        println!();
+
+        match self.config.to_toml_with_comments() {
+            Ok(toml_str) => println!("{}", toml_str),
+            Err(e) => {
+                eprintln!("Error formatting configuration: {}", e);
+                println!("{:#?}", self.config);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Get configuration file path (from args or default)
+    fn get_config_path(&self) -> PathBuf {
+        self.args
+            .config_file
+            .as_ref()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(Config::default_config_path)
     }
 
     /// Print banner with version and connection info

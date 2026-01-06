@@ -113,6 +113,9 @@ pub enum ConfigError {
     /// Missing required field.
     #[allow(dead_code)]
     MissingField(String),
+
+    /// Generic configuration error.
+    Generic(String),
 }
 
 // ============================================================================
@@ -177,6 +180,7 @@ impl fmt::Display for ConfigError {
             ConfigError::FileNotFound(path) => write!(f, "Config file not found: {}", path),
             ConfigError::InvalidFormat(msg) => write!(f, "Invalid config format: {}", msg),
             ConfigError::MissingField(field) => write!(f, "Missing required field: {}", field),
+            ConfigError::Generic(msg) => write!(f, "{}", msg),
         }
     }
 }

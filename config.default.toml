@@ -1,0 +1,140 @@
+# MongoDB Shell (mongosh) Configuration File
+# Configuration file uses TOML format
+# Documentation: https://github.com/daleione/mongosh/blob/main/docs/config.md
+
+# ============================================
+# Connection Configuration
+# ============================================
+[connection]
+
+# Default MongoDB connection URI
+# Format: mongodb://[username:password@]host[:port][/database][?options]
+# Example: mongodb://user:pass@localhost:27017/mydb
+default_uri = "mongodb://localhost:27017"
+
+# Connection timeout in seconds
+# Range: 1-300
+timeout = 30
+
+# Number of retry attempts on connection failure
+# Range: 0-10
+retry_attempts = 3
+
+# Maximum connection pool size
+# Range: 1-100
+max_pool_size = 10
+
+# Minimum connection pool size
+# Range: 0-max_pool_size
+min_pool_size = 2
+
+# Connection idle timeout in seconds
+# Range: 60-3600
+idle_timeout = 300
+
+
+# ============================================
+# Display Configuration
+# ============================================
+[display]
+
+# Output format
+# Options:
+#   - shell: MongoDB Shell compatible format (recommended)
+#   - json: Compact JSON format
+#   - json-pretty: Formatted JSON
+#   - table: ASCII table format
+#   - compact: Minimal summary
+format = "shell"
+
+# Enable colored output
+# Options: true, false
+color_output = true
+
+# Number of results per page
+# Range: 1-1000
+page_size = 20
+
+# Enable syntax highlighting
+# Options: true, false
+syntax_highlighting = true
+
+# Show command execution time
+# Options: true, false
+show_timing = true
+
+# JSON indentation (number of spaces)
+# Range: 0-8
+json_indent = 2
+
+
+# ============================================
+# History Configuration
+# ============================================
+[history]
+
+# Maximum number of history entries
+# Range: 0-10000 (0 means unlimited)
+max_size = 1000
+
+# History file path
+# Supports ~ for home directory
+file_path = "~/.mongosh_history"
+
+# Persist history to file
+# Options: true, false
+persist = true
+
+
+# ============================================
+# Logging Configuration
+# ============================================
+[logging]
+
+# Log level
+# Options: error, warn, info, debug, trace
+# Recommended: warn (production), debug (development)
+level = "warn"
+
+# Log file path (optional)
+# Leave empty or comment out to output to stdout
+# Example: "/var/log/mongosh/app.log"
+# file_path = ""
+
+# Include timestamps in logs
+# Options: true, false
+timestamps = true
+
+
+# ============================================
+# Configuration Examples
+# ============================================
+
+# Production environment example:
+# [connection]
+# default_uri = "mongodb+srv://user:pass@cluster.mongodb.net/prod"
+# timeout = 60
+# retry_attempts = 5
+# max_pool_size = 50
+#
+# [display]
+# format = "json"
+# color_output = false
+# show_timing = false
+#
+# [logging]
+# level = "error"
+# file_path = "/var/log/mongosh/prod.log"
+
+# Development environment example:
+# [connection]
+# default_uri = "mongodb://localhost:27017/dev"
+# timeout = 10
+#
+# [display]
+# format = "shell"
+# color_output = true
+# syntax_highlighting = true
+#
+# [logging]
+# level = "debug"
