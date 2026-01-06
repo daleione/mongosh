@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.0] - 2026-01-06
+
+### Added
+
+- **Enhanced REPL with reedline** - Migrated from rustyline to reedline for improved terminal handling and better user experience
+- **Advanced syntax highlighting** - Multi-color syntax highlighting for MongoDB commands, keywords, strings, numbers, and operators
+- **Inline hints** - Context-aware hints based on command history
+- **Custom prompt** - Dynamic prompt showing current database and connection status
+- **Input validation** - Real-time validation of command syntax with helpful error messages
+- **SQL COUNT(DISTINCT) support** - Added support for `COUNT(DISTINCT column)` in SQL queries
+
+### Changed
+
+- **Dependency optimization** - Removed unused dependencies (anyhow, thiserror, regex, toml, mockall, tokio-test) for faster builds and smaller binary size
+- **Improved test assertions** - Replaced `assert_eq!` with `assert!(matches!)` for better pattern matching in validator tests
+- **Simplified aggregate output** - Cleaner field name generation in SQL GROUP BY queries
+
+### Fixed
+
+- **Completion system improvements** - Added parentheses tracking to FSM for better auto-completion accuracy
+
 ## [0.4.0] - 2026-01-05
 
 ### Added
