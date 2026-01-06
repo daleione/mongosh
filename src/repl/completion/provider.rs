@@ -134,17 +134,46 @@ impl MongoCandidateProvider {
         }
     }
 
-    /// Filter a list of strings by prefix
+    /// Filter a list of strings by prefix and sort intelligently
     fn filter_by_prefix(&self, items: &[String], prefix: &str) -> Vec<String> {
-        if prefix.is_empty() {
-            return items.to_vec();
-        }
+        let mut filtered: Vec<String> = if prefix.is_empty() {
+            items.to_vec()
+        } else {
+            items
+                .iter()
+                .filter(|item| item.starts_with(prefix))
+                .cloned()
+                .collect()
+        };
 
-        items
-            .iter()
-            .filter(|item| item.starts_with(prefix))
-            .cloned()
-            .collect()
+        // Sort candidates intelligently:
+        // 1. Exact matches first (only when prefix is not empty)
+        // 2. Shorter names before longer (more specific matches)
+        // 3. Alphabetically for same length
+        filtered.sort_by(|a, b| {
+            // Exact match has highest priority (only check if prefix is not empty)
+            if !prefix.is_empty() {
+                let a_exact = a == prefix;
+                let b_exact = b == prefix;
+                if a_exact && !b_exact {
+                    return std::cmp::Ordering::Less;
+                }
+                if !a_exact && b_exact {
+                    return std::cmp::Ordering::Greater;
+                }
+            }
+
+            // Then sort by length (shorter first - more likely what user wants)
+            let len_cmp = a.len().cmp(&b.len());
+            if len_cmp != std::cmp::Ordering::Equal {
+                return len_cmp;
+            }
+
+            // Finally alphabetically
+            a.cmp(b)
+        });
+
+        filtered
     }
 }
 
@@ -312,5 +341,77 @@ mod tests {
         let filtered = provider.filter_by_prefix(&items, "z");
 
         assert_eq!(filtered.len(), 0);
+    }
+
+    #[test]
+    fn test_sort_shorter_names_first() {
+        let provider = create_test_provider();
+        let items = vec![
+            "tag_spare_shadow".to_string(),
+            "tag_spare".to_string(),
+            "tag_spare_archive".to_string(),
+        ];
+        let filtered = provider.filter_by_prefix(&items, "tag_sp");
+
+        // Should be sorted by length: tag_spare, tag_spare_shadow, tag_spare_archive
+        assert_eq!(filtered.len(), 3);
+        assert_eq!(filtered[0], "tag_spare");
+        assert_eq!(filtered[1], "tag_spare_shadow");
+        assert_eq!(filtered[2], "tag_spare_archive");
+    }
+
+    #[test]
+    fn test_exact_match_first() {
+        let provider = create_test_provider();
+        let items = vec![
+            "users_archive".to_string(),
+            "users".to_string(),
+            "users_backup".to_string(),
+        ];
+        let filtered = provider.filter_by_prefix(&items, "users");
+
+        // Exact match "users" should come first
+        assert_eq!(filtered.len(), 3);
+        assert_eq!(filtered[0], "users");
+        assert_eq!(filtered[1], "users_backup");
+        assert_eq!(filtered[2], "users_archive");
+    }
+
+    #[test]
+    fn test_alphabetical_for_same_length() {
+        let provider = create_test_provider();
+        let items = vec![
+            "users".to_string(),
+            "tasks".to_string(),
+            "notes".to_string(),
+        ];
+        let filtered = provider.filter_by_prefix(&items, "");
+
+        // Same length, should be alphabetically sorted
+        assert_eq!(filtered.len(), 3);
+        assert_eq!(filtered[0], "notes");
+        assert_eq!(filtered[1], "tasks");
+        assert_eq!(filtered[2], "users");
+    }
+
+    #[test]
+    fn test_complex_sorting_scenario() {
+        let provider = create_test_provider();
+        let items = vec![
+            "collection_long_name".to_string(),
+            "coll".to_string(),
+            "collection".to_string(),
+            "collections".to_string(),
+            "col".to_string(),
+        ];
+        let filtered = provider.filter_by_prefix(&items, "col");
+
+        // Should be sorted: exact match first, then by length, then alphabetically
+        assert_eq!(filtered.len(), 5);
+        assert_eq!(filtered[0], "col"); // Exact match
+        assert_eq!(filtered[1], "coll"); // Length 4
+        assert_eq!(filtered[2], "collection"); // Length 10
+        assert_eq!(filtered[3], "collections"); // Length 11
+        assert_eq!(filtered[4], "collection_long_name"); // Length 20
     }
 }

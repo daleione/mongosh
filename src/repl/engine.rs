@@ -74,7 +74,7 @@ impl ReplEngine {
         ));
 
         // Create completion menu with IdeMenu for better Tab completion behavior
-        // IdeMenu completes on each Tab press without needing Enter
+        // IdeMenu completes common prefix first, then shows menu on subsequent Tab
         let completion_menu = Box::new(
             IdeMenu::default()
                 .with_name("completion_menu")
@@ -87,14 +87,14 @@ impl ReplEngine {
         // Setup keybindings
         let mut keybindings = default_emacs_keybindings();
 
-        // Tab key triggers completion menu and cycles through options
-        // Each Tab press moves to next item and inserts it
+        // Tab key activates completion menu or cycles through items
+        // First Tab: opens menu, subsequent Tabs: cycle through items
         keybindings.add_binding(
             KeyModifiers::NONE,
             KeyCode::Tab,
             ReedlineEvent::UntilFound(vec![
-                ReedlineEvent::MenuNext, // Navigate menu and insert
-                ReedlineEvent::Menu("completion_menu".to_string()), // Open menu if not active
+                ReedlineEvent::MenuNext, // If menu is open, go to next item
+                ReedlineEvent::Menu("completion_menu".to_string()), // Otherwise, open menu
             ]),
         );
 
