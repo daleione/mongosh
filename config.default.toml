@@ -7,10 +7,18 @@
 # ============================================
 [connection]
 
-# Default MongoDB connection URI
-# Format: mongodb://[username:password@]host[:port][/database][?options]
-# Example: mongodb://user:pass@localhost:27017/mydb
-default_uri = "mongodb://localhost:27017"
+# Named datasources with their connection URIs
+# You can define multiple datasources and switch between them using -d flag
+# Example: mongosh -d card_prod
+[connection.datasources]
+local = "mongodb://localhost:27017"
+card_prod = "mongodb://user:pass@prod.example.com:27017/cards"
+card_dev = "mongodb://user:pass@dev.example.com:27017/cards"
+card_test = "mongodb://localhost:27017/cards_test"
+
+# Default datasource to use when -d flag is not specified
+# If not set, will use the first available datasource or fall back to command-line URI
+default_datasource = "local"
 
 # Connection timeout in seconds
 # Range: 1-300
@@ -112,7 +120,10 @@ timestamps = true
 
 # Production environment example:
 # [connection]
-# default_uri = "mongodb+srv://user:pass@cluster.mongodb.net/prod"
+# [connection.datasources]
+# prod_primary = "mongodb+srv://user:pass@cluster.mongodb.net/prod"
+# prod_analytics = "mongodb+srv://user:pass@analytics.mongodb.net/prod"
+# default_datasource = "prod_primary"
 # timeout = 60
 # retry_attempts = 5
 # max_pool_size = 50
@@ -128,7 +139,10 @@ timestamps = true
 
 # Development environment example:
 # [connection]
-# default_uri = "mongodb://localhost:27017/dev"
+# [connection.datasources]
+# dev = "mongodb://localhost:27017/dev"
+# staging = "mongodb://staging:27017/staging"
+# default_datasource = "dev"
 # timeout = 10
 #
 # [display]

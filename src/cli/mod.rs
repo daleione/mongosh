@@ -54,6 +54,13 @@ pub struct CliArgs {
     #[arg(value_name = "URI")]
     pub uri: Option<String>,
 
+    /// Datasource name from config file
+    ///
+    /// Use a named datasource defined in the config file.
+    /// Example: mongosh -d card_prod
+    #[arg(short = 'd', long, value_name = "NAME")]
+    pub datasource: Option<String>,
+
     /// Server to connect to
     #[arg(long, value_name = "HOST")]
     pub host: Option<String>,
@@ -63,7 +70,7 @@ pub struct CliArgs {
     pub port: Option<u16>,
 
     /// Database name to use
-    #[arg(short = 'd', long, value_name = "NAME")]
+    #[arg(long, value_name = "NAME")]
     pub database: Option<String>,
 
     /// Username for authentication
@@ -204,16 +211,48 @@ impl CliInterface {
 
     /// Get the MongoDB connection URI
     ///
-    /// Constructs the URI from arguments or uses default from config
+    /// Determines the connection URI with the following priority:
+    /// 1. Datasource from config (if -d/--datasource is specified)
+    /// 2. Explicit URI argument
+    /// 3. Build from individual connection arguments (--host, --port, etc.)
+    /// 4. Default datasource from config
     ///
     /// # Returns
     /// * `String` - Connection URI
     pub fn get_connection_uri(&self) -> String {
-        if let Some(uri) = &self.args.uri {
-            uri.clone()
-        } else {
-            self.build_connection_uri()
+        // Priority 1: Check if datasource is specified via -d flag
+        if let Some(ref datasource_name) = self.args.datasource {
+            if let Some(uri) = self.config.connection.get_datasource(Some(datasource_name)) {
+                return uri;
+            } else {
+                eprintln!(
+                    "Warning: Datasource '{}' not found in config",
+                    datasource_name
+                );
+                eprintln!(
+                    "Available datasources: {}",
+                    self.config.connection.list_datasources().join(", ")
+                );
+            }
         }
+
+        // Priority 2: Explicit URI from command line
+        if let Some(uri) = &self.args.uri {
+            return uri.clone();
+        }
+
+        // Priority 3: Check if we should build from individual args
+        if self.args.host.is_some() || self.args.username.is_some() {
+            return self.build_connection_uri();
+        }
+
+        // Priority 4: Use default datasource from config
+        if let Some(uri) = self.config.connection.get_datasource(None) {
+            return uri;
+        }
+
+        // Final fallback: build default URI
+        self.build_connection_uri()
     }
 
     /// Get sanitized connection URI for display (hides credentials)
@@ -346,10 +385,9 @@ impl CliInterface {
             return db.clone();
         }
 
-        // Then try to extract from URI if provided
-        if let Some(uri) = &self.args.uri
-            && let Some(db) = extract_database_from_uri(uri)
-        {
+        // Then try to extract from the actual connection URI being used
+        let uri = self.get_connection_uri();
+        if let Some(db) = extract_database_from_uri(&uri) {
             return db;
         }
 
@@ -617,7 +655,7 @@ mod tests {
     #[test]
     fn test_get_database_priority() {
         // Test with explicit database argument
-        let args = CliArgs::try_parse_from(vec!["mongosh", "-d", "mydb"]).unwrap();
+        let args = CliArgs::try_parse_from(vec!["mongosh", "--database", "mydb"]).unwrap();
         let config = Config::default();
         let cli = CliInterface { args, config };
         assert_eq!(cli.get_database(), "mydb");
@@ -629,9 +667,13 @@ mod tests {
         assert_eq!(cli.get_database(), "admin");
 
         // Test explicit argument overrides URI
-        let args =
-            CliArgs::try_parse_from(vec!["mongosh", "mongodb://localhost/admin", "-d", "mydb"])
-                .unwrap();
+        let args = CliArgs::try_parse_from(vec![
+            "mongosh",
+            "mongodb://localhost/test",
+            "--database",
+            "mydb",
+        ])
+        .unwrap();
         let config = Config::default();
         let cli = CliInterface { args, config };
         assert_eq!(cli.get_database(), "mydb");
@@ -675,7 +717,7 @@ mod tests {
     #[test]
     fn test_build_connection_uri_with_database() {
         // Test with database
-        let args = CliArgs::try_parse_from(vec!["mongosh", "-d", "mydb"]).unwrap();
+        let args = CliArgs::try_parse_from(vec!["mongosh", "--database", "mydb"]).unwrap();
         let config = Config::default();
         let cli = CliInterface { args, config };
         assert_eq!(cli.build_connection_uri(), "mongodb://localhost:27017/mydb");
@@ -697,9 +739,16 @@ mod tests {
     #[test]
     fn test_build_connection_uri_with_auth_and_database() {
         // Test with username, password, and database
-        let args =
-            CliArgs::try_parse_from(vec!["mongosh", "-u", "user", "-p", "pass", "-d", "mydb"])
-                .unwrap();
+        let args = CliArgs::try_parse_from(vec![
+            "mongosh",
+            "-u",
+            "user",
+            "-p",
+            "pass",
+            "--database",
+            "mydb",
+        ])
+        .unwrap();
         let config = Config::default();
         let cli = CliInterface { args, config };
         assert_eq!(
@@ -717,7 +766,7 @@ mod tests {
             "user",
             "-p",
             "pass",
-            "-d",
+            "--database",
             "mydb",
             "--auth-database",
             "auth_db",
@@ -768,7 +817,7 @@ mod tests {
             "admin",
             "-p",
             "secret",
-            "-d",
+            "--database",
             "testdb",
             "--tls",
         ])

@@ -11,6 +11,7 @@
 //! 3. Default values
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -154,7 +155,18 @@ impl Config {
     /// Update TOML document with current configuration values
     fn update_toml_document(doc: &mut toml_edit::DocumentMut, config: &Config) -> Result<()> {
         Self::update_section(doc, "connection", |table| {
-            table["default_uri"] = toml_edit::value(&config.connection.default_uri);
+            // Update datasources
+            let mut datasources = toml_edit::Table::new();
+            for (name, uri) in &config.connection.datasources {
+                datasources[name] = toml_edit::value(uri.as_str());
+            }
+            table["datasources"] = toml_edit::Item::Table(datasources);
+
+            // Update default_datasource
+            if let Some(ref default_ds) = config.connection.default_datasource {
+                table["default_datasource"] = toml_edit::value(default_ds.as_str());
+            }
+
             table["timeout"] = toml_edit::value(config.connection.timeout as i64);
             table["retry_attempts"] = toml_edit::value(config.connection.retry_attempts as i64);
             table["max_pool_size"] = toml_edit::value(config.connection.max_pool_size as i64);
@@ -241,9 +253,18 @@ impl Config {
 /// Connection-related configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectionConfig {
-    /// Default MongoDB connection URI
-    #[serde(default = "default_uri")]
-    pub default_uri: String,
+    /// Named datasources with their connection URIs
+    /// Example: {"card_prod": "mongodb://prod:27017", "card_dev": "mongodb://dev:27017"}
+    #[serde(default = "default_datasources")]
+    pub datasources: HashMap<String, String>,
+
+    /// Default datasource name to use when not specified
+    #[serde(default = "default_datasource_name")]
+    pub default_datasource: Option<String>,
+
+    /// Deprecated: Default MongoDB connection URI (for backward compatibility)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_uri: Option<String>,
 
     /// Connection timeout in seconds
     #[serde(default = "default_timeout")]
@@ -264,6 +285,51 @@ pub struct ConnectionConfig {
     /// Connection idle timeout in seconds
     #[serde(default = "default_idle_timeout")]
     pub idle_timeout: u64,
+}
+
+impl ConnectionConfig {
+    /// Get datasource URI by name, with fallback logic
+    ///
+    /// # Arguments
+    /// * `name` - Optional datasource name
+    ///
+    /// # Returns
+    /// * `Option<String>` - URI if found, None otherwise
+    pub fn get_datasource(&self, name: Option<&str>) -> Option<String> {
+        // If a specific name is provided, look it up
+        if let Some(ds_name) = name {
+            if let Some(uri) = self.datasources.get(ds_name) {
+                return Some(uri.clone());
+            }
+            return None;
+        }
+
+        // Try default datasource
+        if let Some(ref default_name) = self.default_datasource {
+            if let Some(uri) = self.datasources.get(default_name) {
+                return Some(uri.clone());
+            }
+        }
+
+        // Fallback to legacy default_uri for backward compatibility
+        if let Some(ref uri) = self.default_uri {
+            return Some(uri.clone());
+        }
+
+        // If only one datasource exists, use it
+        if self.datasources.len() == 1 {
+            return self.datasources.values().next().cloned();
+        }
+
+        None
+    }
+
+    /// List all available datasource names
+    pub fn list_datasources(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.datasources.keys().cloned().collect();
+        names.sort();
+        names
+    }
 }
 
 /// Display and output configuration
@@ -439,8 +505,15 @@ impl LogLevel {
 
 // Default value functions for serde
 #[inline]
-fn default_uri() -> String {
-    "mongodb://localhost:27017".to_string()
+fn default_datasources() -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    map.insert("local".to_string(), "mongodb://localhost:27017".to_string());
+    map
+}
+
+#[inline]
+fn default_datasource_name() -> Option<String> {
+    Some("local".to_string())
 }
 
 #[inline]
@@ -528,7 +601,9 @@ fn default_log_timestamps() -> bool {
 impl Default for ConnectionConfig {
     fn default() -> Self {
         Self {
-            default_uri: default_uri(),
+            datasources: default_datasources(),
+            default_datasource: default_datasource_name(),
+            default_uri: None,
             timeout: default_timeout(),
             retry_attempts: default_retry_attempts(),
             max_pool_size: default_max_pool_size(),
@@ -591,7 +666,14 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = Config::default();
-        assert_eq!(config.connection.default_uri, "mongodb://localhost:27017");
+        assert_eq!(
+            config.connection.datasources.get("local"),
+            Some(&"mongodb://localhost:27017".to_string())
+        );
+        assert_eq!(
+            config.connection.default_datasource,
+            Some("local".to_string())
+        );
         assert_eq!(config.display.format, OutputFormat::Shell);
         assert!(config.display.color_output);
     }
