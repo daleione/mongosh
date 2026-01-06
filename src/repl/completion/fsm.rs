@@ -157,35 +157,40 @@ impl CompletionState {
     pub fn to_context(&self, stream: &TokenStream) -> CompletionContext {
         use CompletionState::*;
 
+        let prefix = stream.current_prefix();
+        let has_prefix = !prefix.is_empty();
+
         match self {
             // Need to complete collection names
-            AfterDbDot | SqlFrom | SqlJoin => {
-                CompletionContext::collection(stream.current_prefix())
-            }
+            AfterDbDot | SqlFrom | SqlJoin => CompletionContext::collection(prefix),
 
             // If we're in AfterCollection state but have a prefix, user is still typing collection name
-            AfterCollection if !stream.current_prefix().is_empty() => {
-                CompletionContext::collection(stream.current_prefix())
-            }
+            AfterCollection if has_prefix => CompletionContext::collection(prefix),
+
+            // If we're in SqlAfterTableName but have a prefix, user is still typing table name
+            SqlAfterTableName if has_prefix => CompletionContext::collection(prefix),
 
             // Need to complete operation names
-            AfterCollectionDot => CompletionContext::operation(stream.current_prefix()),
+            AfterCollectionDot => CompletionContext::operation(prefix),
 
             // Need to complete "show" subcommands
-            ShowCommand => CompletionContext::show_subcommand(stream.current_prefix()),
+            ShowCommand => CompletionContext::show_subcommand(prefix),
 
             // Need to complete database names
-            UseCommand => CompletionContext::database(stream.current_prefix()),
+            UseCommand => CompletionContext::database(prefix),
 
             // At the start, complete top-level commands
-            Start if !stream.current_prefix().is_empty() => {
-                CompletionContext::command(stream.current_prefix())
-            }
+            Start if has_prefix => CompletionContext::command(prefix),
 
-            // No completion for these states
-            SqlAfterTableName | SqlAfterLimit | SqlWhere | SqlOrderBy | SqlComplete => {
-                CompletionContext::None
-            }
+            // No completion for these states (even with prefix)
+            // - SqlAfterLimit: expects numbers, not identifiers
+            // - SqlWhere: would need column name completion (not implemented)
+            // - SqlOrderBy: would need column name completion (not implemented)
+            // - SqlComplete: statement has ended with semicolon
+            SqlAfterLimit | SqlWhere | SqlOrderBy | SqlComplete => CompletionContext::None,
+
+            // No completion for terminal states without prefix
+            SqlAfterTableName | AfterCollection => CompletionContext::None,
 
             // No completion
             _ => CompletionContext::None,

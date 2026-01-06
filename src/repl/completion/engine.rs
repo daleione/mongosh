@@ -290,6 +290,36 @@ mod tests {
     }
 
     #[test]
+    fn test_completion_partial_table_name() {
+        let engine = create_test_engine();
+
+        // Test with partial table name "tem" - should complete to "templates"
+        let (start, _pairs) = engine.complete("SELECT * FROM tem", 17);
+        assert_eq!(start, 14, "Should start completion at beginning of 'tem'");
+        // Pairs may be empty without real DB, but the important thing is we're attempting completion
+
+        // Test with single character
+        let (start, _pairs) = engine.complete("SELECT * FROM t", 15);
+        assert_eq!(start, 14, "Should complete even with single character");
+
+        // Test with longer prefix
+        let (start, _pairs) = engine.complete("SELECT * FROM templates_", 24);
+        assert_eq!(start, 14, "Should complete with longer prefix");
+    }
+
+    #[test]
+    fn test_completion_partial_table_name_after_join() {
+        let engine = create_test_engine();
+
+        // Test with partial table name after JOIN
+        let (start, _pairs) = engine.complete("SELECT * FROM users JOIN tem", 28);
+        assert_eq!(
+            start, 25,
+            "Should start completion at beginning of 'tem' after JOIN"
+        );
+    }
+
+    #[test]
     fn test_no_completion_after_sql_semicolon() {
         let engine = create_test_engine();
 
@@ -374,6 +404,103 @@ mod tests {
         assert!(
             pairs.is_empty(),
             "Should not complete in WHERE clause (column completion not implemented)"
+        );
+    }
+
+    #[test]
+    fn test_partial_collection_name_mongo() {
+        let engine = create_test_engine();
+
+        // Test with partial collection name after "db."
+        let (start, _pairs) = engine.complete("db.us", 5);
+        assert_eq!(start, 3, "Should start completion at beginning of 'us'");
+
+        // Test with single character
+        let (start, _pairs) = engine.complete("db.u", 4);
+        assert_eq!(start, 3, "Should complete even with single character");
+
+        // Test with longer prefix
+        let (start, _pairs) = engine.complete("db.users_col", 12);
+        assert_eq!(start, 3, "Should complete with longer prefix");
+    }
+
+    #[test]
+    fn test_partial_operation_name() {
+        let engine = create_test_engine();
+
+        // Test with partial operation name after "db.collection."
+        let (start, pairs) = engine.complete("db.users.fin", 12);
+        assert_eq!(start, 9, "Should start completion at beginning of 'fin'");
+        // Should get "find" and "findOne"
+        assert!(pairs.iter().any(|p| p.replacement == "find"));
+        assert!(pairs.iter().any(|p| p.replacement == "findOne"));
+
+        // Test with single character
+        let (start, pairs) = engine.complete("db.users.f", 10);
+        assert_eq!(start, 9, "Should complete even with single character");
+        assert!(!pairs.is_empty());
+    }
+
+    #[test]
+    fn test_partial_show_subcommand() {
+        let engine = create_test_engine();
+
+        // Test with partial show subcommand
+        let (_start, pairs) = engine.complete("show d", 6);
+        assert!(pairs.iter().any(|p| p.replacement == "dbs"));
+        assert!(!pairs.iter().any(|p| p.replacement == "collections"));
+
+        // Test with "col" prefix
+        let (_start, pairs) = engine.complete("show col", 8);
+        assert!(pairs.iter().any(|p| p.replacement == "collections"));
+        assert!(!pairs.iter().any(|p| p.replacement == "dbs"));
+    }
+
+    #[test]
+    fn test_partial_use_database() {
+        let engine = create_test_engine();
+
+        // Test with partial database name
+        let (start, pairs) = engine.complete("use tes", 7);
+        assert_eq!(start, 4, "Should start completion at beginning of 'tes'");
+        // Should include "test" database
+        assert!(pairs.iter().any(|p| p.replacement == "test"));
+    }
+
+    #[test]
+    fn test_partial_top_level_command() {
+        let engine = create_test_engine();
+
+        // Test with partial command at start
+        let (_start, pairs) = engine.complete("sh", 2);
+        assert!(pairs.iter().any(|p| p.replacement == "show"));
+        assert!(!pairs.iter().any(|p| p.replacement == "use"));
+
+        // Test with "us" prefix
+        let (_start, pairs) = engine.complete("us", 2);
+        assert!(pairs.iter().any(|p| p.replacement == "use"));
+        assert!(!pairs.iter().any(|p| p.replacement == "show"));
+    }
+
+    #[test]
+    fn test_complete_after_partial_keyword() {
+        let engine = create_test_engine();
+
+        // Even if user types partial SQL keyword, it should be treated as identifier
+        // and we should handle it gracefully
+        let (_start, _pairs) = engine.complete("SEL", 3);
+        // Should not panic or error
+    }
+
+    #[test]
+    fn test_no_completion_after_complete_table_name_with_space() {
+        let engine = create_test_engine();
+
+        // After complete table name with space, no completion until next keyword
+        let (_start, pairs) = engine.complete("SELECT * FROM users ", 20);
+        assert!(
+            pairs.is_empty(),
+            "Should not complete after complete table name (expects keyword)"
         );
     }
 }
