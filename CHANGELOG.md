@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.0] - 2026-01-07
+
+### Added
+
+- Datasource support with named connections
+- TOML configuration file support
+- Unified syntax highlighter with MongoDB and SQL support
+
+### Changed
+
+- Improved completion sorting and Tab behavior
+- Refined completion FSM for partial identifier handling
+- Improved SQL completion FSM with semicolon token support
+
 ## [0.5.0] - 2026-01-06
 
 ### Added
