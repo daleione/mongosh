@@ -116,23 +116,17 @@ timestamps = true
 # ============================================
 
 # Named query allow you to save frequently used query with a short name
-# You can use parameter substitution: $1, $2, $3 for positional parameters
-# $* for raw aggregation, $@ for string aggregation (quoted)
 #
-# Examples:
-# [named_query]
-# simple = "db.users.find()"
-# user_by_name = "db.users.findOne({name: '$1'})"
-# users_by_age = "db.users.find({age: {$in: [$*]}})"
-# users_by_category = "db.users.find({category: {$in: [$@]}})"
+# Parameter Substitution:
+#   $1, $2, $3...  - Positional parameters
+#   $*             - Raw aggregation (for numbers: 18, 25, 30)
+#   $@             - String aggregation (quoted: 'admin', 'user')
 #
-# Usage:
-#   query                           - List all named query
-#   query <name> [args...]          - Execute a named query
-#   query save <name> <query>       - Save a new query
-#   query delete <name>             - Delete a query
-
+# Important:
+#   - Use '$1' (with quotes) for string parameters: {name: '$1'}
+#   - Use $1 (without quotes) for numeric parameters: {age: $1}
+#   - Arguments support quotes for spaces: query user "John Doe" 25
+#   - Chinese characters work: query user 张三 18
 [named_query]
 # Add your named query here
-# Example:
 # simple = "db.collection.find()"

@@ -122,9 +122,14 @@ Named Queries:
   query delete <name>                         - Delete a named query
 
   Parameter substitution:
-    $1, $2, $3, ...                           - Positional parameters
-    $*                                        - Raw aggregation (42, 1337)
-    $@                                        - String aggregation ('value1', 'value2')
+    '$1', '$2'...                             - String parameters (with quotes in template)
+    $1, $2...                                 - Numeric/raw parameters (no quotes in template)
+    $*                                        - Raw aggregation: 18, 25, 30
+    $@                                        - String aggregation: 'admin', 'user'
+
+  Examples:
+    query save user "db.users.find({name: '\$1', age: \$2})"
+    query user John 25                        -> {name: 'John', age: 25}
 
 Utility:
   help                                        - Show this help
@@ -370,9 +375,21 @@ Available Commands:
         let mut result = template.to_string();
 
         // First, handle positional parameters ($1, $2, $3, etc.)
+        // We need to be careful about whether the parameter is in quotes or not
         for (i, arg) in args.iter().enumerate() {
             let placeholder = format!("${}", i + 1);
-            result = result.replace(&placeholder, arg);
+            let quoted_placeholder = format!("'{}'", placeholder);
+            let double_quoted_placeholder = format!("\"{}\"", placeholder);
+
+            // If parameter is in quotes, keep it as string (remove the placeholder quotes)
+            if result.contains(&quoted_placeholder) {
+                result = result.replace(&quoted_placeholder, &format!("'{}'", arg));
+            } else if result.contains(&double_quoted_placeholder) {
+                result = result.replace(&double_quoted_placeholder, &format!("\"{}\"", arg));
+            } else {
+                // Not in quotes - use raw value (could be number or unquoted string)
+                result = result.replace(&placeholder, arg);
+            }
         }
 
         // Then handle aggregation parameters
@@ -384,7 +401,7 @@ Available Commands:
         }
 
         if result.contains("$*") {
-            // Raw aggregation: no quotes
+            // Raw aggregation: no quotes (for numeric arrays)
             let aggregated = args.join(", ");
             result = result.replace("$*", &aggregated);
         }
@@ -432,6 +449,88 @@ Available Commands:
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn test_substitute_parameters_with_numbers() {
+        let router = CommandRouter {
+            context: ExecutionContext::new(
+                crate::connection::ConnectionManager::new(
+                    "mongodb://localhost:27017".to_string(),
+                    crate::config::ConnectionConfig::default(),
+                ),
+                crate::repl::SharedState::new("test".to_string()),
+            ),
+        };
+
+        // Numeric parameter without quotes
+        let template = "db.users.find({age: $1})";
+        let result = router.substitute_parameters(template, &["18".to_string()]);
+        assert_eq!(result, "db.users.find({age: 18})");
+
+        // Numeric parameter with quotes (should keep quotes)
+        let template = "db.users.find({age: '$1'})";
+        let result = router.substitute_parameters(template, &["18".to_string()]);
+        assert_eq!(result, "db.users.find({age: '18'})");
+
+        // String parameter with quotes
+        let template = "db.users.findOne({name: '$1'})";
+        let result = router.substitute_parameters(template, &["davin".to_string()]);
+        assert_eq!(result, "db.users.findOne({name: 'davin'})");
+
+        // Multiple parameters mixed (string and number)
+        let template = "db.users.find({name: '$1', age: $2})";
+        let result =
+            router.substitute_parameters(template, &["davin".to_string(), "25".to_string()]);
+        assert_eq!(result, "db.users.find({name: 'davin', age: 25})");
+
+        // Complex scenario: multiple mixed types
+        let template = "db.users.find({name: '$1', age: $2, city: '$3', active: $4})";
+        let result = router.substitute_parameters(
+            template,
+            &[
+                "John".to_string(),
+                "30".to_string(),
+                "New York".to_string(),
+                "true".to_string(),
+            ],
+        );
+        assert_eq!(
+            result,
+            "db.users.find({name: 'John', age: 30, city: 'New York', active: true})"
+        );
+    }
+
+    #[test]
+    fn test_substitute_parameters_with_aggregation() {
+        let router = CommandRouter {
+            context: ExecutionContext::new(
+                crate::connection::ConnectionManager::new(
+                    "mongodb://localhost:27017".to_string(),
+                    crate::config::ConnectionConfig::default(),
+                ),
+                crate::repl::SharedState::new("test".to_string()),
+            ),
+        };
+
+        // Raw aggregation (numeric)
+        let template = "db.users.find({age: {$in: [$*]}})";
+        let result = router.substitute_parameters(
+            template,
+            &["18".to_string(), "25".to_string(), "30".to_string()],
+        );
+        assert_eq!(result, "db.users.find({age: {$in: [18, 25, 30]}})");
+
+        // String aggregation (quoted)
+        let template = "db.users.find({category: {$in: [$@]}})";
+        let result =
+            router.substitute_parameters(template, &["admin".to_string(), "user".to_string()]);
+        assert_eq!(
+            result,
+            "db.users.find({category: {$in: ['admin', 'user']}})"
+        );
+    }
+
     #[tokio::test]
     async fn test_command_router_help() {
         // This is a placeholder test - would need proper setup with ConnectionManager
