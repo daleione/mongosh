@@ -12,9 +12,6 @@
 # Example: mongosh -d card_prod
 [connection.datasources]
 local = "mongodb://localhost:27017"
-card_prod = "mongodb://user:pass@prod.example.com:27017/cards"
-card_dev = "mongodb://user:pass@dev.example.com:27017/cards"
-card_test = "mongodb://localhost:27017/cards_test"
 
 # Default datasource to use when -d flag is not specified
 # If not set, will use the first available datasource or fall back to command-line URI
@@ -115,40 +112,27 @@ timestamps = true
 
 
 # ============================================
-# Configuration Examples
+# Named Query
 # ============================================
 
-# Production environment example:
-# [connection]
-# [connection.datasources]
-# prod_primary = "mongodb+srv://user:pass@cluster.mongodb.net/prod"
-# prod_analytics = "mongodb+srv://user:pass@analytics.mongodb.net/prod"
-# default_datasource = "prod_primary"
-# timeout = 60
-# retry_attempts = 5
-# max_pool_size = 50
+# Named query allow you to save frequently used query with a short name
+# You can use parameter substitution: $1, $2, $3 for positional parameters
+# $* for raw aggregation, $@ for string aggregation (quoted)
 #
-# [display]
-# format = "json"
-# color_output = false
-# show_timing = false
+# Examples:
+# [named_query]
+# simple = "db.users.find()"
+# user_by_name = "db.users.findOne({name: '$1'})"
+# users_by_age = "db.users.find({age: {$in: [$*]}})"
+# users_by_category = "db.users.find({category: {$in: [$@]}})"
 #
-# [logging]
-# level = "error"
-# file_path = "/var/log/mongosh/prod.log"
+# Usage:
+#   query                           - List all named query
+#   query <name> [args...]          - Execute a named query
+#   query save <name> <query>       - Save a new query
+#   query delete <name>             - Delete a query
 
-# Development environment example:
-# [connection]
-# [connection.datasources]
-# dev = "mongodb://localhost:27017/dev"
-# staging = "mongodb://staging:27017/staging"
-# default_datasource = "dev"
-# timeout = 10
-#
-# [display]
-# format = "shell"
-# color_output = true
-# syntax_highlighting = true
-#
-# [logging]
-# level = "debug"
+[named_query]
+# Add your named query here
+# Example:
+# simple = "db.collection.find()"

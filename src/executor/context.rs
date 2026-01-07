@@ -3,6 +3,7 @@
 //! This module provides the ExecutionContext which maintains state across
 //! command executions, including database connections and execution history.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -20,6 +21,9 @@ pub struct ExecutionContext {
 
     /// Shared state with REPL
     pub(crate) shared_state: SharedState,
+
+    /// Configuration file path
+    pub(crate) config_path: Option<PathBuf>,
 }
 
 impl ExecutionContext {
@@ -35,6 +39,28 @@ impl ExecutionContext {
         Self {
             connection: Arc::new(RwLock::new(connection)),
             shared_state,
+            config_path: None,
+        }
+    }
+
+    /// Create a new execution context with config path
+    ///
+    /// # Arguments
+    /// * `connection` - Connection manager
+    /// * `shared_state` - Shared state with REPL
+    /// * `config_path` - Path to configuration file
+    ///
+    /// # Returns
+    /// * `Self` - New execution context
+    pub fn with_config_path(
+        connection: ConnectionManager,
+        shared_state: SharedState,
+        config_path: Option<PathBuf>,
+    ) -> Self {
+        Self {
+            connection: Arc::new(RwLock::new(connection)),
+            shared_state,
+            config_path,
         }
     }
 

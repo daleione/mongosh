@@ -411,6 +411,14 @@ impl CliInterface {
         &self.args
     }
 
+    /// Get the configuration file path
+    ///
+    /// # Returns
+    /// * `Option<&Path>` - Path to configuration file, or None for default
+    pub fn config_path(&self) -> Option<&std::path::Path> {
+        self.args.config_file.as_deref()
+    }
+
     /// Apply CLI arguments to configuration
     ///
     /// Overrides configuration values with CLI arguments where provided

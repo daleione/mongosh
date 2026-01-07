@@ -36,6 +36,10 @@ pub struct Config {
     /// Logging configuration
     #[serde(default)]
     pub logging: LoggingConfig,
+
+    /// Named query
+    #[serde(default)]
+    pub named_query: HashMap<String, String>,
 }
 
 impl Default for Config {
@@ -45,6 +49,7 @@ impl Default for Config {
             display: DisplayConfig::default(),
             history: HistoryConfig::default(),
             logging: LoggingConfig::default(),
+            named_query: HashMap::new(),
         }
     }
 }
@@ -194,6 +199,12 @@ impl Config {
             table["timestamps"] = toml_edit::value(config.logging.timestamps);
             if let Some(ref path) = config.logging.file_path {
                 table["file_path"] = toml_edit::value(path.display().to_string());
+            }
+        });
+
+        Self::update_section(doc, "named_query", |table| {
+            for (name, query) in &config.named_query {
+                table[name] = toml_edit::value(query.as_str());
             }
         });
 

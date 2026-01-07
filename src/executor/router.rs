@@ -6,10 +6,13 @@
 //! - Admin commands → AdminExecutor
 //! - Utility commands → UtilityExecutor
 
+use std::collections::HashMap;
+use std::fs;
 use std::time::Instant;
+use tabled::{builder::Builder, settings::Style};
 use tracing::debug;
 
-use crate::config::OutputFormat;
+use crate::config::{Config, OutputFormat};
 use crate::error::Result;
 use crate::parser::{Command, ConfigCommand};
 
@@ -111,6 +114,17 @@ Configuration:
   format [shell|json|json-pretty|table|compact] - Set/get output format
   color [on|off]                                - Enable/disable color output
   config                                        - Show current configuration
+
+Named Queries:
+  query                                       - List all named queries
+  query <name> [args...]                      - Execute a named query with arguments
+  query save <name> <query>                   - Save a new named query
+  query delete <name>                         - Delete a named query
+
+  Parameter substitution:
+    $1, $2, $3, ...                           - Positional parameters
+    $*                                        - Raw aggregation (42, 1337)
+    $@                                        - String aggregation ('value1', 'value2')
 
 Utility:
   help                                        - Show this help
@@ -217,11 +231,199 @@ Available Commands:
                     format_str, color
                 )
             }
+            ConfigCommand::ListNamedQueries => {
+                return self.list_named_query().await;
+            }
+            ConfigCommand::ExecuteNamedQuery { name, args } => {
+                return self.execute_named_query(&name, &args).await;
+            }
+            ConfigCommand::SaveNamedQuery { name, query } => {
+                return self.save_named_query(&name, &query).await;
+            }
+            ConfigCommand::DeleteNamedQuery(name) => {
+                return self.delete_named_query(&name).await;
+            }
         };
 
         Ok(ExecutionResult {
             success: true,
             data: ResultData::Message(message),
+            stats: ExecutionStats::default(),
+            error: None,
+        })
+    }
+
+    /// Load named query from config file
+    async fn load_named_query(&self) -> Result<HashMap<String, String>> {
+        let config_path = self
+            .context
+            .config_path
+            .as_ref()
+            .map(|p| p.clone())
+            .unwrap_or_else(|| Config::default_config_path());
+
+        if !config_path.exists() {
+            return Ok(HashMap::new());
+        }
+
+        let content = fs::read_to_string(&config_path).map_err(|e| {
+            crate::error::MongoshError::Config(crate::error::ConfigError::Generic(format!(
+                "Failed to read config file: {}",
+                e
+            )))
+        })?;
+
+        let config: Config = toml::from_str(&content).map_err(|e| {
+            crate::error::MongoshError::Config(crate::error::ConfigError::Generic(format!(
+                "Failed to parse config file: {}",
+                e
+            )))
+        })?;
+
+        Ok(config.named_query)
+    }
+
+    /// Save config with updated named query
+    async fn save_config_with_query(&self, query: HashMap<String, String>) -> Result<()> {
+        let config_path = self
+            .context
+            .config_path
+            .as_ref()
+            .map(|p| p.clone())
+            .unwrap_or_else(|| Config::default_config_path());
+
+        let mut config = if config_path.exists() {
+            let content = fs::read_to_string(&config_path).map_err(|e| {
+                crate::error::MongoshError::Config(crate::error::ConfigError::Generic(format!(
+                    "Failed to read config file: {}",
+                    e
+                )))
+            })?;
+            toml::from_str(&content).unwrap_or_else(|_| Config::default())
+        } else {
+            Config::default()
+        };
+
+        config.named_query = query;
+        config.save_to_file(Some(&config_path))?;
+
+        Ok(())
+    }
+
+    /// List all named query
+    async fn list_named_query(&self) -> Result<ExecutionResult> {
+        let query = self.load_named_query().await?;
+
+        if query.is_empty() {
+            return Ok(ExecutionResult {
+                success: true,
+                data: ResultData::Message("No named queries defined.".to_string()),
+                stats: ExecutionStats::default(),
+                error: None,
+            });
+        }
+
+        // Build table using tabled library
+        let mut builder = Builder::default();
+
+        // Add header row
+        builder.push_record(vec!["Name", "Query"]);
+
+        // Add data rows
+        for (name, q) in query.iter() {
+            builder.push_record(vec![name.as_str(), q.as_str()]);
+        }
+
+        let mut table = builder.build();
+        table.with(Style::ascii());
+
+        Ok(ExecutionResult {
+            success: true,
+            data: ResultData::Message(table.to_string()),
+            stats: ExecutionStats::default(),
+            error: None,
+        })
+    }
+
+    /// Execute a named query with parameter substitution
+    async fn execute_named_query(&self, name: &str, args: &[String]) -> Result<ExecutionResult> {
+        let query = self.load_named_query().await?;
+
+        let query_template = query.get(name).ok_or_else(|| {
+            crate::error::MongoshError::Config(crate::error::ConfigError::Generic(format!(
+                "Named query '{}' not found",
+                name
+            )))
+        })?;
+
+        // Substitute parameters
+        let substituted_query = self.substitute_parameters(query_template, args);
+
+        // Parse and execute the query
+        let mut parser = crate::parser::Parser::new();
+        let command = parser.parse(&substituted_query)?;
+        Box::pin(self.route(command)).await
+    }
+
+    /// Substitute parameters in query template
+    fn substitute_parameters(&self, template: &str, args: &[String]) -> String {
+        let mut result = template.to_string();
+
+        // First, handle positional parameters ($1, $2, $3, etc.)
+        for (i, arg) in args.iter().enumerate() {
+            let placeholder = format!("${}", i + 1);
+            result = result.replace(&placeholder, arg);
+        }
+
+        // Then handle aggregation parameters
+        if result.contains("$@") {
+            // String aggregation: quote each argument
+            let quoted_args: Vec<String> = args.iter().map(|s| format!("'{}'", s)).collect();
+            let aggregated = quoted_args.join(", ");
+            result = result.replace("$@", &aggregated);
+        }
+
+        if result.contains("$*") {
+            // Raw aggregation: no quotes
+            let aggregated = args.join(", ");
+            result = result.replace("$*", &aggregated);
+        }
+
+        result
+    }
+
+    /// Save a named query
+    async fn save_named_query(&self, name: &str, query: &str) -> Result<ExecutionResult> {
+        let mut query_map = self.load_named_query().await?;
+        query_map.insert(name.to_string(), query.to_string());
+        self.save_config_with_query(query_map).await?;
+
+        Ok(ExecutionResult {
+            success: true,
+            data: ResultData::Message(format!("Named query '{}' saved", name)),
+            stats: ExecutionStats::default(),
+            error: None,
+        })
+    }
+
+    /// Delete a named query
+    async fn delete_named_query(&self, name: &str) -> Result<ExecutionResult> {
+        let mut query = self.load_named_query().await?;
+
+        if query.remove(name).is_none() {
+            return Ok(ExecutionResult {
+                success: false,
+                data: ResultData::Message(format!("Named query '{}' not found", name)),
+                stats: ExecutionStats::default(),
+                error: Some(format!("Query '{}' does not exist", name)),
+            });
+        }
+
+        self.save_config_with_query(query).await?;
+
+        Ok(ExecutionResult {
+            success: true,
+            data: ResultData::Message(format!("{}: Deleted", name)),
             stats: ExecutionStats::default(),
             error: None,
         })

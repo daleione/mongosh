@@ -217,6 +217,18 @@ pub enum ConfigCommand {
 
     /// Show all current settings
     ShowConfig,
+
+    /// List all named queries
+    ListNamedQueries,
+
+    /// Execute a named query with arguments
+    ExecuteNamedQuery { name: String, args: Vec<String> },
+
+    /// Save a named query
+    SaveNamedQuery { name: String, query: String },
+
+    /// Delete a named query
+    DeleteNamedQuery(String),
 }
 
 /// Options for find operations

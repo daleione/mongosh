@@ -25,6 +25,8 @@ impl ShellCommandParser {
             || input.starts_with("format ")
             || input == "color"
             || input.starts_with("color ")
+            || input == "query"
+            || input.starts_with("query ")
             || matches!(input, "exit" | "quit" | "it")
     }
 
@@ -65,6 +67,11 @@ impl ShellCommandParser {
             || trimmed.starts_with("color")
         {
             return Self::parse_config(trimmed);
+        }
+
+        // Query commands (named queries)
+        if trimmed == "query" || trimmed.starts_with("query ") {
+            return Self::parse_query(trimmed);
         }
 
         Err(ParseError::InvalidCommand(format!("Unknown shell command: {}", input)).into())
@@ -170,6 +177,106 @@ impl ShellCommandParser {
         }
 
         Err(ParseError::InvalidCommand(format!("Unknown config command: {}", input)).into())
+    }
+
+    /// Parse query commands (named queries)
+    fn parse_query(input: &str) -> Result<Command> {
+        let trimmed = input.trim();
+        let rest = trimmed.strip_prefix("query").unwrap().trim();
+
+        // List all queries: "query" or "query list"
+        if rest.is_empty() || rest == "list" {
+            return Ok(Command::Config(ConfigCommand::ListNamedQueries));
+        }
+
+        // Save query: "query save <name> <query>"
+        if rest.starts_with("save ") {
+            let save_rest = rest.strip_prefix("save ").unwrap().trim();
+            let parts: Vec<&str> = save_rest.splitn(2, ' ').collect();
+
+            if parts.len() < 2 {
+                return Err(ParseError::InvalidCommand(
+                    "Usage: query save <name> <query>".to_string(),
+                )
+                .into());
+            }
+
+            let name = parts[0].to_string();
+            let query = parts[1].to_string();
+
+            if name.is_empty() || query.is_empty() {
+                return Err(ParseError::InvalidCommand(
+                    "Query name and query string cannot be empty".to_string(),
+                )
+                .into());
+            }
+
+            return Ok(Command::Config(ConfigCommand::SaveNamedQuery {
+                name,
+                query,
+            }));
+        }
+
+        // Delete query: "query delete <name>"
+        if rest.starts_with("delete ") {
+            let name = rest.strip_prefix("delete ").unwrap().trim().to_string();
+
+            if name.is_empty() {
+                return Err(
+                    ParseError::InvalidCommand("Usage: query delete <name>".to_string()).into(),
+                );
+            }
+
+            return Ok(Command::Config(ConfigCommand::DeleteNamedQuery(name)));
+        }
+
+        // Execute query: "query <name> [args...]"
+        let parts: Vec<String> = Self::parse_query_args(rest);
+
+        if parts.is_empty() {
+            return Err(
+                ParseError::InvalidCommand("Query name cannot be empty".to_string()).into(),
+            );
+        }
+
+        let name = parts[0].clone();
+        let args = parts[1..].to_vec();
+
+        Ok(Command::Config(ConfigCommand::ExecuteNamedQuery {
+            name,
+            args,
+        }))
+    }
+
+    /// Parse query arguments, respecting quoted strings
+    fn parse_query_args(input: &str) -> Vec<String> {
+        let mut args = Vec::new();
+        let mut current_arg = String::new();
+        let mut in_quotes = false;
+        let mut chars = input.chars().peekable();
+
+        while let Some(ch) = chars.next() {
+            match ch {
+                '"' | '\'' => {
+                    in_quotes = !in_quotes;
+                }
+                ' ' if !in_quotes => {
+                    if !current_arg.is_empty() {
+                        args.push(current_arg.clone());
+                        current_arg.clear();
+                    }
+                }
+                _ => {
+                    current_arg.push(ch);
+                }
+            }
+        }
+
+        if !current_arg.is_empty() {
+            args.push(current_arg);
+        }
+
+        args
     }
 
     /// Validate database name
@@ -344,5 +451,69 @@ mod tests {
         assert!(!ShellCommandParser::is_valid_db_name("my/db"));
         assert!(!ShellCommandParser::is_valid_db_name("my db"));
         assert!(!ShellCommandParser::is_valid_db_name(""));
+    }
+
+    #[test]
+    fn test_parse_query_list() {
+        let result = ShellCommandParser::parse("query").unwrap();
+        assert!(matches!(
+            result,
+            Command::Config(ConfigCommand::ListNamedQueries)
+        ));
+
+        let result = ShellCommandParser::parse("query list").unwrap();
+        assert!(matches!(
+            result,
+            Command::Config(ConfigCommand::ListNamedQueries)
+        ));
+    }
+
+    #[test]
+    fn test_parse_query_save() {
+        let result = ShellCommandParser::parse("query save simple select * from abc").unwrap();
+        if let Command::Config(ConfigCommand::SaveNamedQuery { name, query }) = result {
+            assert_eq!(name, "simple");
+            assert_eq!(query, "select * from abc");
+        } else {
+            panic!("Expected SaveNamedQuery command");
+        }
+    }
+
+    #[test]
+    fn test_parse_query_delete() {
+        let result = ShellCommandParser::parse("query delete simple").unwrap();
+        if let Command::Config(ConfigCommand::DeleteNamedQuery(name)) = result {
+            assert_eq!(name, "simple");
+        } else {
+            panic!("Expected DeleteNamedQuery command");
+        }
+    }
+
+    #[test]
+    fn test_parse_query_execute() {
+        let result = ShellCommandParser::parse("query simple").unwrap();
+        if let Command::Config(ConfigCommand::ExecuteNamedQuery { name, args }) = result {
+            assert_eq!(name, "simple");
+            assert_eq!(args.len(), 0);
+        } else {
+            panic!("Expected ExecuteNamedQuery command");
+        }
+
+        let result = ShellCommandParser::parse("query user_by_name John Doe").unwrap();
+        if let Command::Config(ConfigCommand::ExecuteNamedQuery { name, args }) = result {
+            assert_eq!(name, "user_by_name");
+            assert_eq!(args, vec!["John", "Doe"]);
+        } else {
+            panic!("Expected ExecuteNamedQuery command");
+        }
+    }
+
+    #[test]
+    fn test_parse_query_args_with_quotes() {
+        let args = ShellCommandParser::parse_query_args("name \"John Doe\" 42");
+        assert_eq!(args, vec!["name", "John Doe", "42"]);
+
+        let args = ShellCommandParser::parse_query_args("'Skelly McDermott' admin");
+        assert_eq!(args, vec!["Skelly McDermott", "admin"]);
     }
 }

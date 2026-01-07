@@ -84,7 +84,9 @@ async fn run() -> Result<()> {
 async fn run_interactive_mode(cli: &CliInterface) -> Result<()> {
     let (conn_manager, server_version) = setup_connection(cli).await?;
     let shared_state = initialize_shared_state(cli, server_version)?;
-    let exec_context = create_execution_context(conn_manager, shared_state.clone()).await?;
+    let config_path = cli.config_path().map(|p| p.to_path_buf());
+    let exec_context =
+        create_execution_context(conn_manager, shared_state.clone(), config_path).await?;
     let mut repl = create_repl_engine(cli, shared_state.clone(), exec_context.clone())?;
 
     run_repl_loop(cli, &mut repl, &exec_context, &shared_state).await?;
@@ -135,8 +137,9 @@ fn initialize_shared_state(
 async fn create_execution_context(
     conn_manager: ConnectionManager,
     shared_state: SharedState,
+    config_path: Option<std::path::PathBuf>,
 ) -> Result<ExecutionContext> {
-    let exec_context = ExecutionContext::new(conn_manager, shared_state);
+    let exec_context = ExecutionContext::with_config_path(conn_manager, shared_state, config_path);
     CommandRouter::new(exec_context.clone()).await?;
     Ok(exec_context)
 }
@@ -195,10 +198,17 @@ async fn execute_and_display(
     command: parser::Command,
 ) {
     let is_config_cmd = matches!(command, parser::Command::Config(_));
+    let is_execute_named_query = matches!(
+        command,
+        parser::Command::Config(parser::ConfigCommand::ExecuteNamedQuery { .. })
+    );
 
     match exec_context.execute(command).await {
         Ok(result) => {
-            if is_config_cmd {
+            // ExecuteNamedQuery should display its results like normal queries
+            if is_execute_named_query {
+                display_result(cli, shared_state, &result);
+            } else if is_config_cmd {
                 if let executor::ResultData::Message(msg) = &result.data {
                     println!("{}", msg);
                 }
