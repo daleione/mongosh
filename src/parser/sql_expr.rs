@@ -223,10 +223,48 @@ impl SqlExprConverter {
                 // Column reference as value - use field path syntax
                 Ok(mongodb::bson::Bson::String(format!("${}", name)))
             }
+            SqlExpr::Function { name, args } => Self::function_to_bson(name, args),
             _ => Err(ParseError::InvalidCommand(
                 "Complex expressions not supported as values".to_string(),
             )
             .into()),
+        }
+    }
+
+    /// Convert SQL function call to BSON value
+    fn function_to_bson(name: &str, args: &[SqlExpr]) -> Result<mongodb::bson::Bson> {
+        match name.to_uppercase().as_str() {
+            "OBJECTID" => {
+                // ObjectId expects a single string argument
+                if args.len() != 1 {
+                    return Err(ParseError::InvalidCommand(format!(
+                        "ObjectId() expects 1 argument, got {}",
+                        args.len()
+                    ))
+                    .into());
+                }
+
+                let id_str = match &args[0] {
+                    SqlExpr::Literal(SqlLiteral::String(s)) => s.clone(),
+                    _ => {
+                        return Err(ParseError::InvalidCommand(
+                            "ObjectId() expects a string argument".to_string(),
+                        )
+                        .into());
+                    }
+                };
+
+                // Parse the hex string into an ObjectId
+                match mongodb::bson::oid::ObjectId::parse_str(&id_str) {
+                    Ok(oid) => Ok(mongodb::bson::Bson::ObjectId(oid)),
+                    Err(e) => Err(ParseError::InvalidCommand(format!(
+                        "Invalid ObjectId string '{}': {}",
+                        id_str, e
+                    ))
+                    .into()),
+                }
+            }
+            _ => Err(ParseError::InvalidCommand(format!("Unsupported function: {}", name)).into()),
         }
     }
 

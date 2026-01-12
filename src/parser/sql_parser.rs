@@ -648,15 +648,15 @@ impl SqlParser {
             return ParseResult::Ok(left);
         };
 
-        // Parse right side (literal value)
-        let right = match self.parse_literal() {
-            ParseResult::Ok(lit) => SqlExpr::Literal(lit),
-            ParseResult::Partial(lit, exp) => {
+        // Parse right side (literal value or function call)
+        let right = match self.parse_value_expr() {
+            ParseResult::Ok(expr) => expr,
+            ParseResult::Partial(expr, exp) => {
                 return ParseResult::Partial(
                     SqlExpr::BinaryOp {
                         left: Box::new(left),
                         op,
-                        right: Box::new(SqlExpr::Literal(lit)),
+                        right: Box::new(expr),
                     },
                     exp,
                 );
@@ -669,6 +669,76 @@ impl SqlParser {
             op,
             right: Box::new(right),
         })
+    }
+
+    /// Parse a value expression (literal or function call)
+    fn parse_value_expr(&mut self) -> ParseResult<SqlExpr> {
+        // Check if it's a function call (identifier followed by '(')
+        if let Some(TokenKind::Ident(name)) = self.peek_kind() {
+            let name = name.clone();
+            let saved_pos = self.pos;
+            self.advance();
+
+            // Check for opening parenthesis
+            if self.match_token(&TokenKind::LParen) {
+                // Parse function arguments
+                let mut args = Vec::new();
+
+                // Parse first argument if not immediately closing paren
+                if !self.check_token(&TokenKind::RParen) {
+                    loop {
+                        match self.parse_literal() {
+                            ParseResult::Ok(lit) => {
+                                args.push(SqlExpr::Literal(lit));
+                            }
+                            ParseResult::Partial(lit, exp) => {
+                                return ParseResult::Partial(
+                                    SqlExpr::Function {
+                                        name,
+                                        args: vec![SqlExpr::Literal(lit)],
+                                    },
+                                    exp,
+                                );
+                            }
+                            ParseResult::Error(err) => return ParseResult::Error(err),
+                        }
+
+                        // Check for comma (more arguments) or closing paren
+                        if self.match_token(&TokenKind::Comma) {
+                            continue;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+
+                // Expect closing parenthesis
+                if !self.match_token(&TokenKind::RParen) {
+                    if self.is_at_eof() {
+                        return ParseResult::Partial(
+                            SqlExpr::Function { name, args },
+                            vec![Expected::Keyword(")")],
+                        );
+                    }
+                    return ParseResult::Error(ParseError::new(
+                        "Expected ')' after function arguments".to_string(),
+                        self.current_position()..self.current_position(),
+                    ));
+                }
+
+                return ParseResult::Ok(SqlExpr::Function { name, args });
+            } else {
+                // Not a function call, restore position and parse as literal
+                self.pos = saved_pos;
+            }
+        }
+
+        // Parse as literal
+        match self.parse_literal() {
+            ParseResult::Ok(lit) => ParseResult::Ok(SqlExpr::Literal(lit)),
+            ParseResult::Partial(lit, exp) => ParseResult::Partial(SqlExpr::Literal(lit), exp),
+            ParseResult::Error(err) => ParseResult::Error(err),
+        }
     }
 
     /// Parse literal value
@@ -1305,6 +1375,31 @@ mod tests {
             assert!(pipeline[1].contains_key("$group"));
         } else {
             panic!("Expected Aggregate command");
+        }
+    }
+
+    #[test]
+    fn test_parse_with_objectid_function() {
+        // Test parsing ObjectId() function in WHERE clause
+        let result = SqlParser::parse_to_command(
+            "SELECT * FROM templates WHERE group_id=ObjectId('3920127eb40h0636d6b49841')",
+        );
+        assert!(
+            result.is_ok(),
+            "Failed to parse ObjectId function: {:?}",
+            result
+        );
+
+        let cmd = result.unwrap();
+        if let Command::Query(QueryCommand::Find { filter, .. }) = cmd {
+            // Should have group_id field in filter
+            assert!(filter.contains_key("group_id"));
+
+            // The value should be an ObjectId
+            let value = filter.get("group_id").unwrap();
+            assert!(matches!(value, mongodb::bson::Bson::ObjectId(_)));
+        } else {
+            panic!("Expected Find command");
         }
     }
 }
