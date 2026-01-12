@@ -1382,7 +1382,7 @@ mod tests {
     fn test_parse_with_objectid_function() {
         // Test parsing ObjectId() function in WHERE clause
         let result = SqlParser::parse_to_command(
-            "SELECT * FROM templates WHERE group_id=ObjectId('3920127eb40h0636d6b49841')",
+            "SELECT * FROM templates WHERE group_id=ObjectId('6920127eb40f0636d6b49042')",
         );
         assert!(
             result.is_ok(),

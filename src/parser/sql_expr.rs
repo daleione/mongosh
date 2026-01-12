@@ -20,6 +20,7 @@ impl SqlExprConverter {
         }
 
         let mut projection = Document::new();
+        let mut has_id = false;
 
         for col in columns {
             match col {
@@ -30,6 +31,11 @@ impl SqlExprConverter {
                 SqlColumn::Field { name, alias } => {
                     let field_name = alias.as_ref().unwrap_or(name);
                     projection.insert(field_name.clone(), 1);
+
+                    // Check if _id is explicitly requested
+                    if name == "_id" {
+                        has_id = true;
+                    }
                 }
                 SqlColumn::Aggregate { alias, .. } => {
                     // For aggregates, we need aggregation pipeline
@@ -44,6 +50,10 @@ impl SqlExprConverter {
         if projection.is_empty() {
             Ok(None)
         } else {
+            // If _id was not explicitly requested, exclude it
+            if !has_id {
+                projection.insert("_id", 0);
+            }
             Ok(Some(projection))
         }
     }
@@ -400,6 +410,21 @@ mod tests {
         let proj = projection.unwrap();
         assert_eq!(proj.get("name"), Some(&mongodb::bson::Bson::Int32(1)));
         assert_eq!(proj.get("age"), Some(&mongodb::bson::Bson::Int32(1)));
+        // _id should be excluded when not explicitly requested
+        assert_eq!(proj.get("_id"), Some(&mongodb::bson::Bson::Int32(0)));
+    }
+
+    #[test]
+    fn test_columns_to_projection_with_id() {
+        let columns = vec![
+            SqlColumn::field("_id".to_string()),
+            SqlColumn::field("name".to_string()),
+        ];
+        let projection = SqlExprConverter::columns_to_projection(&columns).unwrap();
+        assert!(projection.is_some());
+        let proj = projection.unwrap();
+        assert_eq!(proj.get("_id"), Some(&mongodb::bson::Bson::Int32(1)));
+        assert_eq!(proj.get("name"), Some(&mongodb::bson::Bson::Int32(1)));
     }
 
     #[test]
