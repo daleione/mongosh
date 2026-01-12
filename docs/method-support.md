@@ -68,16 +68,16 @@ This document tracks the implementation status of MongoDB Shell commands in mong
 | `db.collection.bulkWrite()`              | ❌     | Provides bulk write operation functionality     |
 | `db.collection.count()`                  | ✅     | Returns count of documents in collection        |
 | `db.collection.countDocuments()`         | ✅     | Returns count of documents in collection        |
-| `db.collection.estimatedDocumentCount()` | ❌     | Returns approximate count of documents          |
+| `db.collection.estimatedDocumentCount()` | ✅     | Returns approximate count of documents          |
 | `db.collection.createIndex()`            | ✅     | Builds an index on a collection                 |
 | `db.collection.createIndexes()`          | ✅     | Builds one or more indexes on a collection      |
 | `db.collection.dataSize()`               | ❌     | Returns the size of the collection              |
 | `db.collection.deleteOne()`              | ✅     | Deletes a single document                       |
 | `db.collection.deleteMany()`             | ✅     | Deletes multiple documents                      |
-| `db.collection.distinct()`               | ❌     | Returns array of distinct values                |
-| `db.collection.drop()`                   | ❌     | Removes the specified collection                |
-| `db.collection.dropIndex()`              | ❌     | Removes a specified index                       |
-| `db.collection.dropIndexes()`            | ❌     | Removes all indexes on a collection             |
+| `db.collection.distinct()`               | ✅     | Returns array of distinct values                |
+| `db.collection.drop()`                   | ✅     | Removes the specified collection                |
+| `db.collection.dropIndex()`              | ✅     | Removes a specified index                       |
+| `db.collection.dropIndexes()`            | ✅     | Removes all indexes on a collection             |
 | `db.collection.ensureIndex()`            | 🚫     | **Deprecated** - Use createIndex                |
 | `db.collection.explain()`                | ❌     | Returns query execution information             |
 | `db.collection.find()`                   | ✅     | Performs a query and returns cursor             |

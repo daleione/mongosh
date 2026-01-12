@@ -104,11 +104,18 @@ Database Operations:
   db.collection.deleteOne(filter)            - Delete one document
   db.collection.deleteMany(filter)           - Delete multiple documents
   db.collection.countDocuments(filter)       - Count documents
+  db.collection.estimatedDocumentCount()     - Get estimated document count (fast)
+  db.collection.distinct(field, filter?)     - Get distinct values for a field
 
 Administrative:
   show dbs                                    - List databases
   show collections                            - List collections
   use <database>                              - Switch database
+  db.collection.createIndex(keys, options?)  - Create an index
+  db.collection.getIndexes()                 - List indexes
+  db.collection.dropIndex(name)              - Drop a single index
+  db.collection.dropIndexes()                - Drop all indexes (except _id)
+  db.collection.drop()                       - Drop the entire collection
 
 Configuration:
   format [shell|json|json-pretty|table|compact] - Set/get output format

@@ -66,6 +66,14 @@ impl AdminExecutor {
                 collection,
                 indexes,
             } => self.create_indexes(collection, indexes).await,
+            AdminCommand::DropIndex { collection, index } => {
+                self.drop_index(collection, index).await
+            }
+            AdminCommand::DropIndexes {
+                collection,
+                indexes,
+            } => self.drop_indexes(collection, indexes).await,
+            AdminCommand::DropCollection(collection) => self.drop_collection(collection).await,
             _ => Err(MongoshError::NotImplemented(
                 "Admin command not yet implemented".to_string(),
             )),
@@ -382,6 +390,136 @@ impl AdminExecutor {
         Ok(ExecutionResult {
             success: true,
             data: ResultData::Message(format!("Created indexes: {}", index_names)),
+            stats: ExecutionStats::default(),
+            error: None,
+        })
+    }
+
+    /// Drop a single index from a collection
+    ///
+    /// # Arguments
+    /// * `collection` - Collection name
+    /// * `index` - Index name to drop
+    ///
+    /// # Returns
+    /// * `Result<ExecutionResult>` - Index drop result
+    async fn drop_index(&self, collection: String, index: String) -> Result<ExecutionResult> {
+        use tracing::debug;
+
+        debug!(
+            "Dropping index '{}' from collection '{}'",
+            index, collection
+        );
+
+        let db = self.context.get_database().await?;
+        let coll: mongodb::Collection<Document> = db.collection(&collection);
+
+        // Drop the index
+        coll.drop_index(index.clone())
+            .await
+            .map_err(|e| ExecutionError::QueryFailed(e.to_string()))?;
+
+        debug!("Dropped index '{}'", index);
+
+        Ok(ExecutionResult {
+            success: true,
+            data: ResultData::Message(format!("Dropped index: {}", index)),
+            stats: ExecutionStats::default(),
+            error: None,
+        })
+    }
+
+    /// Drop multiple indexes from a collection
+    ///
+    /// # Arguments
+    /// * `collection` - Collection name
+    /// * `indexes` - Optional list of index names to drop (None = drop all)
+    ///
+    /// # Returns
+    /// * `Result<ExecutionResult>` - Index drop result
+    async fn drop_indexes(
+        &self,
+        collection: String,
+        indexes: Option<Vec<String>>,
+    ) -> Result<ExecutionResult> {
+        use tracing::debug;
+
+        let db = self.context.get_database().await?;
+        let coll: mongodb::Collection<Document> = db.collection(&collection);
+
+        match indexes {
+            None => {
+                // Drop all indexes except _id_
+                debug!("Dropping all indexes from collection '{}'", collection);
+
+                coll.drop_indexes()
+                    .await
+                    .map_err(|e| ExecutionError::QueryFailed(e.to_string()))?;
+
+                debug!("Dropped all indexes from collection '{}'", collection);
+
+                Ok(ExecutionResult {
+                    success: true,
+                    data: ResultData::Message(format!(
+                        "Dropped all indexes from collection '{}'",
+                        collection
+                    )),
+                    stats: ExecutionStats::default(),
+                    error: None,
+                })
+            }
+            Some(index_names) => {
+                // Drop specific indexes
+                debug!(
+                    "Dropping {} indexes from collection '{}'",
+                    index_names.len(),
+                    collection
+                );
+
+                for index_name in &index_names {
+                    coll.drop_index(index_name.clone())
+                        .await
+                        .map_err(|e| ExecutionError::QueryFailed(e.to_string()))?;
+                }
+
+                let names = index_names.join(", ");
+                debug!("Dropped indexes: {}", names);
+
+                Ok(ExecutionResult {
+                    success: true,
+                    data: ResultData::Message(format!("Dropped indexes: {}", names)),
+                    stats: ExecutionStats::default(),
+                    error: None,
+                })
+            }
+        }
+    }
+
+    /// Drop a collection
+    ///
+    /// # Arguments
+    /// * `collection` - Collection name to drop
+    ///
+    /// # Returns
+    /// * `Result<ExecutionResult>` - Collection drop result
+    async fn drop_collection(&self, collection: String) -> Result<ExecutionResult> {
+        use tracing::debug;
+
+        debug!("Dropping collection '{}'", collection);
+
+        let db = self.context.get_database().await?;
+        let coll: mongodb::Collection<Document> = db.collection(&collection);
+
+        // Drop the collection
+        coll.drop()
+            .await
+            .map_err(|e| ExecutionError::QueryFailed(e.to_string()))?;
+
+        debug!("Dropped collection '{}'", collection);
+
+        Ok(ExecutionResult {
+            success: true,
+            data: ResultData::Message(format!("Dropped collection: {}", collection)),
             stats: ExecutionStats::default(),
             error: None,
         })

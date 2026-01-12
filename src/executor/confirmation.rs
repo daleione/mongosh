@@ -27,7 +27,11 @@ pub fn is_dangerous_query(cmd: &QueryCommand) -> bool {
 pub fn is_dangerous_admin(cmd: &AdminCommand) -> bool {
     matches!(
         cmd,
-        AdminCommand::CreateIndex { .. } | AdminCommand::CreateIndexes { .. }
+        AdminCommand::CreateIndex { .. }
+            | AdminCommand::CreateIndexes { .. }
+            | AdminCommand::DropIndex { .. }
+            | AdminCommand::DropIndexes { .. }
+            | AdminCommand::DropCollection(..)
     )
 }
 
@@ -101,6 +105,29 @@ pub fn get_admin_description(cmd: &AdminCommand) -> String {
                 indexes.len(),
                 collection
             )
+        }
+        AdminCommand::DropIndex { collection, index } => {
+            format!(
+                "This will DROP INDEX '{}' from collection '{}'",
+                index, collection
+            )
+        }
+        AdminCommand::DropIndexes {
+            collection,
+            indexes,
+        } => match indexes {
+            Some(names) => format!(
+                "This will DROP {} INDEXES from collection '{}'",
+                names.len(),
+                collection
+            ),
+            None => format!(
+                "This will DROP ALL INDEXES from collection '{}'",
+                collection
+            ),
+        },
+        AdminCommand::DropCollection(collection) => {
+            format!("This will DROP the entire collection '{}'", collection)
         }
         _ => "Perform administrative operation".to_string(),
     }

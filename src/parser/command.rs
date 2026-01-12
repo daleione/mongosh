@@ -186,6 +186,18 @@ pub enum AdminCommand {
 
     /// List indexes on a collection
     ListIndexes(String),
+
+    /// Drop a single index from a collection
+    DropIndex { collection: String, index: String },
+
+    /// Drop multiple indexes from a collection
+    DropIndexes {
+        collection: String,
+        indexes: Option<Vec<String>>,
+    },
+
+    /// Drop a collection
+    DropCollection(String),
 }
 
 /// Utility commands

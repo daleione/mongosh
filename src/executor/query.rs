@@ -114,12 +114,19 @@ impl QueryExecutor {
                 options,
             } => self.execute_aggregate(collection, pipeline, options).await,
 
+            QueryCommand::EstimatedDocumentCount { collection } => {
+                self.execute_estimated_document_count(collection).await
+            }
+
+            QueryCommand::Distinct {
+                collection,
+                field,
+                filter,
+            } => self.execute_distinct(collection, field, filter).await,
+
             // New command variants - not yet implemented
             QueryCommand::ReplaceOne { .. } => Err(MongoshError::NotImplemented(
                 "replaceOne not yet implemented".to_string(),
-            )),
-            QueryCommand::EstimatedDocumentCount { .. } => Err(MongoshError::NotImplemented(
-                "estimatedDocumentCount not yet implemented".to_string(),
             )),
             QueryCommand::FindOneAndDelete { .. } => Err(MongoshError::NotImplemented(
                 "findOneAndDelete not yet implemented".to_string(),
@@ -129,9 +136,6 @@ impl QueryExecutor {
             )),
             QueryCommand::FindOneAndReplace { .. } => Err(MongoshError::NotImplemented(
                 "findOneAndReplace not yet implemented".to_string(),
-            )),
-            QueryCommand::Distinct { .. } => Err(MongoshError::NotImplemented(
-                "distinct not yet implemented".to_string(),
             )),
             QueryCommand::BulkWrite { .. } => Err(MongoshError::NotImplemented(
                 "bulkWrite not yet implemented".to_string(),
@@ -770,6 +774,98 @@ impl QueryExecutor {
             data: ResultData::Documents(documents),
             stats: ExecutionStats {
                 execution_time_ms: 0, // Will be set by caller
+                documents_returned: count,
+                documents_affected: None,
+            },
+            error: None,
+        })
+    }
+
+    /// Execute estimatedDocumentCount command
+    ///
+    /// # Arguments
+    /// * `collection` - Collection name
+    ///
+    /// # Returns
+    /// * `Result<ExecutionResult>` - Count result or error
+    async fn execute_estimated_document_count(
+        &self,
+        collection: String,
+    ) -> Result<ExecutionResult> {
+        debug!(
+            "Executing estimatedDocumentCount on collection '{}'",
+            collection
+        );
+
+        let db = self.context.get_database().await?;
+        let coll: Collection<Document> = db.collection(&collection);
+
+        let count = coll
+            .estimated_document_count()
+            .await
+            .map_err(|e| ExecutionError::QueryFailed(e.to_string()))?;
+
+        info!("Estimated document count: {}", count);
+
+        Ok(ExecutionResult {
+            success: true,
+            data: ResultData::Count(count),
+            stats: ExecutionStats {
+                execution_time_ms: 0,
+                documents_returned: 0,
+                documents_affected: Some(count),
+            },
+            error: None,
+        })
+    }
+
+    /// Execute distinct command
+    ///
+    /// # Arguments
+    /// * `collection` - Collection name
+    /// * `field` - Field to get distinct values for
+    /// * `filter` - Optional query filter
+    ///
+    /// # Returns
+    /// * `Result<ExecutionResult>` - Distinct values result or error
+    async fn execute_distinct(
+        &self,
+        collection: String,
+        field: String,
+        filter: Option<Document>,
+    ) -> Result<ExecutionResult> {
+        debug!(
+            "Executing distinct on collection '{}' for field '{}'",
+            collection, field
+        );
+
+        let db = self.context.get_database().await?;
+        let coll: Collection<Document> = db.collection(&collection);
+
+        let filter_doc = filter.unwrap_or_else(|| Document::new());
+        let values = coll
+            .distinct(&field, filter_doc)
+            .await
+            .map_err(|e| ExecutionError::QueryFailed(e.to_string()))?;
+
+        // Convert Bson values to Documents for display
+        let count = values.len();
+        let docs: Vec<Document> = values
+            .into_iter()
+            .map(|v| {
+                let mut doc = Document::new();
+                doc.insert("value", v);
+                doc
+            })
+            .collect();
+
+        info!("Distinct returned {} unique values", count);
+
+        Ok(ExecutionResult {
+            success: true,
+            data: ResultData::Documents(docs),
+            stats: ExecutionStats {
+                execution_time_ms: 0,
                 documents_returned: count,
                 documents_affected: None,
             },

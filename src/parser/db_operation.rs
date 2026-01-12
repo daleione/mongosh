@@ -109,6 +109,9 @@ impl DbOperationParser {
             "getIndexes" => Self::parse_get_indexes(&collection, args),
             "createIndex" => Self::parse_create_index(&collection, args),
             "createIndexes" => Self::parse_create_indexes(&collection, args),
+            "dropIndex" => Self::parse_drop_index(&collection, args),
+            "dropIndexes" => Self::parse_drop_indexes(&collection, args),
+            "drop" => Self::parse_drop_collection(&collection, args),
 
             _ => Err(
                 ParseError::InvalidCommand(format!("Unsupported operation: {}", operation)).into(),
@@ -994,6 +997,53 @@ impl DbOperationParser {
             indexes,
         }))
     }
+
+    /// Parse dropIndex operation: db.collection.dropIndex(indexName)
+    fn parse_drop_index(collection: &str, args: &[Argument]) -> Result<Command> {
+        let index = Self::get_string_arg(args, 0)?;
+
+        Ok(Command::Admin(AdminCommand::DropIndex {
+            collection: collection.to_string(),
+            index,
+        }))
+    }
+
+    /// Parse dropIndexes operation: db.collection.dropIndexes() or db.collection.dropIndexes([names])
+    fn parse_drop_indexes(collection: &str, args: &[Argument]) -> Result<Command> {
+        let indexes = if args.is_empty() {
+            None
+        } else if let Ok(array) = Self::get_doc_array_arg(args, 0) {
+            // Extract string names from documents
+            let names: Result<Vec<String>> = array
+                .iter()
+                .map(|doc| {
+                    doc.get_str("$string").map(|s| s.to_string()).or_else(|_| {
+                        // If not a string document, try to get as raw string
+                        Err(
+                            ParseError::InvalidQuery("Index names must be strings".to_string())
+                                .into(),
+                        )
+                    })
+                })
+                .collect();
+            Some(names?)
+        } else {
+            // Try to parse as a single string
+            Some(vec![Self::get_string_arg(args, 0)?])
+        };
+
+        Ok(Command::Admin(AdminCommand::DropIndexes {
+            collection: collection.to_string(),
+            indexes,
+        }))
+    }
+
+    /// Parse drop operation: db.collection.drop()
+    fn parse_drop_collection(collection: &str, _args: &[Argument]) -> Result<Command> {
+        Ok(Command::Admin(AdminCommand::DropCollection(
+            collection.to_string(),
+        )))
+    }
 }
 
 #[cfg(test)]
@@ -1355,6 +1405,87 @@ mod tests {
         assert!(result.is_ok());
         if let Ok(Command::Query(QueryCommand::Aggregate { options, .. })) = result {
             assert_eq!(options.batch_size, Some(1000));
+        }
+    }
+
+    #[test]
+    fn test_parse_estimated_document_count() {
+        let result = DbOperationParser::parse("db.users.estimatedDocumentCount()").unwrap();
+        if let Command::Query(QueryCommand::EstimatedDocumentCount { collection }) = result {
+            assert_eq!(collection, "users");
+        } else {
+            panic!("Expected EstimatedDocumentCount query command");
+        }
+    }
+
+    #[test]
+    fn test_parse_distinct() {
+        let result = DbOperationParser::parse("db.users.distinct('email')").unwrap();
+        if let Command::Query(QueryCommand::Distinct {
+            collection,
+            field,
+            filter,
+        }) = result
+        {
+            assert_eq!(collection, "users");
+            assert_eq!(field, "email");
+            assert!(filter.is_none());
+        } else {
+            panic!("Expected Distinct query command");
+        }
+    }
+
+    #[test]
+    fn test_parse_distinct_with_filter() {
+        let result =
+            DbOperationParser::parse("db.users.distinct('status', { age: { $gt: 18 } })").unwrap();
+        if let Command::Query(QueryCommand::Distinct {
+            collection,
+            field,
+            filter,
+        }) = result
+        {
+            assert_eq!(collection, "users");
+            assert_eq!(field, "status");
+            assert!(filter.is_some());
+        } else {
+            panic!("Expected Distinct query command");
+        }
+    }
+
+    #[test]
+    fn test_parse_drop_index() {
+        let result = DbOperationParser::parse("db.users.dropIndex('email_1')").unwrap();
+        if let Command::Admin(AdminCommand::DropIndex { collection, index }) = result {
+            assert_eq!(collection, "users");
+            assert_eq!(index, "email_1");
+        } else {
+            panic!("Expected DropIndex admin command");
+        }
+    }
+
+    #[test]
+    fn test_parse_drop_indexes() {
+        let result = DbOperationParser::parse("db.users.dropIndexes()").unwrap();
+        if let Command::Admin(AdminCommand::DropIndexes {
+            collection,
+            indexes,
+        }) = result
+        {
+            assert_eq!(collection, "users");
+            assert!(indexes.is_none());
+        } else {
+            panic!("Expected DropIndexes admin command");
+        }
+    }
+
+    #[test]
+    fn test_parse_drop_collection() {
+        let result = DbOperationParser::parse("db.users.drop()").unwrap();
+        if let Command::Admin(AdminCommand::DropCollection(collection)) = result {
+            assert_eq!(collection, "users");
+        } else {
+            panic!("Expected DropCollection admin command");
         }
     }
 }
