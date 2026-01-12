@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.0] - 2026-01-12
+
+### Added
+
+- **Export command** - Export query results to files in multiple formats (JSON Lines, CSV, Excel)
+- **Named query parameters** - Support for named parameters in queries (e.g., `:name`, `:age`)
+  - Improved parameter substitution with better error handling
+- **Additional MongoDB commands**:
+  - `findOneAndDelete` - Find and delete a single document atomically
+  - `findOneAndUpdate` - Find and update a single document atomically
+  - `findOneAndReplace` - Find and replace a single document atomically
+  - `replaceOne` - Replace a single document
+  - `drop` - Drop collection or database
+  - `estimatedDocumentCount` - Fast document count using collection metadata
+  - `distinct` - Get distinct values for a field
+- **Method support documentation** - Added comprehensive documentation for supported MongoDB methods
+
 ## [0.6.0] - 2026-01-07
 
 ### Added
