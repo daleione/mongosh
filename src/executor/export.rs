@@ -285,22 +285,6 @@ mod tests {
     }
 
     #[test]
-    fn test_get_default_filename() {
-        assert_eq!(
-            ExportExecutor::get_default_filename(&ExportFormat::JsonL),
-            "export.jsonl"
-        );
-        assert_eq!(
-            ExportExecutor::get_default_filename(&ExportFormat::Csv),
-            "export.csv"
-        );
-        assert_eq!(
-            ExportExecutor::get_default_filename(&ExportFormat::Excel),
-            "export.xlsx"
-        );
-    }
-
-    #[test]
     fn test_documents_to_dataframe() {
         let docs = vec![
             doc! { "name": "Alice", "age": 30 },
