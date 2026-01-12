@@ -21,6 +21,9 @@ pub enum Command {
     /// Configuration command (set format, color, etc.)
     Config(ConfigCommand),
 
+    /// Piped command (query with post-processing)
+    Pipe(Box<Command>, PipeCommand),
+
     /// Help command with optional topic
     Help(Option<String>),
 
@@ -198,6 +201,30 @@ pub enum AdminCommand {
 
     /// Drop a collection
     DropCollection(String),
+}
+
+/// Pipe commands for post-processing query results
+#[derive(Debug, Clone, PartialEq)]
+pub enum PipeCommand {
+    /// Export results to a file
+    Export {
+        format: ExportFormat,
+        file: Option<String>,
+    },
+
+    /// Explain query execution plan
+    Explain,
+}
+
+/// Export format types
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExportFormat {
+    /// JSON Lines format (one JSON object per line)
+    JsonL,
+    /// CSV format
+    Csv,
+    /// Excel format (.xlsx)
+    Excel,
 }
 
 /// Utility commands

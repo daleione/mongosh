@@ -97,6 +97,9 @@ pub enum ExecutionError {
 
     /// Cursor error.
     CursorError(String),
+
+    /// Invalid operation.
+    InvalidOperation(String),
 }
 
 /// Configuration-specific errors.
@@ -170,6 +173,7 @@ impl fmt::Display for ExecutionError {
             ExecutionError::QueryFailed(msg) => write!(f, "Query failed: {}", msg),
             ExecutionError::InvalidParameters(msg) => write!(f, "Invalid parameters: {}", msg),
             ExecutionError::CursorError(msg) => write!(f, "Cursor error: {}", msg),
+            ExecutionError::InvalidOperation(msg) => write!(f, "Invalid operation: {}", msg),
         }
     }
 }

@@ -14,10 +14,11 @@ use tracing::debug;
 
 use crate::config::{Config, OutputFormat};
 use crate::error::Result;
-use crate::parser::{Command, ConfigCommand};
+use crate::parser::{Command, ConfigCommand, PipeCommand};
 
 use super::admin::AdminExecutor;
 use super::context::ExecutionContext;
+use super::export::ExportExecutor;
 use super::query::QueryExecutor;
 use super::result::{ExecutionResult, ExecutionStats, ResultData};
 use super::utility::UtilityExecutor;
@@ -66,6 +67,7 @@ impl CommandRouter {
                 executor.execute(util_cmd).await
             }
             Command::Config(config_cmd) => self.execute_config(config_cmd).await,
+            Command::Pipe(base_cmd, pipe_cmd) => self.execute_pipe(*base_cmd, pipe_cmd).await,
             Command::Help(topic) => self.execute_help(topic).await,
             Command::Exit => Ok(ExecutionResult {
                 success: true,
@@ -79,6 +81,51 @@ impl CommandRouter {
         debug!("Command executed in {}ms", elapsed);
 
         result
+    }
+
+    /// Execute piped command (query |> export/explain)
+    ///
+    /// # Arguments
+    /// * `base_cmd` - Base command to execute
+    /// * `pipe_cmd` - Pipe operation to apply
+    ///
+    /// # Returns
+    /// * `Result<ExecutionResult>` - Execution result or error
+    fn execute_pipe(
+        &self,
+        base_cmd: Command,
+        pipe_cmd: PipeCommand,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecutionResult>> + Send + '_>>
+    {
+        Box::pin(async move {
+            // Execute the base command first
+            let result = self.route(base_cmd).await?;
+
+            // Apply the pipe operation
+            match pipe_cmd {
+                PipeCommand::Export { format, file } => {
+                    let message = ExportExecutor::export(&result.data, &format, file.as_deref())?;
+                    Ok(ExecutionResult {
+                        success: true,
+                        data: ResultData::Message(message),
+                        stats: result.stats,
+                        error: None,
+                    })
+                }
+                PipeCommand::Explain => {
+                    // For explain, we would need to execute the query with explain flag
+                    // This is a placeholder for now
+                    Ok(ExecutionResult {
+                        success: true,
+                        data: ResultData::Message(
+                            "Explain functionality not yet implemented".to_string(),
+                        ),
+                        stats: result.stats,
+                        error: None,
+                    })
+                }
+            }
+        })
     }
 
     /// Execute help command

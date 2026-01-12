@@ -105,6 +105,20 @@ impl Parser {
             return Err(ParseError::InvalidCommand("Empty input".to_string()).into());
         }
 
+        // Check for pipe operator |>
+        if let Some(pipe_idx) = trimmed.find("|>") {
+            let base_part = trimmed[..pipe_idx].trim();
+            let pipe_part = trimmed[pipe_idx + 2..].trim();
+
+            // Parse the base command
+            let base_cmd = self.parse(base_part)?;
+
+            // Parse the pipe command
+            let pipe_cmd = self.parse_pipe_command(pipe_part)?;
+
+            return Ok(Command::Pipe(Box::new(base_cmd), pipe_cmd));
+        }
+
         // Check if it's a SQL SELECT command
         if sql_parser::SqlParser::is_sql_command(trimmed) {
             return sql_parser::SqlParser::parse_to_command(trimmed);
@@ -122,6 +136,53 @@ impl Parser {
 
         // If nothing matches, it's an invalid command
         Err(ParseError::InvalidCommand(trimmed.to_string()).into())
+    }
+
+    /// Parse pipe command (export or explain)
+    fn parse_pipe_command(&self, input: &str) -> Result<PipeCommand> {
+        let parts: Vec<&str> = input.split_whitespace().collect();
+
+        if parts.is_empty() {
+            return Err(ParseError::InvalidCommand("Empty pipe command".to_string()).into());
+        }
+
+        match parts[0] {
+            "explain" => Ok(PipeCommand::Explain),
+            "export" => {
+                if parts.len() < 2 {
+                    return Err(ParseError::InvalidCommand(
+                        "export requires a format (jsonl, csv, or excel)".to_string(),
+                    )
+                    .into());
+                }
+
+                let format = match parts[1] {
+                    "jsonl" | "json" => ExportFormat::JsonL,
+                    "csv" => ExportFormat::Csv,
+                    "excel" | "xlsx" => ExportFormat::Excel,
+                    other => {
+                        return Err(ParseError::InvalidCommand(format!(
+                            "Unknown export format: {}. Use jsonl, csv, or excel",
+                            other
+                        ))
+                        .into());
+                    }
+                };
+
+                let file = if parts.len() > 2 {
+                    Some(parts[2].to_string())
+                } else {
+                    None
+                };
+
+                Ok(PipeCommand::Export { format, file })
+            }
+            other => Err(ParseError::InvalidCommand(format!(
+                "Unknown pipe command: {}. Use 'export' or 'explain'",
+                other
+            ))
+            .into()),
+        }
     }
 }
 
