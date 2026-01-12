@@ -239,6 +239,91 @@ impl QueryExecutor {
         }
     }
 
+    /// Execute find command without pagination (for exports)
+    ///
+    /// # Arguments
+    /// * `collection` - Collection name
+    /// * `filter` - Query filter
+    /// * `options` - Find options
+    ///
+    /// # Returns
+    /// * `Result<ExecutionResult>` - Query result with all documents
+    pub async fn execute_find_all(
+        &self,
+        collection: String,
+        filter: Document,
+        options: FindOptions,
+    ) -> Result<ExecutionResult> {
+        info!(
+            "Executing find (all results) on collection '{}' with filter: {:?}",
+            collection, filter
+        );
+
+        let start = Instant::now();
+
+        // Get database and collection
+        let db = self.context.get_database().await?;
+        let coll: Collection<Document> = db.collection(&collection);
+
+        // Build MongoDB find options without batch_size limit
+        let mut find_opts = mongodb::options::FindOptions::default();
+
+        // Apply user-specified limit if any
+        if let Some(limit) = options.limit {
+            find_opts.limit = Some(limit);
+            debug!("Applied limit: {}", limit);
+        }
+
+        // Apply skip if specified
+        if let Some(skip) = options.skip {
+            find_opts.skip = Some(skip);
+            debug!("Applied skip: {}", skip);
+        }
+
+        if let Some(ref sort) = options.sort {
+            find_opts.sort = Some(sort.clone());
+            debug!("Applied sort");
+        }
+
+        if let Some(ref projection) = options.projection {
+            find_opts.projection = Some(projection.clone());
+            debug!("Applied projection");
+        }
+
+        // Execute query
+        let mut cursor = coll
+            .find(filter.clone())
+            .with_options(find_opts)
+            .await
+            .map_err(|e| ExecutionError::QueryFailed(e.to_string()))?;
+
+        // Collect ALL results
+        let mut documents = Vec::new();
+        while let Some(doc) = cursor
+            .try_next()
+            .await
+            .map_err(|e| ExecutionError::CursorError(e.to_string()))?
+        {
+            documents.push(doc);
+        }
+
+        let elapsed = start.elapsed().as_millis() as u64;
+        let doc_count = documents.len();
+
+        info!("Found {} documents in {}ms", doc_count, elapsed);
+
+        Ok(ExecutionResult {
+            success: true,
+            data: ResultData::Documents(documents),
+            stats: ExecutionStats {
+                execution_time_ms: elapsed,
+                documents_returned: doc_count,
+                documents_affected: None,
+            },
+            error: None,
+        })
+    }
+
     /// Execute find command
     ///
     /// # Arguments

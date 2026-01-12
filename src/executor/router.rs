@@ -14,7 +14,7 @@ use tracing::debug;
 
 use crate::config::{Config, OutputFormat};
 use crate::error::Result;
-use crate::parser::{Command, ConfigCommand, PipeCommand};
+use crate::parser::{Command, ConfigCommand, PipeCommand, QueryCommand};
 
 use super::admin::AdminExecutor;
 use super::context::ExecutionContext;
@@ -98,8 +98,29 @@ impl CommandRouter {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecutionResult>> + Send + '_>>
     {
         Box::pin(async move {
-            // Execute the base command first
-            let result = self.route(base_cmd).await?;
+            // For export operations with Find queries, execute without pagination
+            let result = if let (Command::Query(query_cmd), PipeCommand::Export { .. }) =
+                (&base_cmd, &pipe_cmd)
+            {
+                if let QueryCommand::Find {
+                    collection,
+                    filter,
+                    options,
+                } = query_cmd
+                {
+                    // Execute find without pagination limit
+                    let executor = QueryExecutor::new(self.context.clone()).await?;
+                    executor
+                        .execute_find_all(collection.clone(), filter.clone(), options.clone())
+                        .await?
+                } else {
+                    // For non-find query commands, execute normally
+                    self.route(base_cmd).await?
+                }
+            } else {
+                // For non-export operations, execute normally with pagination
+                self.route(base_cmd).await?
+            };
 
             // Apply the pipe operation
             match pipe_cmd {
