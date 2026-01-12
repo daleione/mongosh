@@ -1488,4 +1488,87 @@ mod tests {
             panic!("Expected DropCollection admin command");
         }
     }
+
+    #[test]
+    fn test_parse_replace_one() {
+        let result = DbOperationParser::parse(
+            "db.users.replaceOne({ name: 'John' }, { name: 'John', age: 30 })",
+        )
+        .unwrap();
+        if let Command::Query(QueryCommand::ReplaceOne {
+            collection,
+            filter,
+            replacement,
+            options: _,
+        }) = result
+        {
+            assert_eq!(collection, "users");
+            assert_eq!(filter.get_str("name"), Ok("John"));
+            assert_eq!(replacement.get_str("name"), Ok("John"));
+            assert_eq!(replacement.get_i64("age"), Ok(30));
+        } else {
+            panic!("Expected ReplaceOne query command");
+        }
+    }
+
+    #[test]
+    fn test_parse_find_one_and_delete() {
+        let result =
+            DbOperationParser::parse("db.users.findOneAndDelete({ status: 'inactive' })").unwrap();
+        if let Command::Query(QueryCommand::FindOneAndDelete {
+            collection,
+            filter,
+            options: _,
+        }) = result
+        {
+            assert_eq!(collection, "users");
+            assert_eq!(filter.get_str("status"), Ok("inactive"));
+        } else {
+            panic!("Expected FindOneAndDelete query command");
+        }
+    }
+
+    #[test]
+    fn test_parse_find_one_and_update() {
+        let result = DbOperationParser::parse(
+            "db.users.findOneAndUpdate({ name: 'Alice' }, { $set: { age: 25 } })",
+        )
+        .unwrap();
+        if let Command::Query(QueryCommand::FindOneAndUpdate {
+            collection,
+            filter,
+            update,
+            options: _,
+        }) = result
+        {
+            assert_eq!(collection, "users");
+            assert_eq!(filter.get_str("name"), Ok("Alice"));
+            assert!(update.contains_key("$set"));
+        } else {
+            panic!("Expected FindOneAndUpdate query command");
+        }
+    }
+
+    #[test]
+    fn test_parse_find_one_and_replace() {
+        let result = DbOperationParser::parse(
+            "db.users.findOneAndReplace({ name: 'Bob' }, { name: 'Bob', age: 35, status: 'active' })",
+        )
+        .unwrap();
+        if let Command::Query(QueryCommand::FindOneAndReplace {
+            collection,
+            filter,
+            replacement,
+            options: _,
+        }) = result
+        {
+            assert_eq!(collection, "users");
+            assert_eq!(filter.get_str("name"), Ok("Bob"));
+            assert_eq!(replacement.get_str("name"), Ok("Bob"));
+            assert_eq!(replacement.get_i64("age"), Ok(35));
+            assert_eq!(replacement.get_str("status"), Ok("active"));
+        } else {
+            panic!("Expected FindOneAndReplace query command");
+        }
+    }
 }

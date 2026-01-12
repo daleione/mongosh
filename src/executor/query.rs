@@ -14,7 +14,7 @@ use mongodb::options::{AggregateOptions as MongoAggregateOptions, Hint};
 use tracing::{debug, info};
 
 use crate::error::{ExecutionError, MongoshError, Result};
-use crate::parser::{AggregateOptions, FindOptions, QueryCommand};
+use crate::parser::{AggregateOptions, FindAndModifyOptions, FindOptions, QueryCommand};
 
 use super::confirmation::confirm_query_operation;
 use super::context::ExecutionContext;
@@ -124,19 +124,46 @@ impl QueryExecutor {
                 filter,
             } => self.execute_distinct(collection, field, filter).await,
 
+            QueryCommand::ReplaceOne {
+                collection,
+                filter,
+                replacement,
+                options: _,
+            } => {
+                self.execute_replace_one(collection, filter, replacement)
+                    .await
+            }
+
+            QueryCommand::FindOneAndDelete {
+                collection,
+                filter,
+                options,
+            } => {
+                self.execute_find_one_and_delete(collection, filter, options)
+                    .await
+            }
+
+            QueryCommand::FindOneAndUpdate {
+                collection,
+                filter,
+                update,
+                options,
+            } => {
+                self.execute_find_one_and_update(collection, filter, update, options)
+                    .await
+            }
+
+            QueryCommand::FindOneAndReplace {
+                collection,
+                filter,
+                replacement,
+                options,
+            } => {
+                self.execute_find_one_and_replace(collection, filter, replacement, options)
+                    .await
+            }
+
             // New command variants - not yet implemented
-            QueryCommand::ReplaceOne { .. } => Err(MongoshError::NotImplemented(
-                "replaceOne not yet implemented".to_string(),
-            )),
-            QueryCommand::FindOneAndDelete { .. } => Err(MongoshError::NotImplemented(
-                "findOneAndDelete not yet implemented".to_string(),
-            )),
-            QueryCommand::FindOneAndUpdate { .. } => Err(MongoshError::NotImplemented(
-                "findOneAndUpdate not yet implemented".to_string(),
-            )),
-            QueryCommand::FindOneAndReplace { .. } => Err(MongoshError::NotImplemented(
-                "findOneAndReplace not yet implemented".to_string(),
-            )),
             QueryCommand::BulkWrite { .. } => Err(MongoshError::NotImplemented(
                 "bulkWrite not yet implemented".to_string(),
             )),
@@ -871,5 +898,299 @@ impl QueryExecutor {
             },
             error: None,
         })
+    }
+
+    /// Execute replaceOne command
+    ///
+    /// # Arguments
+    /// * `collection` - Collection name
+    /// * `filter` - Query filter to match document
+    /// * `replacement` - Replacement document
+    ///
+    /// # Returns
+    /// * `Result<ExecutionResult>` - Replace result or error
+    async fn execute_replace_one(
+        &self,
+        collection: String,
+        filter: Document,
+        replacement: Document,
+    ) -> Result<ExecutionResult> {
+        debug!(
+            "Executing replaceOne on collection '{}' with filter: {:?}",
+            collection, filter
+        );
+
+        let db = self.context.get_database().await?;
+        let coll: Collection<Document> = db.collection(&collection);
+
+        let result = coll
+            .replace_one(filter, replacement)
+            .await
+            .map_err(|e| ExecutionError::QueryFailed(e.to_string()))?;
+
+        info!(
+            "ReplaceOne result: matched={}, modified={}",
+            result.matched_count, result.modified_count
+        );
+
+        Ok(ExecutionResult {
+            success: true,
+            data: ResultData::Update {
+                matched: result.matched_count,
+                modified: result.modified_count,
+            },
+            stats: ExecutionStats {
+                execution_time_ms: 0,
+                documents_returned: 0,
+                documents_affected: Some(result.modified_count),
+            },
+            error: None,
+        })
+    }
+
+    /// Execute findOneAndDelete command
+    ///
+    /// # Arguments
+    /// * `collection` - Collection name
+    /// * `filter` - Query filter to match document
+    /// * `options` - FindAndModify options
+    ///
+    /// # Returns
+    /// * `Result<ExecutionResult>` - Found document or null
+    async fn execute_find_one_and_delete(
+        &self,
+        collection: String,
+        filter: Document,
+        options: FindAndModifyOptions,
+    ) -> Result<ExecutionResult> {
+        debug!(
+            "Executing findOneAndDelete on collection '{}' with filter: {:?}",
+            collection, filter
+        );
+
+        let db = self.context.get_database().await?;
+        let coll: Collection<Document> = db.collection(&collection);
+
+        // Build options
+        let mut find_opts = mongodb::options::FindOneAndDeleteOptions::default();
+
+        if let Some(sort) = options.sort {
+            find_opts.sort = Some(sort);
+        }
+
+        if let Some(projection) = options.projection {
+            find_opts.projection = Some(projection);
+        }
+
+        if let Some(max_time_ms) = options.max_time_ms {
+            find_opts.max_time = Some(std::time::Duration::from_millis(max_time_ms));
+        }
+
+        let result = coll
+            .find_one_and_delete(filter)
+            .with_options(find_opts)
+            .await
+            .map_err(|e| ExecutionError::QueryFailed(e.to_string()))?;
+
+        match result {
+            Some(doc) => {
+                info!("FindOneAndDelete found and deleted document");
+                Ok(ExecutionResult {
+                    success: true,
+                    data: ResultData::Document(doc),
+                    stats: ExecutionStats {
+                        execution_time_ms: 0,
+                        documents_returned: 1,
+                        documents_affected: Some(1),
+                    },
+                    error: None,
+                })
+            }
+            None => {
+                info!("FindOneAndDelete found no matching document");
+                Ok(ExecutionResult {
+                    success: true,
+                    data: ResultData::Message("No document found".to_string()),
+                    stats: ExecutionStats {
+                        execution_time_ms: 0,
+                        documents_returned: 0,
+                        documents_affected: Some(0),
+                    },
+                    error: None,
+                })
+            }
+        }
+    }
+
+    /// Execute findOneAndUpdate command
+    ///
+    /// # Arguments
+    /// * `collection` - Collection name
+    /// * `filter` - Query filter to match document
+    /// * `update` - Update operations
+    /// * `options` - FindAndModify options
+    ///
+    /// # Returns
+    /// * `Result<ExecutionResult>` - Found document (before or after update)
+    async fn execute_find_one_and_update(
+        &self,
+        collection: String,
+        filter: Document,
+        update: Document,
+        options: FindAndModifyOptions,
+    ) -> Result<ExecutionResult> {
+        debug!(
+            "Executing findOneAndUpdate on collection '{}' with filter: {:?}",
+            collection, filter
+        );
+
+        let db = self.context.get_database().await?;
+        let coll: Collection<Document> = db.collection(&collection);
+
+        // Build options
+        let mut find_opts = mongodb::options::FindOneAndUpdateOptions::default();
+
+        if options.return_new {
+            find_opts.return_document = Some(mongodb::options::ReturnDocument::After);
+        }
+
+        if options.upsert {
+            find_opts.upsert = Some(true);
+        }
+
+        if let Some(sort) = options.sort {
+            find_opts.sort = Some(sort);
+        }
+
+        if let Some(projection) = options.projection {
+            find_opts.projection = Some(projection);
+        }
+
+        if let Some(array_filters) = options.array_filters {
+            find_opts.array_filters = Some(array_filters);
+        }
+
+        if let Some(max_time_ms) = options.max_time_ms {
+            find_opts.max_time = Some(std::time::Duration::from_millis(max_time_ms));
+        }
+
+        let result = coll
+            .find_one_and_update(filter, update)
+            .with_options(find_opts)
+            .await
+            .map_err(|e| ExecutionError::QueryFailed(e.to_string()))?;
+
+        match result {
+            Some(doc) => {
+                info!("FindOneAndUpdate found and updated document");
+                Ok(ExecutionResult {
+                    success: true,
+                    data: ResultData::Document(doc),
+                    stats: ExecutionStats {
+                        execution_time_ms: 0,
+                        documents_returned: 1,
+                        documents_affected: Some(1),
+                    },
+                    error: None,
+                })
+            }
+            None => {
+                info!("FindOneAndUpdate found no matching document");
+                Ok(ExecutionResult {
+                    success: true,
+                    data: ResultData::Message("No document found".to_string()),
+                    stats: ExecutionStats {
+                        execution_time_ms: 0,
+                        documents_returned: 0,
+                        documents_affected: Some(0),
+                    },
+                    error: None,
+                })
+            }
+        }
+    }
+
+    /// Execute findOneAndReplace command
+    ///
+    /// # Arguments
+    /// * `collection` - Collection name
+    /// * `filter` - Query filter to match document
+    /// * `replacement` - Replacement document
+    /// * `options` - FindAndModify options
+    ///
+    /// # Returns
+    /// * `Result<ExecutionResult>` - Found document (before or after replacement)
+    async fn execute_find_one_and_replace(
+        &self,
+        collection: String,
+        filter: Document,
+        replacement: Document,
+        options: FindAndModifyOptions,
+    ) -> Result<ExecutionResult> {
+        debug!(
+            "Executing findOneAndReplace on collection '{}' with filter: {:?}",
+            collection, filter
+        );
+
+        let db = self.context.get_database().await?;
+        let coll: Collection<Document> = db.collection(&collection);
+
+        // Build options
+        let mut find_opts = mongodb::options::FindOneAndReplaceOptions::default();
+
+        if options.return_new {
+            find_opts.return_document = Some(mongodb::options::ReturnDocument::After);
+        }
+
+        if options.upsert {
+            find_opts.upsert = Some(true);
+        }
+
+        if let Some(sort) = options.sort {
+            find_opts.sort = Some(sort);
+        }
+
+        if let Some(projection) = options.projection {
+            find_opts.projection = Some(projection);
+        }
+
+        if let Some(max_time_ms) = options.max_time_ms {
+            find_opts.max_time = Some(std::time::Duration::from_millis(max_time_ms));
+        }
+
+        let result = coll
+            .find_one_and_replace(filter, replacement)
+            .with_options(find_opts)
+            .await
+            .map_err(|e| ExecutionError::QueryFailed(e.to_string()))?;
+
+        match result {
+            Some(doc) => {
+                info!("FindOneAndReplace found and replaced document");
+                Ok(ExecutionResult {
+                    success: true,
+                    data: ResultData::Document(doc),
+                    stats: ExecutionStats {
+                        execution_time_ms: 0,
+                        documents_returned: 1,
+                        documents_affected: Some(1),
+                    },
+                    error: None,
+                })
+            }
+            None => {
+                info!("FindOneAndReplace found no matching document");
+                Ok(ExecutionResult {
+                    success: true,
+                    data: ResultData::Message("No document found".to_string()),
+                    stats: ExecutionStats {
+                        execution_time_ms: 0,
+                        documents_returned: 0,
+                        documents_affected: Some(0),
+                    },
+                    error: None,
+                })
+            }
+        }
     }
 }

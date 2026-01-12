@@ -83,9 +83,9 @@ This document tracks the implementation status of MongoDB Shell commands in mong
 | `db.collection.find()`                   | ✅     | Performs a query and returns cursor             |
 | `db.collection.findAndModify()`          | ❌     | Atomically modifies and returns single document |
 | `db.collection.findOne()`                | ✅     | Performs a query and returns single document    |
-| `db.collection.findOneAndDelete()`       | ❌     | Finds and deletes a single document             |
-| `db.collection.findOneAndReplace()`      | ❌     | Finds and replaces a single document            |
-| `db.collection.findOneAndUpdate()`       | ❌     | Finds and updates a single document             |
+| `db.collection.findOneAndDelete()`       | ✅     | Finds and deletes a single document             |
+| `db.collection.findOneAndReplace()`      | ✅     | Finds and replaces a single document            |
+| `db.collection.findOneAndUpdate()`       | ✅     | Finds and updates a single document             |
 | `db.collection.getIndexes()`             | ✅     | Returns array of existing indexes               |
 | `db.collection.getShardDistribution()`   | ❌     | Prints data distribution for sharded collection |
 | `db.collection.getShardVersion()`        | ❌     | Returns state of data in sharded cluster        |
@@ -95,7 +95,7 @@ This document tracks the implementation status of MongoDB Shell commands in mong
 | `db.collection.mapReduce()`              | 🚫     | Use aggregation pipeline instead                |
 | `db.collection.reIndex()`                | ❌     | Rebuilds all existing indexes                   |
 | `db.collection.renameCollection()`       | ❌     | Changes the name of a collection                |
-| `db.collection.replaceOne()`             | ❌     | Replaces a single document                      |
+| `db.collection.replaceOne()`             | ✅     | Replaces a single document                      |
 | `db.collection.stats()`                  | ❌     | Reports on the state of a collection            |
 | `db.collection.storageSize()`            | ❌     | Reports total size used by collection           |
 | `db.collection.totalIndexSize()`         | ❌     | Reports total size used by indexes              |
