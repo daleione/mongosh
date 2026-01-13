@@ -240,10 +240,11 @@ impl SqlSelect {
     /// Check if this select needs aggregation pipeline
     pub fn needs_aggregate(&self) -> bool {
         self.group_by.is_some()
-            || self
-                .columns
-                .iter()
-                .any(|c| matches!(c, SqlColumn::Aggregate { .. }))
+            || self.columns.iter().any(|c| match c {
+                SqlColumn::Aggregate { .. } => true,
+                SqlColumn::Field { alias, .. } => alias.is_some(),
+                _ => false,
+            })
     }
 }
 

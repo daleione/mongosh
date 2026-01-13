@@ -343,6 +343,9 @@ impl SqlParser {
                     let name = name.clone();
                     self.advance();
 
+                    // Parse nested field path
+                    let name = self.parse_nested_field_name(name);
+
                     // Check for AS alias
                     let alias = if self.match_keyword(&TokenKind::As) {
                         match self.peek_kind() {
@@ -614,6 +617,10 @@ impl SqlParser {
         let left = if let Some(TokenKind::Ident(name)) = self.peek_kind() {
             let name = name.clone();
             self.advance();
+
+            // Parse nested field path
+            let name = self.parse_nested_field_name(name);
+
             SqlExpr::Column(name)
         } else if self.is_at_eof() {
             self.expected = vec![Expected::ColumnName];
@@ -969,6 +976,12 @@ impl SqlParser {
             pipeline.push(doc! { "$match": filter });
         }
 
+        // Check if we have any aggregate functions
+        let has_aggregates = ast
+            .columns
+            .iter()
+            .any(|c| matches!(c, SqlColumn::Aggregate { .. }));
+
         // Add $group stage
         if let Some(ref group_by) = ast.group_by {
             // GROUP BY case: group by specific fields
@@ -1013,8 +1026,8 @@ impl SqlParser {
             }
 
             pipeline.push(doc! { "$project": project_doc });
-        } else {
-            // No GROUP BY: aggregate over entire collection (e.g., SELECT COUNT(*) FROM ...)
+        } else if has_aggregates {
+            // No GROUP BY but has aggregates: aggregate over entire collection (e.g., SELECT COUNT(*) FROM ...)
             let mut group_doc = Document::new();
             group_doc.insert("_id", mongodb::bson::Bson::Null); // Group all documents together
 
@@ -1062,6 +1075,34 @@ impl SqlParser {
             }
 
             pipeline.push(doc! { "$project": project_doc });
+        } else {
+            // No GROUP BY, no aggregates: just field aliases
+            // Add $project stage to handle field renaming
+            let mut project_doc = Document::new();
+            let mut has_id = false;
+
+            for col in &ast.columns {
+                if let SqlColumn::Field { name, alias } = col {
+                    if name == "_id" {
+                        has_id = true;
+                    }
+
+                    if let Some(alias_name) = alias {
+                        // Rename field using alias
+                        project_doc.insert(alias_name.clone(), format!("${}", name));
+                    } else {
+                        // Keep field with original name
+                        project_doc.insert(name.clone(), 1);
+                    }
+                }
+            }
+
+            // Exclude _id if not explicitly requested
+            if !has_id {
+                project_doc.insert("_id", 0);
+            }
+
+            pipeline.push(doc! { "$project": project_doc });
         }
 
         // Add $sort stage for ORDER BY
@@ -1088,6 +1129,23 @@ impl SqlParser {
             pipeline,
             options: AggregateOptions::default(),
         }))
+    }
+
+    // Helper methods for parsing
+
+    /// Parse nested field name with dot notation (e.g., "input.images")
+    /// Takes a starting field name and extends it with any following dot-separated fields
+    fn parse_nested_field_name(&mut self, mut name: String) -> String {
+        while self.match_token(&TokenKind::Dot) {
+            if let Some(TokenKind::Ident(field)) = self.peek_kind() {
+                name.push('.');
+                name.push_str(field);
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        name
     }
 
     // Helper methods for token manipulation
@@ -1400,6 +1458,72 @@ mod tests {
             assert!(matches!(value, mongodb::bson::Bson::ObjectId(_)));
         } else {
             panic!("Expected Find command");
+        }
+    }
+
+    #[test]
+    fn test_parse_with_nested_fields() {
+        // Test parsing nested fields with dot notation
+        let result = SqlParser::parse_to_command(
+            "SELECT input.images, user.name FROM templates WHERE input.type='image'",
+        );
+        assert!(
+            result.is_ok(),
+            "Failed to parse nested fields: {:?}",
+            result
+        );
+
+        let cmd = result.unwrap();
+        if let Command::Query(QueryCommand::Find { filter, .. }) = cmd {
+            // Should have input.type field in filter
+            assert!(filter.contains_key("input.type"));
+        } else {
+            panic!("Expected Find command");
+        }
+    }
+
+    #[test]
+    fn test_parse_order_by_with_nested_fields() {
+        let result =
+            SqlParser::parse_to_command("SELECT * FROM templates ORDER BY user.created_at DESC");
+        assert!(
+            result.is_ok(),
+            "Failed to parse nested field in ORDER BY: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_parse_group_by_with_nested_fields() {
+        let result = SqlParser::parse_to_command(
+            "SELECT user.country, COUNT(*) FROM templates GROUP BY user.country",
+        );
+        assert!(
+            result.is_ok(),
+            "Failed to parse nested field in GROUP BY: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_parse_field_alias_without_aggregation() {
+        // Test that field aliases work correctly (should use aggregation pipeline)
+        let result = SqlParser::parse_to_command("SELECT input.images AS image FROM tasks LIMIT 1");
+        assert!(result.is_ok(), "Failed to parse field alias: {:?}", result);
+
+        let cmd = result.unwrap();
+        if let Command::Query(QueryCommand::Aggregate { pipeline, .. }) = cmd {
+            // Should use aggregation pipeline for aliases
+            assert!(!pipeline.is_empty(), "Pipeline should not be empty");
+
+            // Should have a $project stage
+            let has_project = pipeline.iter().any(|stage| stage.contains_key("$project"));
+            assert!(
+                has_project,
+                "Pipeline should contain $project stage for alias"
+            );
+        } else {
+            panic!("Expected Aggregate command for query with alias");
         }
     }
 }
