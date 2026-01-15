@@ -7,13 +7,16 @@
 //! - Configurable styles and width limits
 //! - Nested document and array support
 
-use mongodb::bson::{Bson, Document};
+#[cfg(test)]
+use mongodb::bson::Bson;
+use mongodb::bson::Document;
 use tabled::{
     Table,
     builder::Builder,
     settings::{Alignment, Color, Modify, Style, object::Rows, width::Width},
 };
 
+use super::bson_utils::{BsonConverter, CompactConverter};
 use crate::error::Result;
 use crate::executor::ResultData;
 
@@ -34,6 +37,9 @@ pub struct TableFormatter {
 
     /// Enable colored output
     use_colors: bool,
+
+    /// Converter for BSON values
+    converter: CompactConverter,
 }
 
 impl TableFormatter {
@@ -46,6 +52,7 @@ impl TableFormatter {
             max_column_width: DEFAULT_MAX_COLUMN_WIDTH,
             max_table_width: DEFAULT_MAX_TABLE_WIDTH,
             use_colors: false,
+            converter: CompactConverter::new(),
         }
     }
 
@@ -167,87 +174,8 @@ impl TableFormatter {
     /// * `String` - Formatted field value
     fn format_field_value(&self, doc: &Document, field: &str) -> String {
         match doc.get(field) {
-            Some(value) => self.format_bson_value(value),
+            Some(value) => self.converter.convert(value),
             None => String::from(""),
-        }
-    }
-
-    /// Format a BSON value for table display
-    ///
-    /// # Arguments
-    /// * `value` - BSON value to format
-    ///
-    /// # Returns
-    /// * `String` - Formatted value
-    fn format_bson_value(&self, value: &Bson) -> String {
-        match value {
-            Bson::ObjectId(oid) => format!("ObjectId('{}')", oid),
-            Bson::DateTime(dt) => {
-                let iso = dt
-                    .try_to_rfc3339_string()
-                    .unwrap_or_else(|_| format!("{}", dt.timestamp_millis()));
-                format!("ISODate('{}')", iso)
-            }
-            Bson::Int64(n) => format!("Long('{}')", n),
-            Bson::Decimal128(d) => format!("NumberDecimal('{}')", d),
-            Bson::String(s) => s.clone(),
-            Bson::Int32(n) => n.to_string(),
-            Bson::Double(f) => {
-                // Format double with reasonable precision
-                if f.fract() == 0.0 && f.abs() < 1e10 {
-                    format!("{:.0}", f)
-                } else {
-                    format!("{}", f)
-                }
-            }
-            Bson::Boolean(b) => b.to_string(),
-            Bson::Null => String::from("null"),
-            Bson::Array(arr) => {
-                if arr.is_empty() {
-                    String::from("[]")
-                } else if arr.len() <= 3 {
-                    // Show small arrays inline
-                    let items: Vec<String> =
-                        arr.iter().map(|v| self.format_bson_value(v)).collect();
-                    format!("[{}]", items.join(", "))
-                } else {
-                    // Show array length for large arrays
-                    format!("[Array({})]", arr.len())
-                }
-            }
-            Bson::Document(doc) => {
-                if doc.is_empty() {
-                    String::from("{}")
-                } else if doc.len() <= 2 {
-                    // Show small documents inline
-                    let fields: Vec<String> = doc
-                        .iter()
-                        .map(|(k, v)| format!("{}: {}", k, self.format_bson_value(v)))
-                        .collect();
-                    format!("{{{}}}", fields.join(", "))
-                } else {
-                    // Show field count for large documents
-                    format!("{{Object({})}}", doc.len())
-                }
-            }
-            Bson::Binary(bin) => {
-                let hex = hex::encode(&bin.bytes);
-                if hex.len() > 16 {
-                    format!("Binary({}...)", &hex[..16])
-                } else {
-                    format!("Binary({})", hex)
-                }
-            }
-            Bson::RegularExpression(regex) => {
-                format!("/{}/{}", regex.pattern, regex.options)
-            }
-            Bson::Timestamp(ts) => {
-                format!("Timestamp({}, {})", ts.time, ts.increment)
-            }
-            Bson::Undefined => String::from("undefined"),
-            Bson::MinKey => String::from("MinKey"),
-            Bson::MaxKey => String::from("MaxKey"),
-            _ => format!("{:?}", value),
         }
     }
 
@@ -331,7 +259,7 @@ mod tests {
     fn test_format_bson_objectid() {
         let formatter = TableFormatter::new();
         let oid = ObjectId::parse_str("507f1f77bcf86cd799439011").unwrap();
-        let result = formatter.format_bson_value(&Bson::ObjectId(oid));
+        let result = formatter.converter.convert(&Bson::ObjectId(oid));
         assert!(result.contains("ObjectId"));
         assert!(result.contains("507f1f77bcf86cd799439011"));
     }
@@ -339,7 +267,7 @@ mod tests {
     #[test]
     fn test_format_bson_null() {
         let formatter = TableFormatter::new();
-        let result = formatter.format_bson_value(&Bson::Null);
+        let result = formatter.converter.convert(&Bson::Null);
         assert_eq!(result, "null");
     }
 
@@ -347,7 +275,7 @@ mod tests {
     fn test_format_bson_array_small() {
         let formatter = TableFormatter::new();
         let arr = Bson::Array(vec![Bson::Int32(1), Bson::Int32(2), Bson::Int32(3)]);
-        let result = formatter.format_bson_value(&arr);
+        let result = formatter.converter.convert(&arr);
         assert!(result.contains("[1, 2, 3]"));
     }
 
@@ -361,7 +289,7 @@ mod tests {
             Bson::Int32(4),
             Bson::Int32(5),
         ]);
-        let result = formatter.format_bson_value(&arr);
+        let result = formatter.converter.convert(&arr);
         assert!(result.contains("[Array(5)]"));
     }
 
@@ -369,7 +297,7 @@ mod tests {
     fn test_format_bson_document_small() {
         let formatter = TableFormatter::new();
         let doc = Bson::Document(doc! { "x": 1 });
-        let result = formatter.format_bson_value(&doc);
+        let result = formatter.converter.convert(&doc);
         assert!(result.contains("x: 1"));
     }
 
@@ -377,7 +305,7 @@ mod tests {
     fn test_format_bson_document_large() {
         let formatter = TableFormatter::new();
         let doc = Bson::Document(doc! { "a": 1, "b": 2, "c": 3 });
-        let result = formatter.format_bson_value(&doc);
+        let result = formatter.converter.convert(&doc);
         assert!(result.contains("{Object(3)}"));
     }
 

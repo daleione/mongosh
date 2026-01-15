@@ -10,13 +10,14 @@ use std::io::{BufWriter, Write};
 use std::path::Path;
 
 use chrono::Local;
-use mongodb::bson::{Bson, Document};
+use mongodb::bson::Document;
 use polars::prelude::*;
 use polars_excel_writer::PolarsExcelWriter;
 use tracing::{debug, info};
 
 use crate::error::{ExecutionError, Result};
 use crate::formatter::JsonFormatter;
+use crate::formatter::bson_utils::{BsonConverter, PlainTextConverter};
 use crate::parser::ExportFormat;
 
 use super::result::ResultData;
@@ -112,7 +113,6 @@ impl ExportExecutor {
     fn export_csv(docs: &[Document], path: &str) -> Result<String> {
         debug!("Exporting {} documents to CSV format", docs.len());
 
-        // Convert documents to DataFrame
         let df = Self::documents_to_dataframe(docs)?;
 
         // Write to file
@@ -181,13 +181,13 @@ impl ExportExecutor {
 
         let field_names: Vec<String> = field_names.into_iter().collect();
 
-        // Create series for each field
         let mut series_vec = Vec::new();
+        let converter = PlainTextConverter::new();
 
         for field_name in &field_names {
             let values: Vec<String> = docs
                 .iter()
-                .map(|doc| Self::bson_to_string(doc.get(field_name)))
+                .map(|doc| converter.convert_optional(doc.get(field_name)))
                 .collect();
 
             let series = Series::new(PlSmallStr::from(field_name.as_str()), values);
@@ -197,26 +197,6 @@ impl ExportExecutor {
         DataFrame::new(series_vec).map_err(|e| {
             ExecutionError::InvalidOperation(format!("Failed to create DataFrame: {}", e)).into()
         })
-    }
-
-    /// Convert BSON value to string for DataFrame
-    fn bson_to_string(value: Option<&Bson>) -> String {
-        match value {
-            Some(Bson::String(s)) => s.clone(),
-            Some(Bson::Int32(i)) => i.to_string(),
-            Some(Bson::Int64(i)) => i.to_string(),
-            Some(Bson::Double(d)) => d.to_string(),
-            Some(Bson::Boolean(b)) => b.to_string(),
-            Some(Bson::Null) => String::new(),
-            Some(Bson::ObjectId(oid)) => oid.to_string(),
-            Some(Bson::DateTime(dt)) => dt.to_string(),
-            Some(Bson::Array(arr)) => format!("{:?}", arr),
-            Some(Bson::Document(doc)) => {
-                serde_json::to_string(doc).unwrap_or_else(|_| "{}".to_string())
-            }
-            Some(other) => format!("{:?}", other),
-            None => String::new(),
-        }
     }
 
     /// Get suggested filename for format
@@ -270,19 +250,6 @@ mod tests {
     use super::*;
     use mongodb::bson::doc;
 
-    #[test]
-    fn test_bson_to_string() {
-        assert_eq!(
-            ExportExecutor::bson_to_string(Some(&Bson::String("test".to_string()))),
-            "test"
-        );
-        assert_eq!(ExportExecutor::bson_to_string(Some(&Bson::Int32(42))), "42");
-        assert_eq!(
-            ExportExecutor::bson_to_string(Some(&Bson::Boolean(true))),
-            "true"
-        );
-        assert_eq!(ExportExecutor::bson_to_string(None), "");
-    }
 
     #[test]
     fn test_documents_to_dataframe() {

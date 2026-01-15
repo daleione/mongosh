@@ -33,6 +33,7 @@
 //! - `table`: Table formatter for document collections
 //! - `stats`: Statistics formatter for execution metrics
 
+pub mod bson_utils;
 mod colorizer;
 mod json;
 mod shell;

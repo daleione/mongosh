@@ -9,6 +9,7 @@
 use colored_json::prelude::*;
 use mongodb::bson::{Bson, Document};
 
+use super::bson_utils::{BsonConverter, JsonConverter};
 use crate::error::Result;
 use crate::executor::ResultData;
 
@@ -22,6 +23,9 @@ pub struct JsonFormatter {
 
     /// Enable colored output
     use_colors: bool,
+
+    /// Converter for BSON to JSON
+    converter: JsonConverter,
 }
 
 impl JsonFormatter {
@@ -36,8 +40,9 @@ impl JsonFormatter {
     pub fn new(pretty: bool, use_colors: bool, indent: usize) -> Self {
         Self {
             pretty,
-            indent: indent,
+            indent,
             use_colors,
+            converter: JsonConverter::simplified(),
         }
     }
 
@@ -159,73 +164,9 @@ impl JsonFormatter {
 
     /// Convert BSON document to simplified JSON
     ///
-    /// Converts BSON types to human-readable JSON:
-    /// - ObjectId -> String
-    /// - DateTime -> ISO 8601 String
-    /// - Int64 -> Number
-    /// - Decimal128 -> Number
-    /// - Binary -> Base64 String
+    /// Converts BSON types to human-readable JSON using the JsonConverter
     fn bson_to_simplified_json(&self, doc: &Document) -> serde_json::Value {
-        let mut map = serde_json::Map::new();
-
-        for (key, value) in doc {
-            map.insert(key.clone(), self.bson_value_to_json(value));
-        }
-
-        serde_json::Value::Object(map)
-    }
-
-    /// Convert BSON value to simplified JSON value
-    fn bson_value_to_json(&self, value: &Bson) -> serde_json::Value {
-        use serde_json::Value as JsonValue;
-
-        match value {
-            Bson::ObjectId(oid) => JsonValue::String(oid.to_string()),
-            Bson::DateTime(dt) => {
-                let iso = dt
-                    .try_to_rfc3339_string()
-                    .unwrap_or_else(|_| format!("{}", dt.timestamp_millis()));
-                JsonValue::String(iso)
-            }
-            Bson::Int64(n) => JsonValue::Number((*n).into()),
-            Bson::Int32(n) => JsonValue::Number((*n).into()),
-            Bson::Double(f) => serde_json::Number::from_f64(*f)
-                .map(JsonValue::Number)
-                .unwrap_or(JsonValue::Null),
-            Bson::Decimal128(d) => {
-                // Convert Decimal128 to string then to number if possible
-                let s = d.to_string();
-                s.parse::<f64>()
-                    .ok()
-                    .and_then(serde_json::Number::from_f64)
-                    .map(JsonValue::Number)
-                    .unwrap_or_else(|| JsonValue::String(s))
-            }
-            Bson::String(s) => JsonValue::String(s.clone()),
-            Bson::Boolean(b) => JsonValue::Bool(*b),
-            Bson::Null => JsonValue::Null,
-            Bson::Array(arr) => {
-                let json_arr: Vec<JsonValue> =
-                    arr.iter().map(|v| self.bson_value_to_json(v)).collect();
-                JsonValue::Array(json_arr)
-            }
-            Bson::Document(doc) => self.bson_to_simplified_json(doc),
-            Bson::Binary(bin) => {
-                // Convert binary to base64 string
-                use base64::Engine;
-                let base64_str = base64::engine::general_purpose::STANDARD.encode(&bin.bytes);
-                JsonValue::String(base64_str)
-            }
-            Bson::RegularExpression(regex) => {
-                JsonValue::String(format!("/{}/{}", regex.pattern, regex.options))
-            }
-            Bson::Timestamp(ts) => {
-                // Convert timestamp to milliseconds
-                let millis = (ts.time as i64) * 1000 + (ts.increment as i64);
-                JsonValue::Number(millis.into())
-            }
-            _ => JsonValue::String(format!("{:?}", value)),
-        }
+        self.converter.convert(&Bson::Document(doc.clone()))
     }
 }
 

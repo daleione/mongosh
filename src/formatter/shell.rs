@@ -8,11 +8,15 @@
 
 use mongodb::bson::{Bson, Document};
 
+use super::bson_utils::{BsonConverter, ShellStyleConverter};
 use super::colorizer::Colorizer;
 
 /// Shell-style formatter (mongosh compatible)
 pub struct ShellFormatter {
-    /// Colorizer for output highlighting
+    /// Converter for BSON values
+    converter: ShellStyleConverter,
+
+    /// Colorizer for output highlighting (kept for compatibility)
     colorizer: Colorizer,
 
     /// Indentation level
@@ -29,6 +33,7 @@ impl ShellFormatter {
     /// * `Self` - New formatter
     pub fn new(use_colors: bool) -> Self {
         Self {
+            converter: ShellStyleConverter::new(use_colors),
             colorizer: Colorizer::new(use_colors),
             indent: 2,
         }
@@ -56,7 +61,7 @@ impl ShellFormatter {
 
         let entries: Vec<_> = doc.iter().collect();
         for (i, (key, value)) in entries.iter().enumerate() {
-            let formatted_value = self.format_bson_value(value, indent_level + 1);
+            let formatted_value = self.converter.convert_with_indent(value, indent_level + 1);
             result.push_str(&indent);
 
             // Key without quotes (shell style)
@@ -78,72 +83,15 @@ impl ShellFormatter {
     }
 
     /// Format a BSON value in shell style
-    fn format_bson_value(&self, value: &Bson, indent_level: usize) -> String {
-        match value {
-            Bson::ObjectId(oid) => self.colorizer.type_wrapper("ObjectId", &oid.to_string()),
-            Bson::DateTime(dt) => {
-                // Convert to ISO 8601 format
-                let iso = dt.try_to_rfc3339_string().unwrap_or_else(|_| {
-                    // Fallback to timestamp if conversion fails
-                    format!("{}", dt.timestamp_millis())
-                });
-                self.colorizer.iso_date(&iso)
-            }
-            Bson::Int64(n) => self.colorizer.type_wrapper("Long", &n.to_string()),
-            Bson::Decimal128(d) => self.colorizer.type_wrapper("NumberDecimal", &d.to_string()),
-            Bson::String(s) => self.colorizer.string(s),
-            Bson::Int32(n) => self.colorizer.number(&n.to_string()),
-            Bson::Double(f) => self.colorizer.number(&f.to_string()),
-            Bson::Boolean(b) => self.colorizer.number(&b.to_string()),
-            Bson::Null => self.colorizer.null("null"),
-            Bson::Array(arr) => self.format_array(arr, indent_level),
-            Bson::Document(doc) => self.format_document_with_indent(doc, indent_level),
-            Bson::Binary(bin) => {
-                // Convert BinarySubtype to u8
-                let subtype_num = match bin.subtype {
-                    mongodb::bson::spec::BinarySubtype::Generic => 0u8,
-                    mongodb::bson::spec::BinarySubtype::Function => 1u8,
-                    mongodb::bson::spec::BinarySubtype::BinaryOld => 2u8,
-                    mongodb::bson::spec::BinarySubtype::UuidOld => 3u8,
-                    mongodb::bson::spec::BinarySubtype::Uuid => 4u8,
-                    mongodb::bson::spec::BinarySubtype::Md5 => 5u8,
-                    mongodb::bson::spec::BinarySubtype::Encrypted => 6u8,
-                    mongodb::bson::spec::BinarySubtype::Column => 7u8,
-                    mongodb::bson::spec::BinarySubtype::Sensitive => 8u8,
-                    mongodb::bson::spec::BinarySubtype::UserDefined(n) => n,
-                    _ => 0u8, // Default to generic for unknown subtypes
-                };
-                self.colorizer
-                    .bin_data(subtype_num, &hex::encode(&bin.bytes))
-            }
-            Bson::RegularExpression(regex) => self.colorizer.regex(&regex.pattern, &regex.options),
-            Bson::Timestamp(ts) => self.colorizer.timestamp(ts.time, ts.increment),
-            _ => format!("{:?}", value),
-        }
-    }
-
-    /// Format a BSON array in shell style
-    fn format_array(&self, arr: &[Bson], indent_level: usize) -> String {
-        if arr.is_empty() {
-            return "[]".to_string();
-        }
-
-        let mut result = String::from("[\n");
-        let indent = " ".repeat((indent_level + 1) * self.indent);
-
-        for (i, value) in arr.iter().enumerate() {
-            result.push_str(&indent);
-            result.push_str(&self.format_bson_value(value, indent_level + 1));
-
-            if i < arr.len() - 1 {
-                result.push(',');
-            }
-            result.push('\n');
-        }
-
-        result.push_str(&" ".repeat(indent_level * self.indent));
-        result.push(']');
-        result
+    ///
+    /// # Arguments
+    /// * `value` - BSON value to format
+    ///
+    /// # Returns
+    /// * `String` - Formatted value
+    #[allow(dead_code)]
+    pub fn format_value(&self, value: &Bson) -> String {
+        self.converter.convert(value)
     }
 }
 
