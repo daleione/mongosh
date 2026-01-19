@@ -31,7 +31,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 oxc = { version = "0.106", features = ["full"] }
 tabled = "0.20.0"
-polars = { version = "0.51.0", features = ["lazy", "csv", "parquet", "json"] }
+polars = { version = "0.51.0", features = ["csv", "json"] }
 polars_excel_writer = "0.21"
 chrono = "0.4"
 
