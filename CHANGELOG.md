@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.0] - 2026-01-26
+
+### Added
+
+- **Custom MongoDB shell parser** - Refactored parser with custom oxc-based implementation specifically designed for MongoDB shell syntax
+- **Dynamic shell completion** - Intelligent auto-completion with dynamic datasource support for context-aware suggestions
+- **BSON utilities** - Added utility functions for working with BSON data types
+
+### Changed
+
+- **SQL enhancements**:
+  - Added support for array index access in SQL queries (e.g., `SELECT tags[0] FROM collection`)
+  - Improved nested field handling in SQL queries
+  - Added support for field aliases in SQL projections
+  - Enhanced ObjectId function support in SQL parser
+  - Optimized `_id` field exclusion from projections unless explicitly requested
+- **Improved export operations** - Added `execute_find_all` method for more efficient bulk export functionality
+
+### Removed
+
+- **Polars dependency removed** - Eliminated polars crate to reduce binary size and dependencies
+
 ## [0.7.0] - 2026-01-12
 
 ### Added
