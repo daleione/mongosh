@@ -7,6 +7,8 @@
 //! - Mode selection (interactive vs script execution)
 //! - Connection string parsing
 
+mod completion;
+
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -160,6 +162,10 @@ pub enum Commands {
         /// Validate configuration file
         #[arg(long)]
         validate: bool,
+
+        /// List all configured datasources
+        #[arg(long)]
+        list_datasources: bool,
     },
 }
 
@@ -495,8 +501,12 @@ impl CliInterface {
                 self.generate_completion(shell)?;
                 Ok(true)
             }
-            Some(Commands::Config { show, validate }) => {
-                self.handle_config_command(*show, *validate)?;
+            Some(Commands::Config {
+                show,
+                validate,
+                list_datasources,
+            }) => {
+                self.handle_config_command(*show, *validate, *list_datasources)?;
                 Ok(true)
             }
             None => Ok(false),
@@ -516,8 +526,8 @@ impl CliInterface {
     ///
     /// # Returns
     /// * `Result<()>` - Success or error
-    fn generate_completion(&self, _shell: &str) -> Result<()> {
-        todo!("Generate shell completion script for specified shell")
+    fn generate_completion(&self, shell: &str) -> Result<()> {
+        completion::generate_completion(shell)
     }
 
     /// Handle config subcommand
@@ -525,16 +535,26 @@ impl CliInterface {
     /// # Arguments
     /// * `show` - Whether to show configuration
     /// * `validate` - Whether to validate configuration
+    /// * `list_datasources` - Whether to list all datasources
     ///
     /// # Returns
     /// * `Result<()>` - Success or error
-    fn handle_config_command(&self, show: bool, validate: bool) -> Result<()> {
+    fn handle_config_command(
+        &self,
+        show: bool,
+        validate: bool,
+        list_datasources: bool,
+    ) -> Result<()> {
         if validate {
             self.validate_config_file()?;
         }
 
         if show {
             self.show_config()?;
+        }
+
+        if list_datasources {
+            self.list_datasources()?;
         }
 
         Ok(())
@@ -562,6 +582,32 @@ impl CliInterface {
     }
 
     /// Show effective configuration
+    /// List all configured datasources
+    ///
+    /// # Returns
+    /// * `Result<()>` - Success or error
+    fn list_datasources(&self) -> Result<()> {
+        let datasources = self.config.connection.list_datasources();
+
+        if datasources.is_empty() {
+            println!("No datasources configured.");
+            println!("\nTo add datasources, edit your config file:");
+            if let Some(path) = self.config_path() {
+                println!("  {}", path.display());
+            }
+            println!("\nExample:");
+            println!("  [connection.datasources]");
+            println!("  local = \"mongodb://localhost:27017\"");
+            println!("  prod = \"mongodb://prod.example.com:27017\"");
+        } else {
+            for name in datasources {
+                println!("{}", name);
+            }
+        }
+
+        Ok(())
+    }
+
     fn show_config(&self) -> Result<()> {
         let path = self.get_config_path();
         println!("Configuration file: {}", path.display());
