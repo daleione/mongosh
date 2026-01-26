@@ -39,6 +39,12 @@ pub enum MongoTokenKind {
     Colon,
     /// Semicolon
     Semicolon,
+    /// Minus (unary or binary)
+    Minus,
+    /// Plus (unary or binary)
+    Plus,
+    /// Exclamation (logical NOT)
+    Bang,
     /// String literal
     String(String),
     /// Number literal
@@ -147,6 +153,18 @@ impl MongoLexer {
             ';' => {
                 self.advance();
                 MongoToken::new(MongoTokenKind::Semicolon, start..self.pos)
+            }
+            '-' => {
+                self.advance();
+                MongoToken::new(MongoTokenKind::Minus, start..self.pos)
+            }
+            '+' => {
+                self.advance();
+                MongoToken::new(MongoTokenKind::Plus, start..self.pos)
+            }
+            '!' => {
+                self.advance();
+                MongoToken::new(MongoTokenKind::Bang, start..self.pos)
             }
             '\'' | '"' => self.scan_string(ch, start),
             '0'..='9' => self.scan_number(start),

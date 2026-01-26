@@ -1,17 +1,19 @@
 //! Command and query parser for mongosh
 //!
 //! This module provides a comprehensive parsing system for MongoDB shell commands
-//! using Oxc AST parser for JavaScript syntax and simple string matching for
-//! shell-specific commands.
+//! using a custom AST parser for MongoDB shell syntax and SQL query support.
 //!
 //! # Architecture
 //!
 //! The parser is split into multiple focused modules:
 //! - `command`: Command type definitions (Command, QueryCommand, AdminCommand, etc.)
-//! - `ast_parser`: Main AST-based parser orchestrator
-//! - `db_operation`: Parser for db.collection.operation() syntax
-//! - `expr_converter`: JavaScript expression to BSON converter
+//! - `mongo_ast`: MongoDB shell AST structures
+//! - `mongo_lexer`: MongoDB shell lexer for tokenization
+//! - `mongo_parser`: MongoDB shell parser
+//! - `mongo_operation`: Parser for db.collection.operation() syntax
+//! - `mongo_converter`: MongoDB expression to BSON converter
 //! - `shell_commands`: Parser for shell commands (show, use, help, etc.)
+//! - `sql_*`: SQL query parsing modules
 //!
 //! # Examples
 //!
@@ -31,9 +33,11 @@
 //! ```
 
 mod command;
-mod db_operation;
-mod expr_converter;
+mod mongo_ast;
+mod mongo_converter;
 mod mongo_lexer;
+mod mongo_operation;
+mod mongo_parser;
 mod shell_commands;
 mod sql_context;
 mod sql_expr;
@@ -131,7 +135,7 @@ impl Parser {
 
         // Check if it's a database operation (db.collection.operation)
         if trimmed.starts_with("db.") {
-            return db_operation::DbOperationParser::parse(trimmed);
+            return mongo_operation::DbOperationParser::parse(trimmed);
         }
 
         // If nothing matches, it's an invalid command

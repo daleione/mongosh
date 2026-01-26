@@ -33,6 +33,7 @@ pub enum Command {
 
 /// Query-related commands (CRUD operations)
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 pub enum QueryCommand {
     /// Find documents matching a filter
     Find {
@@ -152,6 +153,7 @@ pub enum QueryCommand {
 
 /// Administrative commands
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 pub enum AdminCommand {
     /// Show all databases
     ShowDatabases,
