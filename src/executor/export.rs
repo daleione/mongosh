@@ -3,7 +3,6 @@
 //! This module provides functionality to export MongoDB query results to various formats:
 //! - JSON Lines (jsonl): One JSON document per line
 //! - CSV: Comma-separated values
-//! - Excel: Excel spreadsheet (.xlsx)
 
 use std::fs::File;
 use std::io::{BufWriter, Write};
@@ -11,8 +10,6 @@ use std::path::Path;
 
 use chrono::Local;
 use mongodb::bson::Document;
-use polars::prelude::*;
-use polars_excel_writer::PolarsExcelWriter;
 use tracing::{debug, info};
 
 use crate::error::{ExecutionError, Result};
@@ -72,7 +69,6 @@ impl ExportExecutor {
         let message = match format {
             ExportFormat::JsonL => Self::export_jsonl(docs, &filename)?,
             ExportFormat::Csv => Self::export_csv(docs, &filename)?,
-            ExportFormat::Excel => Self::export_excel(docs, &filename)?,
         };
 
         info!("Exported {} documents", count);
@@ -109,67 +105,9 @@ impl ExportExecutor {
         ))
     }
 
-    /// Export documents to CSV format using polars
+    /// Export documents to CSV format
     fn export_csv(docs: &[Document], path: &str) -> Result<String> {
         debug!("Exporting {} documents to CSV format", docs.len());
-
-        let df = Self::documents_to_dataframe(docs)?;
-
-        // Write to file
-        let mut file = File::create(path).map_err(|e| {
-            ExecutionError::InvalidOperation(format!("Failed to create file: {}", e))
-        })?;
-
-        CsvWriter::new(&mut file)
-            .include_header(true)
-            .with_separator(b',')
-            .finish(&mut df.clone())
-            .map_err(|e| ExecutionError::InvalidOperation(format!("Failed to write CSV: {}", e)))?;
-
-        Ok(format!(
-            "Exported {} documents to {} (csv)",
-            docs.len(),
-            path
-        ))
-    }
-
-    /// Export documents to Excel format using polars-excel-writer
-    fn export_excel(docs: &[Document], path: &str) -> Result<String> {
-        debug!("Exporting {} documents to Excel format", docs.len());
-
-        // Convert documents to DataFrame
-        let df = Self::documents_to_dataframe(docs)?;
-
-        // Use polars-excel-writer to create real Excel file
-        let mut excel_writer = PolarsExcelWriter::new();
-
-        excel_writer.set_autofit(true);
-
-        // Write the dataframe to Excel
-        excel_writer.write_dataframe(&df).map_err(|e| {
-            ExecutionError::InvalidOperation(format!("Failed to write DataFrame: {}", e))
-        })?;
-
-        // Save the file to disk
-        excel_writer.save(path).map_err(|e| {
-            ExecutionError::InvalidOperation(format!("Failed to save Excel file: {}", e))
-        })?;
-
-        Ok(format!(
-            "Exported {} documents to {} (excel)",
-            docs.len(),
-            path
-        ))
-    }
-
-    /// Convert MongoDB documents to Polars DataFrame
-    fn documents_to_dataframe(docs: &[Document]) -> Result<DataFrame> {
-        if docs.is_empty() {
-            return Err(ExecutionError::InvalidOperation(
-                "Cannot create DataFrame from empty document list".to_string(),
-            )
-            .into());
-        }
 
         // Collect all unique field names
         let mut field_names = std::collections::BTreeSet::new();
@@ -181,22 +119,48 @@ impl ExportExecutor {
 
         let field_names: Vec<String> = field_names.into_iter().collect();
 
-        let mut series_vec = Vec::new();
+        let file = File::create(path).map_err(|e| {
+            ExecutionError::InvalidOperation(format!("Failed to create file: {}", e))
+        })?;
+        let mut writer = BufWriter::new(file);
+
         let converter = PlainTextConverter::new();
 
-        for field_name in &field_names {
-            let values: Vec<String> = docs
+        // Write header
+        let header = field_names.join(",");
+        writeln!(writer, "{}", header).map_err(|e| {
+            ExecutionError::InvalidOperation(format!("Failed to write header: {}", e))
+        })?;
+
+        // Write data rows
+        for doc in docs {
+            let values: Vec<String> = field_names
                 .iter()
-                .map(|doc| converter.convert_optional(doc.get(field_name)))
+                .map(|field_name| {
+                    let value = converter.convert_optional(doc.get(field_name));
+                    // Escape CSV values if they contain comma, quote, or newline
+                    if value.contains(',') || value.contains('"') || value.contains('\n') {
+                        format!("\"{}\"", value.replace('"', "\"\""))
+                    } else {
+                        value
+                    }
+                })
                 .collect();
 
-            let series = Series::new(PlSmallStr::from(field_name.as_str()), values);
-            series_vec.push(series.into());
+            writeln!(writer, "{}", values.join(",")).map_err(|e| {
+                ExecutionError::InvalidOperation(format!("Failed to write row: {}", e))
+            })?;
         }
 
-        DataFrame::new(series_vec).map_err(|e| {
-            ExecutionError::InvalidOperation(format!("Failed to create DataFrame: {}", e)).into()
-        })
+        writer.flush().map_err(|e| {
+            ExecutionError::InvalidOperation(format!("Failed to flush file: {}", e))
+        })?;
+
+        Ok(format!(
+            "Exported {} documents to {} (csv)",
+            docs.len(),
+            path
+        ))
     }
 
     /// Get suggested filename for format
@@ -205,7 +169,6 @@ impl ExportExecutor {
         match format {
             ExportFormat::JsonL => format!("export-{}.jsonl", timestamp),
             ExportFormat::Csv => format!("export-{}.csv", timestamp),
-            ExportFormat::Excel => format!("export-{}.xlsx", timestamp),
         }
     }
 
@@ -230,7 +193,6 @@ impl ExportExecutor {
             let expected = match format {
                 ExportFormat::JsonL => "jsonl",
                 ExportFormat::Csv => "csv",
-                ExportFormat::Excel => "xlsx",
             };
 
             if ext_str != expected && ext_str != "json" {
@@ -250,19 +212,19 @@ mod tests {
     use super::*;
     use mongodb::bson::doc;
 
-
     #[test]
-    fn test_documents_to_dataframe() {
+    fn test_export_csv() {
+        use std::fs;
         let docs = vec![
             doc! { "name": "Alice", "age": 30 },
             doc! { "name": "Bob", "age": 25 },
         ];
 
-        let df = ExportExecutor::documents_to_dataframe(&docs).unwrap();
-        assert_eq!(df.height(), 2);
-        let name_col = PlSmallStr::from_str("name");
-        let age_col = PlSmallStr::from_str("age");
-        assert!(df.get_column_names().contains(&&name_col));
-        assert!(df.get_column_names().contains(&&age_col));
+        let path = "test_export.csv";
+        let result = ExportExecutor::export_csv(&docs, path);
+        assert!(result.is_ok());
+
+        // Clean up
+        let _ = fs::remove_file(path);
     }
 }

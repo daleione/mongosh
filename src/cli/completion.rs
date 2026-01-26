@@ -5,10 +5,8 @@
 
 use clap::CommandFactory;
 use clap_complete::{Shell, generate};
-use std::io;
 
 use crate::cli::CliArgs;
-use crate::config::Config;
 use crate::error::{ConfigError, MongoshError, Result};
 
 /// Generate shell completion script

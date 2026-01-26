@@ -151,7 +151,7 @@ impl Parser {
             "export" => {
                 if parts.len() < 2 {
                     return Err(ParseError::InvalidCommand(
-                        "export requires a format (jsonl, csv, or excel)".to_string(),
+                        "export requires a format (jsonl or csv)".to_string(),
                     )
                     .into());
                 }
@@ -159,10 +159,9 @@ impl Parser {
                 let format = match parts[1] {
                     "jsonl" | "json" => ExportFormat::JsonL,
                     "csv" => ExportFormat::Csv,
-                    "excel" | "xlsx" => ExportFormat::Excel,
                     other => {
                         return Err(ParseError::InvalidCommand(format!(
-                            "Unknown export format: {}. Use jsonl, csv, or excel",
+                            "Unknown export format: {}. Use jsonl or csv",
                             other
                         ))
                         .into());

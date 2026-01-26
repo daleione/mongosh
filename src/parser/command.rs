@@ -223,8 +223,6 @@ pub enum ExportFormat {
     JsonL,
     /// CSV format
     Csv,
-    /// Excel format (.xlsx)
-    Excel,
 }
 
 /// Utility commands
