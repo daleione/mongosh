@@ -61,11 +61,11 @@ impl SqlParser {
         match result {
             ParseResult::Ok(select) => parser.ast_to_command(select),
             ParseResult::Partial(select, expected) => {
-                // Try to convert partial parse if it has enough information
-                if select.table.is_some() {
-                    parser.ast_to_command(select)
-                } else {
-                    Err(crate::error::ParseError::InvalidCommand(format!(
+                // For partial parse, reject execution if:
+                // 1. No table name
+                // 2. Expected operators (incomplete WHERE expression)
+                if select.table.is_none() {
+                    return Err(crate::error::ParseError::InvalidCommand(format!(
                         "Incomplete SQL query. Expected: {}",
                         expected
                             .iter()
@@ -73,9 +73,20 @@ impl SqlParser {
                             .collect::<Vec<_>>()
                             .join(", ")
                     ))
-                    .into())
+                    .into());
                 }
-            }
+
+                // Check if we have an incomplete WHERE clause (expecting operator)
+                if expected.contains(&Expected::Operator) {
+                    return Err(crate::error::ParseError::InvalidCommand(
+                        "Incomplete WHERE clause. Expected comparison operator (=, !=, >, <, >=, <=)".to_string()
+                    )
+                    .into());
+                }
+
+                // Try to convert partial parse if it has enough information
+                parser.ast_to_command(select)
+            },
             ParseResult::Error(err) => Err(crate::error::ParseError::InvalidCommand(format!(
                 "SQL parse error: {}",
                 err.message
@@ -880,7 +891,46 @@ impl SqlParser {
             self.expected = vec![Expected::Operator];
             return ParseResult::Partial(left, self.expected.clone());
         } else {
-            return ParseResult::Ok(left);
+            // Check if the next token is a valid token that can follow a WHERE expression
+            // Valid tokens: AND, OR, GROUP, ORDER, LIMIT, OFFSET, EOF
+            if let Some(kind) = self.peek_kind() {
+                match kind {
+                    TokenKind::And | TokenKind::Or => {
+                        // Logical operators - this is actually invalid SQL (field without comparison)
+                        // but we'll let the expression parser handle it for better error messages
+                        return ParseResult::Error(ParseError::new(
+                            format!("Expected comparison operator (=, !=, >, <, >=, <=) after field name, found {:?}", kind),
+                            self.current_position()..self.current_position(),
+                        ));
+                    }
+                    TokenKind::GroupBy | TokenKind::OrderBy | TokenKind::Limit | TokenKind::Offset => {
+                        // Next clause - field without comparison is invalid
+                        return ParseResult::Error(ParseError::new(
+                            "Expected comparison operator (=, !=, >, <, >=, <=) after field name".to_string(),
+                            self.current_position()..self.current_position(),
+                        ));
+                    }
+                    TokenKind::Semicolon => {
+                        // Semicolon in the middle of WHERE clause is invalid
+                        return ParseResult::Error(ParseError::new(
+                            "Unexpected semicolon in WHERE clause. Expected comparison operator (=, !=, >, <, >=, <=)".to_string(),
+                            self.current_position()..self.current_position(),
+                        ));
+                    }
+                    _ => {
+                        // Any other token is unexpected
+                        return ParseResult::Error(ParseError::new(
+                            format!("Expected comparison operator (=, !=, >, <, >=, <=) after field name, found unexpected token"),
+                            self.current_position()..self.current_position(),
+                        ));
+                    }
+                }
+            }
+            // This shouldn't happen as we already checked is_at_eof() above
+            return ParseResult::Error(ParseError::new(
+                "Expected comparison operator after field name".to_string(),
+                self.current_position()..self.current_position(),
+            ));
         };
 
         // Parse right side (literal value or function call)
@@ -1948,5 +1998,45 @@ mod tests {
         } else {
             panic!("Expected Aggregate command for ORDER BY with array index");
         }
+    }
+
+    #[test]
+    fn test_reject_semicolon_in_where_clause() {
+        // Test that semicolon in WHERE clause is rejected
+        let result = SqlParser::parse_to_command(
+            "SELECT COUNT(*) FROM tasks WHERE user_id;2 WHERE template_id='task-123'",
+        );
+        assert!(
+            result.is_err(),
+            "Should reject semicolon in WHERE clause, but got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_reject_incomplete_where_expression() {
+        // Test that incomplete WHERE expression (field without comparison) is rejected
+        let result = SqlParser::parse_to_command(
+            "SELECT * FROM tasks WHERE user_id",
+        );
+        // This should be an error for incomplete input
+        assert!(
+            result.is_err(),
+            "Should reject incomplete WHERE expression, but got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_reject_duplicate_where_clause() {
+        // Test that duplicate WHERE clauses are rejected
+        let result = SqlParser::parse_to_command(
+            "SELECT * FROM tasks WHERE user_id = 1 WHERE template_id = 2",
+        );
+        assert!(
+            result.is_err(),
+            "Should reject duplicate WHERE clause, but got: {:?}",
+            result
+        );
     }
 }
