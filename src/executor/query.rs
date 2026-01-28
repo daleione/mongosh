@@ -344,8 +344,8 @@ impl QueryExecutor {
             collection, filter
         );
 
-        // This function only handles NEW queries - clear any previous cursor state
-        self.context.shared_state.clear_cursor_state();
+        // Clear any previous cursor state - this is a new query
+        self.context.shared_state.clear_cursor().await;
 
         // Get database and collection
         let db = self.context.get_database().await?;
@@ -381,18 +381,18 @@ impl QueryExecutor {
             debug!("Applied projection");
         }
 
-        // Execute query
+        // Execute query and create cursor
         let mut cursor = coll
-            .find(filter.clone())
+            .find(filter)
             .with_options(find_opts)
             .await
             .map_err(|e| ExecutionError::QueryFailed(e.to_string()))?;
 
-        // Collect first batch of results
+        // Fetch first batch of documents
         let mut documents = Vec::new();
-        let mut batch_count = 0;
+        let mut count = 0;
 
-        while batch_count < batch_size as usize {
+        while count < batch_size as usize {
             match cursor
                 .try_next()
                 .await
@@ -400,55 +400,32 @@ impl QueryExecutor {
             {
                 Some(doc) => {
                     documents.push(doc);
-                    batch_count += 1;
+                    count += 1;
                 }
-                None => break,
+                None => break, // No more documents
             }
         }
 
-        info!("Retrieved {} documents in first batch", batch_count);
+        info!("Retrieved {} documents in first batch", count);
 
-        // Get total count ONCE at the beginning (optimization #1)
-        // Only if: no limit, reasonable batch size, and we got results
-        let total_matched = if options.limit.is_none() && batch_count > 0 && batch_count < 100 {
-            match coll.count_documents(filter.clone()).await {
-                Ok(count) => {
-                    debug!("Total documents matched: {}", count);
-                    Some(count as usize)
-                }
-                Err(e) => {
-                    debug!("Failed to get total count: {}", e);
-                    None
-                }
-            }
-        } else {
-            None
-        };
+        // Check if there might be more documents
+        // If we got a full batch, there's likely more
+        let has_more = count == batch_size as usize;
 
-        // Determine if there are more documents (optimization #3: improved logic)
-        let has_more = self.has_more_documents(
-            batch_count,
-            batch_size as usize,
-            total_matched,
-            options.limit.map(|l| l as usize),
-        );
-
-        // Create cursor state for pagination if there are more documents
+        // If there are more documents, save the live cursor for pagination
         if has_more {
             let mut cursor_state = crate::repl::CursorState::new(
                 collection.clone(),
-                filter.clone(),
-                options.clone(),
-                total_matched,
+                cursor, // Store the LIVE cursor
+                batch_size,
             );
-            // Update with the first batch we just retrieved
-            cursor_state.update(batch_count, total_matched);
-            self.context
-                .shared_state
-                .set_cursor_state(Some(cursor_state));
+            cursor_state.update_retrieved(count);
+
+            self.context.shared_state.set_cursor(cursor_state).await;
+
             debug!(
-                "Saved cursor state for pagination with {} documents retrieved",
-                batch_count
+                "Saved live cursor for pagination with {} documents retrieved",
+                count
             );
         }
 
@@ -457,8 +434,7 @@ impl QueryExecutor {
             ResultData::DocumentsWithPagination {
                 documents,
                 has_more: true,
-                displayed: batch_count,
-                total: total_matched,
+                displayed: count,
             }
         } else {
             ResultData::Documents(documents)
@@ -469,42 +445,14 @@ impl QueryExecutor {
             data: result_data,
             stats: ExecutionStats {
                 execution_time_ms: 0, // Will be set by caller
-                documents_returned: batch_count,
+                documents_returned: count,
                 documents_affected: None,
             },
             error: None,
         })
     }
 
-    /// Helper method to determine if there are more documents to fetch
-    /// This encapsulates the has_more logic (optimization #3)
-    fn has_more_documents(
-        &self,
-        batch_count: usize,
-        batch_size: usize,
-        total_matched: Option<usize>,
-        limit: Option<usize>,
-    ) -> bool {
-        // If we got less than a full batch, definitely no more
-        if batch_count < batch_size {
-            return false;
-        }
 
-        // If we know the total, compare with what we retrieved
-        if let Some(total) = total_matched {
-            return batch_count < total;
-        }
-
-        // If there's a limit and we've reached it, no more
-        if let Some(lim) = limit {
-            if batch_count >= lim {
-                return false;
-            }
-        }
-
-        // We got a full batch and don't know the total - assume there might be more
-        true
-    }
 
     /// Execute count operation
     ///

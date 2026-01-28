@@ -1,75 +1,100 @@
-/// Cursor state for pagination
-#[derive(Debug, Clone)]
+use mongodb::Cursor;
+use mongodb::bson::Document;
+use std::time::Instant;
+use std::fmt;
+
+/// Active cursor state for pagination
+///
+/// This struct holds a live MongoDB cursor between pagination calls,
+/// eliminating the need for skip() operations and providing optimal performance.
 pub struct CursorState {
-    /// Collection name
-    pub collection: String,
-    /// Query filter
-    pub filter: mongodb::bson::Document,
-    /// Query options
-    pub options: crate::parser::FindOptions,
-    /// Number of documents already retrieved
+    /// Collection name (for display purposes)
+    pub collection_name: String,
+
+    /// Active MongoDB cursor
+    /// The cursor maintains its position on the server side
+    pub cursor: Cursor<Document>,
+
+    /// Number of documents retrieved so far
     pub documents_retrieved: usize,
-    /// Total documents matched (if known)
-    pub total_matched: Option<usize>,
-    /// Whether this is the last batch
-    pub has_more: bool,
+
+    /// Batch size for pagination
+    pub batch_size: u32,
+
+    /// Creation timestamp for timeout detection
+    pub created_at: Instant,
 }
 
 impl CursorState {
     /// Create a new cursor state
     ///
     /// # Arguments
-    /// * `collection` - Collection name
-    /// * `filter` - Query filter
-    /// * `options` - Query options
-    /// * `total_matched` - Total matched documents if known
+    /// * `collection_name` - Name of the collection being queried
+    /// * `cursor` - Active MongoDB cursor
+    /// * `batch_size` - Number of documents to fetch per batch
     ///
     /// # Returns
-    /// * `Self` - New cursor state
+    /// * `Self` - New cursor state instance
     pub fn new(
-        collection: String,
-        filter: mongodb::bson::Document,
-        options: crate::parser::FindOptions,
-        total_matched: Option<usize>,
+        collection_name: String,
+        cursor: Cursor<Document>,
+        batch_size: u32,
     ) -> Self {
         Self {
-            collection,
-            filter,
-            options,
+            collection_name,
+            cursor,
             documents_retrieved: 0,
-            total_matched,
-            has_more: true,
+            batch_size,
+            created_at: Instant::now(),
         }
     }
 
-    /// Get the skip value for next batch
+    /// Check if the cursor has expired (10 minute timeout)
+    ///
+    /// MongoDB cursors timeout after 10 minutes of inactivity by default.
+    /// This matches that behavior.
     ///
     /// # Returns
-    /// * `u64` - Number of documents to skip
-    pub fn get_skip(&self) -> u64 {
-        self.documents_retrieved as u64
+    /// * `bool` - True if cursor has expired
+    pub fn is_expired(&self) -> bool {
+        self.created_at.elapsed().as_secs() > 600
     }
 
-    /// Update after retrieving documents
+    /// Update the count of retrieved documents
     ///
     /// # Arguments
-    /// * `batch_size` - Number of documents retrieved in this batch
-    /// * `total_matched` - Updated total matched documents (if known)
-    pub fn update(&mut self, batch_size: usize, total_matched: Option<usize>) {
-        self.documents_retrieved += batch_size;
-        if let Some(total) = total_matched {
-            self.total_matched = Some(total);
-            // has_more will be set by the caller based on cursor state
-        }
-        // Note: has_more field should be set by the caller after this update
-        // based on whether the cursor actually has more documents
+    /// * `count` - Number of documents retrieved in this batch
+    pub fn update_retrieved(&mut self, count: usize) {
+        self.documents_retrieved += count;
     }
 
-    /// Check if there are more documents
+    /// Get the collection name
     ///
     /// # Returns
-    /// * `bool` - True if more documents are available
-    pub fn has_more(&self) -> bool {
-        self.has_more
+    /// * `&str` - Reference to the collection name
+    #[allow(dead_code)]
+    pub fn collection_name(&self) -> &str {
+        &self.collection_name
+    }
+
+    /// Get the number of documents retrieved so far
+    ///
+    /// # Returns
+    /// * `usize` - Total number of documents retrieved
+    pub fn documents_retrieved(&self) -> usize {
+        self.documents_retrieved
+    }
+}
+
+/// Manual Debug implementation since Cursor doesn't implement Debug
+impl fmt::Debug for CursorState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CursorState")
+            .field("collection_name", &self.collection_name)
+            .field("documents_retrieved", &self.documents_retrieved)
+            .field("batch_size", &self.batch_size)
+            .field("created_at", &self.created_at)
+            .field("cursor", &"<MongoDB Cursor>")
+            .finish()
     }
 }

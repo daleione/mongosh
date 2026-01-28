@@ -21,53 +21,17 @@ fn test_shared_state_database_change() {
     assert_eq!(state.get_database(), "newdb");
 }
 
-#[test]
-fn test_cursor_state_creation() {
-    let cursor = CursorState::new(
-        "test_collection".to_string(),
-        mongodb::bson::doc! {},
-        crate::parser::FindOptions::default(),
-        Some(100),
-    );
+// Note: CursorState tests that require a real MongoDB cursor have been removed.
+// Integration tests with actual MongoDB connection should test cursor functionality.
 
-    assert_eq!(cursor.collection, "test_collection");
-    assert_eq!(cursor.documents_retrieved, 0);
-    assert_eq!(cursor.total_matched, Some(100));
-    assert!(cursor.has_more);
-}
-
-#[test]
-fn test_cursor_state_update() {
-    let mut cursor = CursorState::new(
-        "test_collection".to_string(),
-        mongodb::bson::doc! {},
-        crate::parser::FindOptions::default(),
-        Some(100),
-    );
-
-    cursor.update(20, Some(100));
-    assert_eq!(cursor.documents_retrieved, 20);
-    assert_eq!(cursor.get_skip(), 20);
-}
-
-#[test]
-fn test_shared_state_cursor_operations() {
+#[tokio::test]
+async fn test_shared_state_cursor_operations() {
     let state = SharedState::new("test".to_string());
 
-    assert!(!state.has_active_cursor());
-    assert!(state.get_cursor_state().is_none());
+    // Initially no cursor
+    assert!(!state.has_cursor().await);
 
-    let cursor = CursorState::new(
-        "test_collection".to_string(),
-        mongodb::bson::doc! {},
-        crate::parser::FindOptions::default(),
-        None,
-    );
-
-    state.set_cursor_state(Some(cursor));
-    assert!(state.has_active_cursor());
-    assert!(state.get_cursor_state().is_some());
-
-    state.clear_cursor_state();
-    assert!(!state.has_active_cursor());
+    // Clear cursor (should not panic even when no cursor exists)
+    state.clear_cursor().await;
+    assert!(!state.has_cursor().await);
 }

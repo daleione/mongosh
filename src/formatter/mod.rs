@@ -157,7 +157,6 @@ impl Formatter {
                 documents,
                 has_more,
                 displayed: _,
-                total,
             } => {
                 if documents.is_empty() {
                     return Ok("[]".to_string());
@@ -182,14 +181,9 @@ impl Formatter {
                 }
                 result.push(']');
 
-                // Add pagination info like MongoDB shell
+                // Add pagination info
                 if *has_more {
-                    let _total_info = if let Some(total) = total {
-                        format!(" of {}", total)
-                    } else {
-                        String::new()
-                    };
-                    result.push_str(&format!("\nType \"it\" for more\n"));
+                    result.push_str("\nType \"it\" for more\n");
                 }
                 Ok(result)
             }
@@ -264,18 +258,12 @@ impl Formatter {
                 documents,
                 has_more,
                 displayed,
-                total,
             } => {
                 let base = format!("{} document(s) returned", documents.len());
                 if *has_more {
-                    let total_info = if let Some(total) = total {
-                        format!(" of {}", total)
-                    } else {
-                        String::new()
-                    };
                     Ok(format!(
-                        "{} ({} displayed{}, more available)",
-                        base, displayed, total_info
+                        "{} ({} displayed, more available)",
+                        base, displayed
                     ))
                 } else {
                     Ok(base)

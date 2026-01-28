@@ -8,6 +8,7 @@
 
 use crate::error::{MongoshError, Result};
 use crate::parser::UtilityCommand;
+use tracing::info;
 
 use super::context::ExecutionContext;
 use super::result::{ExecutionResult, ExecutionStats, ResultData};
@@ -51,117 +52,77 @@ impl UtilityExecutor {
 
     /// Execute iteration command (get next batch from cursor)
     ///
-    /// This is a SEPARATE operation from execute_find - it handles pagination
-    /// by directly querying the database with skip parameter.
+    /// Continues fetching documents from the live cursor stored in shared state.
+    /// This eliminates the need for skip() operations and provides optimal performance.
     async fn execute_iterate(&self) -> Result<ExecutionResult> {
         use futures::stream::TryStreamExt;
-        use mongodb::Collection;
-        use mongodb::bson::Document;
 
-        // Check if there's an active cursor
-        if !self.context.shared_state.has_active_cursor() {
-            return Ok(ExecutionResult {
-                success: false,
-                data: ResultData::Message("No more documents to iterate".to_string()),
-                stats: ExecutionStats::default(),
-                error: Some("No active cursor".to_string()),
-            });
+        // Get mutable access to cursor state
+        let mut cursor_guard = self.context.shared_state.get_cursor_mut().await;
+
+        // Check if cursor exists
+        let cursor_state = cursor_guard.as_mut().ok_or_else(|| {
+            MongoshError::Generic("No active cursor. Please run a query first.".to_string())
+        })?;
+
+        // Check if cursor has expired (10 minute timeout)
+        if cursor_state.is_expired() {
+            // Clear the expired cursor
+            *cursor_guard = None;
+            drop(cursor_guard);
+            self.context.shared_state.clear_cursor().await;
+
+            return Err(MongoshError::Generic(
+                "Cursor has expired (10 minute timeout). Please re-run your query.".to_string(),
+            )
+            .into());
         }
 
-        // Get and remove cursor state (we'll update it)
-        let mut cursor_state: crate::repl::CursorState = self
-            .context
-            .shared_state
-            .get_cursor_state()
-            .ok_or_else(|| MongoshError::Generic("Cursor state not found".to_string()))?;
+        let batch_size = cursor_state.batch_size;
 
-        // Check if there are more documents
-        if !cursor_state.has_more() {
-            return Ok(ExecutionResult {
-                success: false,
-                data: ResultData::Message("No more documents".to_string()),
-                stats: ExecutionStats::default(),
-                error: Some("Cursor has no more documents".to_string()),
-            });
-        }
-
-        // Get database and collection
-        let db = self.context.get_database().await?;
-        let coll: Collection<Document> = db.collection(&cursor_state.collection);
-
-        // Build find options with skip for pagination
-        let mut find_opts = mongodb::options::FindOptions::default();
-
-        // Get batch size from cursor state
-        let batch_size = cursor_state.options.batch_size.unwrap_or(20);
-        find_opts.batch_size = Some(batch_size);
-
-        // Skip the documents we've already retrieved
-        find_opts.skip = Some(cursor_state.get_skip());
-
-        // Apply limit if set
-        if let Some(limit) = cursor_state.options.limit {
-            find_opts.limit = Some(limit);
-        }
-
-        // Apply sort and projection from original query
-        if let Some(ref sort) = cursor_state.options.sort {
-            find_opts.sort = Some(sort.clone());
-        }
-
-        if let Some(ref projection) = cursor_state.options.projection {
-            find_opts.projection = Some(projection.clone());
-        }
-
-        // Execute query to get next batch
-        let mut cursor = coll
-            .find(cursor_state.filter.clone())
-            .with_options(find_opts)
-            .await
-            .map_err(|e| crate::error::ExecutionError::QueryFailed(e.to_string()))?;
-
-        // Fetch next batch
+        // Fetch next batch from the live cursor (no skip needed!)
         let mut documents = Vec::new();
-        let mut batch_count = 0;
+        let mut count = 0;
 
-        while batch_count < batch_size as usize {
-            match cursor
-                .try_next()
-                .await
-                .map_err(|e| crate::error::ExecutionError::CursorError(e.to_string()))?
-            {
-                Some(doc) => {
+        while count < batch_size as usize {
+            match cursor_state.cursor.try_next().await {
+                Ok(Some(doc)) => {
                     documents.push(doc);
-                    batch_count += 1;
+                    count += 1;
                 }
-                None => break,
+                Ok(None) => {
+                    // Cursor exhausted - no more documents
+                    break;
+                }
+                Err(e) => {
+                    // Cursor error - clear state and return error
+                    *cursor_guard = None;
+                    drop(cursor_guard);
+                    self.context.shared_state.clear_cursor().await;
+
+                    return Err(
+                        crate::error::ExecutionError::CursorError(e.to_string()).into()
+                    );
+                }
             }
         }
 
-        // Update cursor state with new batch
-        cursor_state.update(batch_count, cursor_state.total_matched);
+        info!("Retrieved {} documents from cursor", count);
 
-        // Determine if there are still more documents
-        let has_more = if let Some(total) = cursor_state.total_matched {
-            // Use the total we got from the first query
-            cursor_state.documents_retrieved < total
-        } else {
-            // Heuristic: if we got a full batch, there might be more
-            batch_count >= batch_size as usize
-        };
+        // Update documents retrieved count
+        cursor_state.update_retrieved(count);
 
-        cursor_state.has_more = has_more;
+        // Check if there might be more documents
+        let has_more = count == batch_size as usize;
 
-        // Save total_matched before moving cursor_state
-        let total_matched = cursor_state.total_matched;
+        // If no more documents, clear the cursor
+        if !has_more {
+            let total_retrieved = cursor_state.documents_retrieved();
+            *cursor_guard = None;
+            drop(cursor_guard);
+            self.context.shared_state.clear_cursor().await;
 
-        // Save updated cursor state (or clear if no more)
-        if has_more {
-            self.context
-                .shared_state
-                .set_cursor_state(Some(cursor_state));
-        } else {
-            self.context.shared_state.clear_cursor_state();
+            info!("Cursor exhausted. Total {} documents retrieved.", total_retrieved);
         }
 
         // Create result
@@ -169,8 +130,7 @@ impl UtilityExecutor {
             ResultData::DocumentsWithPagination {
                 documents,
                 has_more: true,
-                displayed: batch_count,
-                total: total_matched,
+                displayed: count,
             }
         } else {
             ResultData::Documents(documents)
@@ -181,7 +141,7 @@ impl UtilityExecutor {
             data: result_data,
             stats: ExecutionStats {
                 execution_time_ms: 0,
-                documents_returned: batch_count,
+                documents_returned: count,
                 documents_affected: None,
             },
             error: None,

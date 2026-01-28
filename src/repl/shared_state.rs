@@ -1,4 +1,5 @@
 use std::sync::{Arc, RwLock};
+use tokio::sync::Mutex;
 
 use crate::config::{DisplayConfig, OutputFormat};
 use crate::repl::CursorState;
@@ -22,7 +23,8 @@ pub struct SharedState {
     pub color_enabled: Arc<RwLock<bool>>,
 
     /// Cursor state for pagination
-    pub cursor_state: Arc<RwLock<Option<CursorState>>>,
+    /// Uses Mutex because cursor needs mutable access and is not Clone
+    cursor_state: Arc<Mutex<Option<CursorState>>>,
 }
 
 impl SharedState {
@@ -44,32 +46,44 @@ impl SharedState {
             server_version: Arc::new(RwLock::new(None)),
             output_format: Arc::new(RwLock::new(display_config.format)),
             color_enabled: Arc::new(RwLock::new(display_config.color_output)),
-            cursor_state: Arc::new(RwLock::new(None)),
+            cursor_state: Arc::new(Mutex::new(None)),
         }
     }
 
-    /// Get current cursor state (cloned).
-    pub fn get_cursor_state(&self) -> Option<CursorState> {
-        let cursor_state = self.cursor_state.read().unwrap();
-        cursor_state.clone()
+    /// Set active cursor state
+    ///
+    /// # Arguments
+    /// * `state` - The cursor state to store
+    pub async fn set_cursor(&self, state: CursorState) {
+        let mut cursor = self.cursor_state.lock().await;
+        *cursor = Some(state);
     }
 
-    /// Set cursor state.
-    pub fn set_cursor_state(&self, state: Option<CursorState>) {
-        let mut cursor_state = self.cursor_state.write().unwrap();
-        *cursor_state = state;
+    /// Get mutable reference to cursor state
+    ///
+    /// Returns a lock guard that can be used to access and mutate the cursor.
+    /// The cursor remains locked until the guard is dropped.
+    ///
+    /// # Returns
+    /// * `MutexGuard` - Guard providing access to the cursor state
+    pub async fn get_cursor_mut(&self) -> tokio::sync::MutexGuard<'_, Option<CursorState>> {
+        self.cursor_state.lock().await
     }
 
-    /// Clear cursor state.
-    pub fn clear_cursor_state(&self) {
-        let mut cursor_state = self.cursor_state.write().unwrap();
-        *cursor_state = None;
+    /// Clear the active cursor
+    pub async fn clear_cursor(&self) {
+        let mut cursor = self.cursor_state.lock().await;
+        *cursor = None;
     }
 
-    /// Check if there's an active cursor.
-    pub fn has_active_cursor(&self) -> bool {
-        let cursor_state = self.cursor_state.read().unwrap();
-        cursor_state.is_some()
+    /// Check if there's an active cursor
+    ///
+    /// # Returns
+    /// * `bool` - True if a cursor is active
+    #[allow(dead_code)]
+    pub async fn has_cursor(&self) -> bool {
+        let cursor = self.cursor_state.lock().await;
+        cursor.is_some()
     }
 
     /// Get current database name.

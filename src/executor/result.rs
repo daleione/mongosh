@@ -34,7 +34,6 @@ pub enum ResultData {
         documents: Vec<Document>,
         has_more: bool,
         displayed: usize,
-        total: Option<usize>,
     },
 
     /// Single document
