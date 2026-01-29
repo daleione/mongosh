@@ -83,6 +83,12 @@ impl JsonFormatter {
             ResultData::Delete { deleted } => Ok(format!("{{ \"deletedCount\": {} }}", deleted)),
             ResultData::Count(count) => Ok(format!("{}", count)),
             ResultData::None => Ok("null".to_string()),
+            ResultData::Stream(_) => {
+                // Streaming queries should not reach formatter - they're consumed by export
+                Err(crate::error::ExecutionError::InvalidOperation(
+                    "Cannot format streaming query - use export instead".to_string()
+                ).into())
+            }
         }
     }
 

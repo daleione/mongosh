@@ -6,6 +6,30 @@
 use mongodb::bson::Document;
 use serde::{Deserialize, Serialize};
 
+/// Query execution mode
+///
+/// Determines how query results are returned and processed.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum QueryMode {
+    /// Interactive mode with pagination
+    ///
+    /// Returns results in batches and saves cursor state for pagination.
+    /// Used for normal interactive queries in the shell.
+    Interactive { batch_size: u32 },
+
+    /// Streaming mode for export
+    ///
+    /// Returns a streaming interface for processing all results.
+    /// Used for export operations to avoid loading all data into memory.
+    Streaming { batch_size: u32 },
+}
+
+impl Default for QueryMode {
+    fn default() -> Self {
+        QueryMode::Interactive { batch_size: 20 }
+    }
+}
+
 /// Represents a parsed command
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {

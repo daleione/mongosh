@@ -14,10 +14,11 @@ use mongodb::options::{AggregateOptions as MongoAggregateOptions, Hint};
 use tracing::{debug, info};
 
 use crate::error::{ExecutionError, MongoshError, Result};
-use crate::parser::{AggregateOptions, FindAndModifyOptions, FindOptions, QueryCommand};
+use crate::parser::{AggregateOptions, FindAndModifyOptions, FindOptions, QueryCommand, QueryMode};
 
 use super::confirmation::confirm_query_operation;
 use super::context::ExecutionContext;
+use super::export::streaming::{AggregateStreamingQuery, FindStreamingQuery};
 use super::result::{ExecutionResult, ExecutionStats, ResultData};
 
 /// Query executor for CRUD operations
@@ -39,13 +40,7 @@ impl QueryExecutor {
     }
 
     /// Execute a query command
-    ///
-    /// # Arguments
-    /// * `cmd` - Query command to execute
-    ///
-    /// # Returns
-    /// * `Result<ExecutionResult>` - Execution result or error
-    pub async fn execute(&self, cmd: QueryCommand) -> Result<ExecutionResult> {
+    pub async fn execute(&self, cmd: QueryCommand, mode: QueryMode) -> Result<ExecutionResult> {
         // Check if operation requires confirmation
         if !confirm_query_operation(&cmd)? {
             return Ok(ExecutionResult {
@@ -63,7 +58,7 @@ impl QueryExecutor {
                 collection,
                 filter,
                 options,
-            } => self.execute_find(collection, filter, options).await,
+            } => self.execute_find(collection, filter, options, mode).await,
 
             QueryCommand::FindOne {
                 collection,
@@ -112,7 +107,7 @@ impl QueryExecutor {
                 collection,
                 pipeline,
                 options,
-            } => self.execute_aggregate(collection, pipeline, options).await,
+            } => self.execute_aggregate(collection, pipeline, options, mode).await,
 
             QueryCommand::EstimatedDocumentCount { collection } => {
                 self.execute_estimated_document_count(collection).await
@@ -239,33 +234,42 @@ impl QueryExecutor {
         }
     }
 
-    /// Execute find command without pagination (for exports)
-    ///
-    /// # Arguments
-    /// * `collection` - Collection name
-    /// * `filter` - Query filter
-    /// * `options` - Find options
-    ///
-    /// # Returns
-    /// * `Result<ExecutionResult>` - Query result with all documents
-    pub async fn execute_find_all(
+    /// Execute find command
+    async fn execute_find(
         &self,
         collection: String,
         filter: Document,
         options: FindOptions,
+        mode: QueryMode,
+    ) -> Result<ExecutionResult> {
+        match mode {
+            QueryMode::Interactive { batch_size } => {
+                self.execute_find_interactive(collection, filter, options, batch_size).await
+            }
+            QueryMode::Streaming { batch_size } => {
+                self.execute_find_streaming(collection, filter, options, batch_size).await
+            }
+        }
+    }
+
+    /// Execute find in streaming mode for export
+    async fn execute_find_streaming(
+        &self,
+        collection: String,
+        filter: Document,
+        options: FindOptions,
+        batch_size: u32,
     ) -> Result<ExecutionResult> {
         info!(
-            "Executing find (all results) on collection '{}' with filter: {:?}",
+            "Executing find (streaming) on collection '{}' with filter: {:?}",
             collection, filter
         );
-
-        let start = Instant::now();
 
         // Get database and collection
         let db = self.context.get_database().await?;
         let coll: Collection<Document> = db.collection(&collection);
 
-        // Build MongoDB find options without batch_size limit
+        // Build MongoDB find options
         let mut find_opts = mongodb::options::FindOptions::default();
 
         // Apply user-specified limit if any
@@ -290,54 +294,35 @@ impl QueryExecutor {
             debug!("Applied projection");
         }
 
-        // Execute query
-        let mut cursor = coll
-            .find(filter.clone())
+        // Execute query and create cursor
+        let cursor = coll
+            .find(filter)
             .with_options(find_opts)
             .await
             .map_err(|e| ExecutionError::QueryFailed(e.to_string()))?;
 
-        // Collect ALL results
-        let mut documents = Vec::new();
-        while let Some(doc) = cursor
-            .try_next()
-            .await
-            .map_err(|e| ExecutionError::CursorError(e.to_string()))?
-        {
-            documents.push(doc);
-        }
-
-        let elapsed = start.elapsed().as_millis() as u64;
-        let doc_count = documents.len();
-
-        info!("Found {} documents in {}ms", doc_count, elapsed);
+        // Create streaming query wrapper
+        let streaming_query = FindStreamingQuery::new_find(cursor, batch_size);
 
         Ok(ExecutionResult {
             success: true,
-            data: ResultData::Documents(documents),
+            data: ResultData::Stream(Box::new(streaming_query)),
             stats: ExecutionStats {
-                execution_time_ms: elapsed,
-                documents_returned: doc_count,
+                execution_time_ms: 0,
+                documents_returned: 0,
                 documents_affected: None,
             },
             error: None,
         })
     }
 
-    /// Execute find command
-    ///
-    /// # Arguments
-    /// * `collection` - Collection name
-    /// * `filter` - Query filter
-    /// * `options` - Find options
-    ///
-    /// # Returns
-    /// * `Result<ExecutionResult>` - Query result
-    async fn execute_find(
+    /// Execute find in interactive mode with pagination
+    async fn execute_find_interactive(
         &self,
         collection: String,
         filter: Document,
         options: FindOptions,
+        batch_size: u32,
     ) -> Result<ExecutionResult> {
         info!(
             "Executing find on collection '{}' with filter: {:?}",
@@ -354,8 +339,7 @@ impl QueryExecutor {
         // Build MongoDB find options
         let mut find_opts = mongodb::options::FindOptions::default();
 
-        // Determine batch size (default 20 like MongoDB shell)
-        let batch_size = options.batch_size.unwrap_or(20);
+        // Use provided batch size
         find_opts.batch_size = Some(batch_size);
         debug!("Applied batch_size: {}", batch_size);
 
@@ -724,15 +708,25 @@ impl QueryExecutor {
     }
 
     /// Execute an aggregation pipeline
-    ///
-    /// # Arguments
-    /// * `collection` - Collection name
-    /// * `pipeline` - Aggregation pipeline stages
-    /// * `options` - Aggregation options
-    ///
-    /// # Returns
-    /// * `Result<ExecutionResult>` - Execution result or error
     async fn execute_aggregate(
+        &self,
+        collection: String,
+        pipeline: Vec<Document>,
+        options: AggregateOptions,
+        mode: QueryMode,
+    ) -> Result<ExecutionResult> {
+        match mode {
+            QueryMode::Interactive { .. } => {
+                self.execute_aggregate_interactive(collection, pipeline, options).await
+            }
+            QueryMode::Streaming { batch_size } => {
+                self.execute_aggregate_streaming(collection, pipeline, options, batch_size).await
+            }
+        }
+    }
+
+    /// Execute an aggregation pipeline in interactive mode
+    async fn execute_aggregate_interactive(
         &self,
         collection: String,
         pipeline: Vec<Document>,
@@ -874,6 +868,81 @@ impl QueryExecutor {
                 execution_time_ms: 0,
                 documents_returned: 0,
                 documents_affected: Some(count),
+            },
+            error: None,
+        })
+    }
+
+    /// Execute an aggregation pipeline in streaming mode for export
+    async fn execute_aggregate_streaming(
+        &self,
+        collection: String,
+        pipeline: Vec<Document>,
+        options: AggregateOptions,
+        batch_size: u32,
+    ) -> Result<ExecutionResult> {
+        info!(
+            "Executing aggregate (streaming) on collection '{}' with {} pipeline stages",
+            collection,
+            pipeline.len()
+        );
+
+        // Get database and collection
+        let db = self.context.get_database().await?;
+        let coll: Collection<Document> = db.collection(&collection);
+
+        // Build MongoDB aggregate options
+        let mut agg_opts = MongoAggregateOptions::default();
+
+        if options.allow_disk_use {
+            agg_opts.allow_disk_use = Some(true);
+        }
+
+        if let Some(batch_size_opt) = options.batch_size {
+            agg_opts.batch_size = Some(batch_size_opt);
+        }
+
+        if let Some(max_time) = options.max_time_ms {
+            agg_opts.max_time = Some(std::time::Duration::from_millis(max_time));
+        }
+
+        if let Some(collation_doc) = options.collation {
+            match bson::from_document(collation_doc) {
+                Ok(collation) => {
+                    agg_opts.collation = Some(collation);
+                    debug!("Applied collation");
+                }
+                Err(e) => {
+                    return Err(ExecutionError::QueryFailed(format!(
+                        "Invalid collation: {}",
+                        e
+                    ))
+                    .into());
+                }
+            }
+        }
+
+        if let Some(ref hint_doc) = options.hint {
+            agg_opts.hint = Some(Hint::Keys(hint_doc.clone()));
+        }
+
+        // Execute aggregation
+        let cursor = coll
+            .aggregate(pipeline)
+            .with_options(agg_opts)
+            .await
+            .map_err(|e| ExecutionError::QueryFailed(e.to_string()))?;
+
+        // Create streaming query wrapper
+        let streaming_query = AggregateStreamingQuery::new_aggregate(cursor, batch_size);
+
+        Ok(ExecutionResult {
+            success: true,
+            data: ResultData::Stream(Box::new(streaming_query)),
+            stats: ExecutionStats {
+                execution_time_ms: 0,
+                documents_returned: 0,
+                documents_affected: None,
             },
             error: None,
         })

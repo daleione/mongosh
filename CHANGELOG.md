@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- **Streaming export architecture** - Complete rewrite of export functionality with streaming support
+- **Export progress tracking** - Real-time visual feedback during export operations
+- **Export cancellation support** - Ability to cancel long-running export operations
+
 ## [0.8.0] - 2026-01-26
 
 ### Added

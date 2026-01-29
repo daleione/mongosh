@@ -13,12 +13,12 @@ use tabled::{builder::Builder, settings::Style};
 use tracing::debug;
 
 use crate::config::{Config, OutputFormat};
-use crate::error::Result;
-use crate::parser::{Command, ConfigCommand, PipeCommand, QueryCommand};
+use crate::error::{ExecutionError, Result};
+use crate::parser::{Command, ConfigCommand, ExportFormat, PipeCommand, QueryMode};
 
 use super::admin::AdminExecutor;
 use super::context::ExecutionContext;
-use super::export::ExportExecutor;
+use super::export::{CsvWriter, ExportCoordinator, FormatWriter, JsonLWriter, ProgressTracker};
 use super::query::QueryExecutor;
 use super::result::{ExecutionResult, ExecutionStats, ResultData};
 use super::utility::UtilityExecutor;
@@ -56,7 +56,7 @@ impl CommandRouter {
         let result = match command {
             Command::Query(query_cmd) => {
                 let executor = QueryExecutor::new(self.context.clone()).await?;
-                executor.execute(query_cmd).await
+                executor.execute(query_cmd, QueryMode::default()).await
             }
             Command::Admin(admin_cmd) => {
                 let executor = AdminExecutor::new(self.context.clone()).await?;
@@ -98,42 +98,101 @@ impl CommandRouter {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecutionResult>> + Send + '_>>
     {
         Box::pin(async move {
-            // For export operations with Find queries, execute without pagination
-            let result = if let (Command::Query(query_cmd), PipeCommand::Export { .. }) =
-                (&base_cmd, &pipe_cmd)
-            {
-                if let QueryCommand::Find {
-                    collection,
-                    filter,
-                    options,
-                } = query_cmd
-                {
-                    // Execute find without pagination limit
-                    let executor = QueryExecutor::new(self.context.clone()).await?;
-                    executor
-                        .execute_find_all(collection.clone(), filter.clone(), options.clone())
-                        .await?
-                } else {
-                    // For non-find query commands, execute normally
-                    self.route(base_cmd).await?
-                }
-            } else {
-                // For non-export operations, execute normally with pagination
-                self.route(base_cmd).await?
-            };
-
-            // Apply the pipe operation
             match pipe_cmd {
                 PipeCommand::Export { format, file } => {
-                    let message = ExportExecutor::export(&result.data, &format, file.as_deref())?;
+                    // Execute query in streaming mode for export
+                    let result = if let Command::Query(query_cmd) = base_cmd {
+                        let executor = QueryExecutor::new(self.context.clone()).await?;
+                        executor.execute(query_cmd, QueryMode::Streaming { batch_size: 1000 }).await?
+                    } else {
+                        return Err(ExecutionError::InvalidOperation(
+                            "Export can only be used with query commands".to_string()
+                        ).into());
+                    };
+
+                    // Extract streaming query from result
+                    let query = match result.data {
+                        ResultData::Stream(stream) => stream,
+                        _ => {
+                            return Err(ExecutionError::InvalidOperation(
+                                "Query did not return streaming data for export".to_string()
+                            ).into());
+                        }
+                    };
+
+                    // Generate filename if not provided
+                    let filename = file.unwrap_or_else(|| {
+                        use chrono::Local;
+                        let timestamp = Local::now().format("%Y-%m-%d_%H-%M-%S");
+                        match format {
+                            ExportFormat::JsonL => format!("export-{}.jsonl", timestamp),
+                            ExportFormat::Csv => format!("export-{}.csv", timestamp),
+                        }
+                    });
+
+                    // Create format writer
+                    let writer: Box<dyn FormatWriter> = match format {
+                        ExportFormat::JsonL => Box::new(JsonLWriter::new(&filename).await?),
+                        ExportFormat::Csv => Box::new(CsvWriter::new(&filename).await?),
+                    };
+
+                    // Create progress tracker
+                    let tracker = ProgressTracker::new(None, true);
+
+                    // Create cancellation token and setup Ctrl+C handler
+                    let cancel_token = tokio_util::sync::CancellationToken::new();
+                    let cancel_token_clone = cancel_token.clone();
+
+                    // Setup Ctrl+C handler for cancellation
+                    tokio::spawn(async move {
+                        match tokio::signal::ctrl_c().await {
+                            Ok(()) => {
+                                cancel_token_clone.cancel();
+                            }
+                            Err(err) => {
+                                eprintln!("Failed to listen for Ctrl+C: {}", err);
+                            }
+                        }
+                    });
+
+                    // Create coordinator and execute export with cancellation support
+                    let mut coordinator = ExportCoordinator::new(query, tracker, writer)
+                        .with_cancellation(cancel_token);
+                    let export_result = coordinator.execute().await?;
+
+                    // Format result message based on cancellation status
+                    let message = if export_result.cancelled {
+                        format!(
+                            "Export cancelled. Exported {} documents to {} ({:.2} MB) before cancellation",
+                            export_result.documents_exported,
+                            filename,
+                            export_result.file_size_bytes as f64 / 1024.0 / 1024.0
+                        )
+                    } else {
+                        format!(
+                            "Exported {} documents to {} ({:.2} MB) in {:.2}s",
+                            export_result.documents_exported,
+                            filename,
+                            export_result.file_size_bytes as f64 / 1024.0 / 1024.0,
+                            export_result.elapsed_ms as f64 / 1000.0
+                        )
+                    };
+
                     Ok(ExecutionResult {
                         success: true,
                         data: ResultData::Message(message),
-                        stats: result.stats,
+                        stats: ExecutionStats {
+                            execution_time_ms: export_result.elapsed_ms,
+                            documents_returned: 0,
+                            documents_affected: Some(export_result.documents_exported),
+                        },
                         error: None,
                     })
                 }
                 PipeCommand::Explain => {
+                    // Execute base command normally for explain
+                    let result = self.route(base_cmd).await?;
+
                     // For explain, we would need to execute the query with explain flag
                     // This is a placeholder for now
                     Ok(ExecutionResult {

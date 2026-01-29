@@ -216,6 +216,12 @@ impl Formatter {
             ResultData::List(items) => Ok(items.join("\n")),
             ResultData::Count(count) => Ok(format!("{}", count)),
             ResultData::None => Ok("null".to_string()),
+            ResultData::Stream(_) => {
+                // Streaming queries should not reach formatter - they're consumed by export
+                Err(crate::error::ExecutionError::InvalidOperation(
+                    "Cannot format streaming query - use export instead".to_string()
+                ).into())
+            }
         }
     }
 
@@ -282,6 +288,12 @@ impl Formatter {
             ResultData::List(items) => Ok(format!("{} item(s)", items.len())),
             ResultData::Count(count) => Ok(format!("Count: {}", count)),
             ResultData::None => Ok("null".to_string()),
+            ResultData::Stream(_) => {
+                // Streaming queries should not reach formatter - they're consumed by export
+                Err(crate::error::ExecutionError::InvalidOperation(
+                    "Cannot format streaming query - use export instead".to_string()
+                ).into())
+            }
         }
     }
 
