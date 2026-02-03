@@ -13,8 +13,8 @@ use super::mongo_ast::*;
 use super::mongo_parser::MongoParser;
 use crate::error::{ParseError, Result};
 use crate::parser::command::{
-    AdminCommand, AggregateOptions, Command, FindAndModifyOptions, FindOptions, QueryCommand,
-    UpdateOptions,
+    AdminCommand, AggregateOptions, Command, ExplainVerbosity, FindAndModifyOptions, FindOptions,
+    QueryCommand, UpdateOptions,
 };
 use crate::parser::mongo_converter::ExpressionConverter;
 
@@ -60,6 +60,7 @@ impl DbOperationParser {
 
         // Route to specific operation parser based on operation name
         match operation.as_str() {
+            "explain" => Self::parse_explain(&collection, args, call),
             "find" => Self::parse_find(&collection, args),
             "findOne" => Self::parse_find_one(&collection, args),
             "insertOne" => Self::parse_insert_one(&collection, args),
@@ -98,8 +99,14 @@ impl DbOperationParser {
         // Check if the callee is a member expression AND its object is a call (chained call)
         if let Expr::Member(member) = call.callee.as_ref() {
             // Check if the object is also a call - this indicates chaining
-            if let Expr::Call(_) = member.object.as_ref() {
-                // This is a chained call like: db.users.find().limit(10)
+            if let Expr::Call(_inner_call) = member.object.as_ref() {
+                // Check if this chain contains an explain call anywhere
+                if Self::contains_explain_in_chain(call)? {
+                    // This is an explain chain: db.collection.explain().queryMethod()...
+                    return Self::try_parse_explain_chain(call);
+                }
+
+                // This is a regular chained call like: db.users.find().limit(10)
                 // Collect all chain methods
                 let (base_expr, chain_methods) = Self::collect_chain_methods(call)?;
 
@@ -117,6 +124,211 @@ impl DbOperationParser {
         }
 
         Ok(None)
+    }
+
+    /// Check if a call chain contains an explain call
+    fn contains_explain_in_chain(call: &CallExpr) -> Result<bool> {
+        let mut current = call;
+
+        loop {
+            // Check if current call is explain
+            if let Expr::Member(member) = current.callee.as_ref() {
+                if let MemberProperty::Ident(name) = &member.property {
+                    if name == "explain" {
+                        return Ok(true);
+                    }
+                }
+
+                // Move to the object if it's a call
+                if let Expr::Call(inner_call) = member.object.as_ref() {
+                    current = inner_call;
+                    continue;
+                }
+            }
+            break;
+        }
+
+        Ok(false)
+    }
+
+    /// Try to parse an explain chain: db.collection.explain(verbosity).queryMethod().chainMethods()
+    fn try_parse_explain_chain(call: &CallExpr) -> Result<Option<(Command, Vec<ChainMethod>)>> {
+        // First, collect all chain methods and find the base explain().queryMethod() call
+        let (base_call, chain_methods) = Self::collect_chain_until_explain(call)?;
+
+        // base_call should be the query method after explain
+        // e.g., for db.users.explain().find().limit(10), base_call is find()
+
+        if let Expr::Member(member) = base_call.callee.as_ref() {
+            if let Expr::Call(explain_call) = member.object.as_ref() {
+                // explain_call is the db.collection.explain() call
+
+                if let Expr::Member(explain_member) = explain_call.callee.as_ref() {
+                    if let MemberProperty::Ident(op_name) = &explain_member.property {
+                        if op_name != "explain" {
+                            return Ok(None);
+                        }
+
+                        // Get collection name
+                        if let Expr::Member(coll_member) = explain_member.object.as_ref() {
+                            let collection = match &coll_member.property {
+                                MemberProperty::Ident(name) => name.clone(),
+                                MemberProperty::Computed(expr) => {
+                                    if let Expr::String(s) = expr {
+                                        s.clone()
+                                    } else {
+                                        return Ok(None);
+                                    }
+                                }
+                            };
+
+                            // Verify db prefix
+                            if let Expr::Ident(id) = coll_member.object.as_ref() {
+                                if id != "db" {
+                                    return Ok(None);
+                                }
+                            } else {
+                                return Ok(None);
+                            }
+
+                            // Parse verbosity from explain() arguments
+                            let verbosity = ExplainVerbosity::parse_from_args(&explain_call.arguments)?;
+
+                            // Get query method name
+                            let query_method = match &member.property {
+                                MemberProperty::Ident(name) => name.clone(),
+                                _ => return Ok(None),
+                            };
+
+                            // Parse the query method
+                            let query_cmd = match query_method.as_str() {
+                                "find" => {
+                                    let filter = Self::get_doc_arg(&base_call.arguments, 0)?;
+                                    let projection = Self::get_projection(&base_call.arguments, 1)?;
+                                    QueryCommand::Find {
+                                        collection: collection.clone(),
+                                        filter,
+                                        options: FindOptions {
+                                            projection,
+                                            ..Default::default()
+                                        },
+                                    }
+                                }
+                                "findOne" => {
+                                    let filter = Self::get_doc_arg(&base_call.arguments, 0)?;
+                                    let projection = Self::get_projection(&base_call.arguments, 1)?;
+                                    QueryCommand::FindOne {
+                                        collection: collection.clone(),
+                                        filter,
+                                        options: FindOptions {
+                                            projection,
+                                            ..Default::default()
+                                        },
+                                    }
+                                }
+                                "aggregate" => {
+                                    let pipeline = Self::get_doc_array_arg(&base_call.arguments, 0)?;
+                                    let options = Self::get_aggregate_options(&base_call.arguments, 1)?;
+                                    QueryCommand::Aggregate {
+                                        collection: collection.clone(),
+                                        pipeline,
+                                        options,
+                                    }
+                                }
+                                "count" | "countDocuments" => {
+                                    let filter = Self::get_doc_arg(&base_call.arguments, 0)?;
+                                    QueryCommand::CountDocuments {
+                                        collection: collection.clone(),
+                                        filter,
+                                    }
+                                }
+                                "distinct" => {
+                                    let field = if let Some(Expr::String(s)) = base_call.arguments.first() {
+                                        s.clone()
+                                    } else {
+                                        return Err(ParseError::InvalidQuery(
+                                            "distinct() requires a field name as first argument".to_string(),
+                                        )
+                                        .into());
+                                    };
+                                    let filter = if base_call.arguments.len() > 1 {
+                                        Some(Self::get_doc_arg(&base_call.arguments, 1)?)
+                                    } else {
+                                        None
+                                    };
+                                    QueryCommand::Distinct {
+                                        collection: collection.clone(),
+                                        field,
+                                        filter,
+                                    }
+                                }
+                                _ => {
+                                    return Err(ParseError::InvalidCommand(format!(
+                                        "explain() does not support method: {}",
+                                        query_method
+                                    ))
+                                    .into());
+                                }
+                            };
+
+                            // Create the Explain command
+                            let explain_cmd = QueryCommand::Explain {
+                                collection,
+                                verbosity,
+                                query: Box::new(query_cmd),
+                            };
+
+                            return Ok(Some((Command::Query(explain_cmd), chain_methods)));
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Collect chain methods until we reach the explain call
+    /// Returns (base_call_after_explain, chain_methods)
+    /// For db.users.explain().find().limit(10), returns (find(), [limit])
+    fn collect_chain_until_explain(call: &CallExpr) -> Result<(CallExpr, Vec<ChainMethod>)> {
+        let mut chain_methods = Vec::new();
+        let mut current_call = call.clone();
+
+        // Walk up the chain until we find explain
+        loop {
+            if let Expr::Member(member) = current_call.callee.as_ref() {
+                // Check if the object is explain()
+                if let Expr::Call(inner_call) = member.object.as_ref() {
+                    // Check if inner_call is explain
+                    if let Expr::Member(inner_member) = inner_call.callee.as_ref() {
+                        if let MemberProperty::Ident(name) = &inner_member.property {
+                            if name == "explain" {
+                                // Found explain! current_call is the query method
+                                chain_methods.reverse();
+                                return Ok((current_call, chain_methods));
+                            }
+                        }
+                    }
+
+                    // Not explain yet, this is a chain method
+                    if let MemberProperty::Ident(method_name) = &member.property {
+                        chain_methods.push(ChainMethod {
+                            name: method_name.clone(),
+                            args: current_call.arguments.clone(),
+                        });
+                        current_call = inner_call.as_ref().clone();
+                        continue;
+                    }
+                }
+            }
+            break;
+        }
+
+        Err(ParseError::InvalidCommand(
+            "Could not find explain() in chain".to_string(),
+        )
+        .into())
     }
 
     /// Collect chain methods from a chained call expression
@@ -217,6 +429,19 @@ impl DbOperationParser {
                     collection,
                     pipeline,
                     options: updated_options,
+                })
+            }
+            QueryCommand::Explain {
+                collection,
+                verbosity,
+                query,
+            } => {
+                // Apply chain method to the inner query
+                let updated_query = Self::apply_chain_to_query(*query, method)?;
+                Ok(QueryCommand::Explain {
+                    collection,
+                    verbosity,
+                    query: Box::new(updated_query),
                 })
             }
             _ => Err(ParseError::InvalidCommand(format!(
@@ -586,6 +811,43 @@ impl DbOperationParser {
     }
 
     // Specific operation parsers
+
+    /// Parse explain operation: db.collection.explain(verbosity).queryMethod()
+    /// This expects a chained call where explain() is followed by a query method
+    fn parse_explain(_collection: &str, args: &[Expr], _call: &CallExpr) -> Result<Command> {
+        // Parse verbosity argument (optional, defaults to "queryPlanner")
+        let _verbosity = if args.is_empty() {
+            ExplainVerbosity::default()
+        } else if let Some(Expr::String(verb_str)) = args.first() {
+            ExplainVerbosity::from_str(verb_str)?
+        } else if let Some(Expr::Boolean(b)) = args.first() {
+            // Handle boolean for backwards compatibility
+            if *b {
+                ExplainVerbosity::AllPlansExecution
+            } else {
+                ExplainVerbosity::QueryPlanner
+            }
+        } else {
+            return Err(ParseError::InvalidCommand(
+                "explain() expects a string verbosity argument or no argument".to_string(),
+            )
+            .into());
+        };
+
+        // Now we need to look for the chained method call
+        // The structure should be: db.collection.explain().find() or similar
+        // We need to check if this explain() call has a chained method after it
+
+        // This is tricky because we're currently inside the explain() call
+        // We need to be called differently to handle the chain
+        // Let's check if there's a parent call that has explain as its callee object
+
+        // For now, return an error with helpful message
+        Err(ParseError::InvalidCommand(
+            "explain() must be followed by a query method like find(), aggregate(), etc.\nExample: db.collection.explain().find({})".to_string(),
+        )
+        .into())
+    }
 
     /// Parse find operation: db.collection.find(filter, projection)
     fn parse_find(collection: &str, args: &[Expr]) -> Result<Command> {

@@ -6,6 +6,8 @@
 use mongodb::bson::Document;
 use serde::{Deserialize, Serialize};
 
+use crate::error::ParseError;
+
 /// Query execution mode
 ///
 /// Determines how query results are returned and processed.
@@ -173,6 +175,97 @@ pub enum QueryCommand {
         operations: Vec<Document>,
         ordered: bool,
     },
+
+    /// Explain query execution plan
+    Explain {
+        collection: String,
+        verbosity: ExplainVerbosity,
+        query: Box<QueryCommand>,
+    },
+}
+
+/// Explain verbosity modes
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExplainVerbosity {
+    /// Query planner information only (default)
+    QueryPlanner,
+    /// Query planner and execution statistics
+    ExecutionStats,
+    /// All plans execution information
+    AllPlansExecution,
+}
+
+impl ExplainVerbosity {
+    /// Verbosity mode constants
+    pub const QUERY_PLANNER: &'static str = "queryPlanner";
+    pub const EXECUTION_STATS: &'static str = "executionStats";
+    pub const ALL_PLANS_EXECUTION: &'static str = "allPlansExecution";
+
+    /// Backwards compatibility constants
+    pub const COMPAT_TRUE: &'static str = "true";
+    pub const COMPAT_FALSE: &'static str = "false";
+
+    /// Parse verbosity from string
+    pub fn from_str(s: &str) -> Result<Self, ParseError> {
+        match s {
+            Self::QUERY_PLANNER => Ok(ExplainVerbosity::QueryPlanner),
+            Self::EXECUTION_STATS => Ok(ExplainVerbosity::ExecutionStats),
+            Self::ALL_PLANS_EXECUTION => Ok(ExplainVerbosity::AllPlansExecution),
+            Self::COMPAT_TRUE => Ok(ExplainVerbosity::AllPlansExecution), // backwards compatibility
+            Self::COMPAT_FALSE => Ok(ExplainVerbosity::QueryPlanner), // backwards compatibility
+            _ => Err(ParseError::InvalidCommand(format!(
+                "Invalid explain verbosity: '{}'. Valid options are: '{}', '{}', '{}' (or boolean true/false for compatibility)",
+                s, Self::QUERY_PLANNER, Self::EXECUTION_STATS, Self::ALL_PLANS_EXECUTION
+            ))),
+        }
+    }
+
+    /// Parse verbosity from boolean (backwards compatibility)
+    pub fn from_bool(value: bool) -> Self {
+        if value {
+            ExplainVerbosity::AllPlansExecution
+        } else {
+            ExplainVerbosity::QueryPlanner
+        }
+    }
+
+    /// Convert to MongoDB command string
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ExplainVerbosity::QueryPlanner => Self::QUERY_PLANNER,
+            ExplainVerbosity::ExecutionStats => Self::EXECUTION_STATS,
+            ExplainVerbosity::AllPlansExecution => Self::ALL_PLANS_EXECUTION,
+        }
+    }
+
+    /// Validate explain arguments and parse verbosity
+    pub fn parse_from_args(args: &[crate::parser::mongo_ast::Expr]) -> Result<Self, ParseError> {
+        use crate::parser::mongo_ast::Expr;
+
+        if args.is_empty() {
+            return Ok(Self::default());
+        }
+
+        if args.len() > 1 {
+            return Err(ParseError::InvalidCommand(
+                format!("explain() expects at most 1 argument, got {}", args.len())
+            ));
+        }
+
+        match args.first().unwrap() {
+            Expr::String(verb_str) => Self::from_str(verb_str),
+            Expr::Boolean(b) => Ok(Self::from_bool(*b)),
+            _ => Err(ParseError::InvalidCommand(
+                "explain() expects a string verbosity ('queryPlanner', 'executionStats', 'allPlansExecution') or boolean".to_string()
+            )),
+        }
+    }
+}
+
+impl Default for ExplainVerbosity {
+    fn default() -> Self {
+        ExplainVerbosity::QueryPlanner
+    }
 }
 
 /// Administrative commands
