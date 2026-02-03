@@ -184,6 +184,44 @@ pub enum QueryCommand {
     },
 }
 
+impl QueryCommand {
+    /// Get the collection name for this query command
+    pub fn collection(&self) -> &str {
+        match self {
+            QueryCommand::Find { collection, .. }
+            | QueryCommand::FindOne { collection, .. }
+            | QueryCommand::InsertOne { collection, .. }
+            | QueryCommand::InsertMany { collection, .. }
+            | QueryCommand::UpdateOne { collection, .. }
+            | QueryCommand::UpdateMany { collection, .. }
+            | QueryCommand::ReplaceOne { collection, .. }
+            | QueryCommand::DeleteOne { collection, .. }
+            | QueryCommand::DeleteMany { collection, .. }
+            | QueryCommand::Aggregate { collection, .. }
+            | QueryCommand::CountDocuments { collection, .. }
+            | QueryCommand::EstimatedDocumentCount { collection }
+            | QueryCommand::FindOneAndDelete { collection, .. }
+            | QueryCommand::FindOneAndUpdate { collection, .. }
+            | QueryCommand::FindOneAndReplace { collection, .. }
+            | QueryCommand::Distinct { collection, .. }
+            | QueryCommand::BulkWrite { collection, .. }
+            | QueryCommand::Explain { collection, .. } => collection,
+        }
+    }
+
+    /// Check if this query command supports explain
+    pub fn supports_explain(&self) -> bool {
+        matches!(
+            self,
+            QueryCommand::Find { .. }
+                | QueryCommand::FindOne { .. }
+                | QueryCommand::Aggregate { .. }
+                | QueryCommand::CountDocuments { .. }
+                | QueryCommand::Distinct { .. }
+        )
+    }
+}
+
 /// Explain verbosity modes
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExplainVerbosity {

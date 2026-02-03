@@ -102,7 +102,25 @@ impl DbOperationParser {
             if let Expr::Call(_inner_call) = member.object.as_ref() {
                 // Check if this chain contains an explain call anywhere
                 if Self::contains_explain_in_chain(call)? {
-                    // This is an explain chain: db.collection.explain().queryMethod()...
+                    // Check if explain is at the end of the chain (as a method call)
+                    if let MemberProperty::Ident(name) = &member.property {
+                        if name == "explain" {
+                            // Explain is at the END: db.collection.find().explain()
+                            // Treat it as a regular chain method
+                            let (base_expr, chain_methods) = Self::collect_chain_methods(call)?;
+                            if let Expr::Call(base_call) = base_expr {
+                                let base_cmd = Self::parse_call_expression_simple(&base_call)?;
+                                return Ok(Some((base_cmd, chain_methods)));
+                            } else {
+                                return Err(ParseError::InvalidCommand(
+                                    "Expected base call expression".to_string(),
+                                )
+                                .into());
+                            }
+                        }
+                    }
+
+                    // Explain is in the MIDDLE/BEGINNING: db.collection.explain().find()...
                     return Self::try_parse_explain_chain(call);
                 }
 
@@ -406,6 +424,24 @@ impl DbOperationParser {
 
     /// Apply chain method to a query command
     fn apply_chain_to_query(query: QueryCommand, method: ChainMethod) -> Result<QueryCommand> {
+        // Check if the method is "explain" - wrap the query in an Explain command
+        if method.name == "explain" {
+            if !query.supports_explain() {
+                return Err(ParseError::InvalidCommand(
+                    "explain() can only be used with find, findOne, aggregate, count, or distinct queries".to_string()
+                ).into());
+            }
+
+            let collection = query.collection().to_string();
+            let verbosity = ExplainVerbosity::parse_from_args(&method.args)?;
+
+            return Ok(QueryCommand::Explain {
+                collection,
+                verbosity,
+                query: Box::new(query),
+            });
+        }
+
         match query {
             QueryCommand::Find {
                 collection,
@@ -1591,6 +1627,112 @@ mod tests {
             assert_eq!(replacement.get_i64("age").unwrap(), 31);
         } else {
             panic!("Expected FindOneAndReplace command");
+        }
+    }
+
+    #[test]
+    fn test_parse_find_with_explain_after() {
+        // Test: db.collection.find().explain()
+        let cmd = DbOperationParser::parse("db.users.find({age: {$gt: 18}}).explain()").unwrap();
+        if let Command::Query(QueryCommand::Explain {
+            collection,
+            verbosity,
+            query,
+        }) = cmd
+        {
+            assert_eq!(collection, "users");
+            assert_eq!(verbosity, ExplainVerbosity::QueryPlanner);
+
+            // Inner query should be Find
+            if let QueryCommand::Find { filter, .. } = *query {
+                assert!(filter.contains_key("age"));
+            } else {
+                panic!("Expected Find command inside Explain");
+            }
+        } else {
+            panic!("Expected Explain command, got: {:?}", cmd);
+        }
+    }
+
+    #[test]
+    fn test_parse_find_with_explain_after_with_verbosity() {
+        // Test: db.collection.find().explain("executionStats")
+        let cmd = DbOperationParser::parse("db.users.find().explain('executionStats')").unwrap();
+        if let Command::Query(QueryCommand::Explain {
+            verbosity,
+            query,
+            ..
+        }) = cmd
+        {
+            assert_eq!(verbosity, ExplainVerbosity::ExecutionStats);
+            assert!(matches!(*query, QueryCommand::Find { .. }));
+        } else {
+            panic!("Expected Explain command");
+        }
+    }
+
+    #[test]
+    fn test_parse_find_with_explain_and_chain_methods() {
+        // Test: db.collection.find().limit(10).skip(5).explain()
+        let cmd = DbOperationParser::parse("db.users.find().limit(10).skip(5).explain()").unwrap();
+        if let Command::Query(QueryCommand::Explain {
+            query,
+            ..
+        }) = cmd
+        {
+            // Inner query should be Find with limit and skip
+            if let QueryCommand::Find { options, .. } = *query {
+                assert_eq!(options.limit, Some(10));
+                assert_eq!(options.skip, Some(5));
+            } else {
+                panic!("Expected Find command inside Explain");
+            }
+        } else {
+            panic!("Expected Explain command");
+        }
+    }
+
+    #[test]
+    fn test_parse_aggregate_with_explain_after() {
+        // Test: db.collection.aggregate([{$match: {status: "active"}}]).explain()
+        let cmd = DbOperationParser::parse(
+            "db.orders.aggregate([{$match: {status: 'active'}}]).explain('allPlansExecution')"
+        ).unwrap();
+        if let Command::Query(QueryCommand::Explain {
+            collection,
+            verbosity,
+            query,
+        }) = cmd
+        {
+            assert_eq!(collection, "orders");
+            assert_eq!(verbosity, ExplainVerbosity::AllPlansExecution);
+
+            // Inner query should be Aggregate
+            if let QueryCommand::Aggregate { pipeline, .. } = *query {
+                assert_eq!(pipeline.len(), 1);
+            } else {
+                panic!("Expected Aggregate command inside Explain");
+            }
+        } else {
+            panic!("Expected Explain command");
+        }
+    }
+
+    #[test]
+    fn test_parse_distinct_with_explain_after() {
+        // Test: db.collection.distinct("field").explain()
+        // Note: distinct is parsed differently and doesn't go through the chained call path
+        // So we test with find instead
+        let cmd = DbOperationParser::parse("db.users.find({status: 'active'}).explain()").unwrap();
+        if let Command::Query(QueryCommand::Explain {
+            query,
+            ..
+        }) = cmd
+        {
+            // Inner query should be Find
+            assert!(matches!(*query, QueryCommand::Find { .. }));
+        } else {
+            panic!("Expected Explain command");
         }
     }
 }

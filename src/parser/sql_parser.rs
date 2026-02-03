@@ -1283,17 +1283,13 @@ impl SqlParser {
 
         match cmd {
             Command::Query(query_cmd) => {
-                // Extract collection name from the query command
-                let collection = match &query_cmd {
-                    QueryCommand::Find { collection, .. } => collection.clone(),
-                    QueryCommand::Aggregate { collection, .. } => collection.clone(),
-                    QueryCommand::CountDocuments { collection, .. } => collection.clone(),
-                    _ => {
-                        return Err(crate::error::ParseError::InvalidCommand(
-                            "EXPLAIN can only be used with SELECT queries".to_string()
-                        ).into());
-                    }
-                };
+                if !query_cmd.supports_explain() {
+                    return Err(crate::error::ParseError::InvalidCommand(
+                        "EXPLAIN can only be used with SELECT queries".to_string()
+                    ).into());
+                }
+
+                let collection = query_cmd.collection().to_string();
 
                 Ok(Command::Query(QueryCommand::Explain {
                     collection,
