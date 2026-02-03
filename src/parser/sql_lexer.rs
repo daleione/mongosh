@@ -56,6 +56,7 @@ pub enum TokenKind {
     False,
     Group,
     Order,
+    Explain,
 
     // Identifiers and Literals
     Ident(String),
@@ -323,6 +324,7 @@ impl SqlLexer {
             "ALTER" => TokenKind::Alter,
             "FROM" => TokenKind::From,
             "WHERE" => TokenKind::Where,
+            "EXPLAIN" => TokenKind::Explain,
             "GROUP" => {
                 // Check for "GROUP BY"
                 let saved_pos = self.pos;

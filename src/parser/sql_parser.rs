@@ -50,16 +50,58 @@ impl SqlParser {
             || trimmed == "SELECT"
             || trimmed.starts_with("SELECT\t")
             || trimmed.starts_with("SELECT\n")
+            || trimmed.starts_with("EXPLAIN ")
+            || trimmed == "EXPLAIN"
+            || trimmed.starts_with("EXPLAIN\t")
+            || trimmed.starts_with("EXPLAIN\n")
     }
 
     /// Parse SQL and convert to Command
     pub fn parse_to_command(input: &str) -> Result<Command> {
         let tokens = SqlLexer::tokenize(input);
         let mut parser = Self::new(tokens);
+
+        // Check if this is an EXPLAIN statement
+        let is_explain = parser.peek_kind() == Some(&TokenKind::Explain);
+        let verbosity = if is_explain {
+            parser.advance(); // consume EXPLAIN
+
+            // Check for optional verbosity parameter
+            // EXPLAIN SELECT ... (default queryPlanner)
+            // EXPLAIN queryPlanner SELECT ...
+            // EXPLAIN executionStats SELECT ...
+            // EXPLAIN allPlansExecution SELECT ...
+            match parser.peek_kind() {
+                Some(TokenKind::Ident(verb_str)) => {
+                    let verb = super::command::ExplainVerbosity::from_str(&verb_str)?;
+                    parser.advance(); // consume verbosity identifier
+                    Some(verb)
+                }
+                Some(TokenKind::String(verb_str)) => {
+                    // Also support quoted strings for backwards compatibility
+                    let verb = super::command::ExplainVerbosity::from_str(&verb_str)?;
+                    parser.advance(); // consume verbosity string
+                    Some(verb)
+                }
+                _ => Some(super::command::ExplainVerbosity::QueryPlanner)
+            }
+        } else {
+            None
+        };
+
         let result = parser.parse_select_statement();
 
         match result {
-            ParseResult::Ok(select) => parser.ast_to_command(select),
+            ParseResult::Ok(select) => {
+                let cmd = parser.ast_to_command(select)?;
+
+                // Wrap in EXPLAIN if needed
+                if let Some(verbosity) = verbosity {
+                    parser.wrap_in_explain(cmd, verbosity)
+                } else {
+                    Ok(cmd)
+                }
+            },
             ParseResult::Partial(select, expected) => {
                 // For partial parse, reject execution if:
                 // 1. No table name
@@ -85,7 +127,14 @@ impl SqlParser {
                 }
 
                 // Try to convert partial parse if it has enough information
-                parser.ast_to_command(select)
+                let cmd = parser.ast_to_command(select)?;
+
+                // Wrap in EXPLAIN if needed
+                if let Some(verbosity) = verbosity {
+                    parser.wrap_in_explain(cmd, verbosity)
+                } else {
+                    Ok(cmd)
+                }
             },
             ParseResult::Error(err) => Err(crate::error::ParseError::InvalidCommand(format!(
                 "SQL parse error: {}",
@@ -1228,6 +1277,36 @@ impl SqlParser {
     }
 
     /// Convert SQL AST to MongoDB Command
+    /// Wrap a command in EXPLAIN
+    fn wrap_in_explain(&self, cmd: Command, verbosity: super::command::ExplainVerbosity) -> Result<Command> {
+        use super::command::QueryCommand;
+
+        match cmd {
+            Command::Query(query_cmd) => {
+                // Extract collection name from the query command
+                let collection = match &query_cmd {
+                    QueryCommand::Find { collection, .. } => collection.clone(),
+                    QueryCommand::Aggregate { collection, .. } => collection.clone(),
+                    QueryCommand::CountDocuments { collection, .. } => collection.clone(),
+                    _ => {
+                        return Err(crate::error::ParseError::InvalidCommand(
+                            "EXPLAIN can only be used with SELECT queries".to_string()
+                        ).into());
+                    }
+                };
+
+                Ok(Command::Query(QueryCommand::Explain {
+                    collection,
+                    verbosity,
+                    query: Box::new(query_cmd),
+                }))
+            },
+            _ => Err(crate::error::ParseError::InvalidCommand(
+                "EXPLAIN can only be used with query commands".to_string()
+            ).into()),
+        }
+    }
+
     fn ast_to_command(&self, ast: SqlSelect) -> Result<Command> {
         let collection = ast.table.clone().ok_or_else(|| {
             crate::error::ParseError::InvalidCommand("Missing table name".to_string())
@@ -1649,6 +1728,7 @@ impl SqlParser {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::command::ExplainVerbosity;
 
     #[test]
     fn test_is_sql_command() {
@@ -2038,5 +2118,158 @@ mod tests {
             "Should reject duplicate WHERE clause, but got: {:?}",
             result
         );
+    }
+
+    #[test]
+    fn test_explain_simple_select() {
+        // Test EXPLAIN with simple SELECT
+        let result = SqlParser::parse_to_command("EXPLAIN SELECT * FROM users");
+        assert!(result.is_ok(), "Failed to parse EXPLAIN SELECT: {:?}", result);
+
+        let cmd = result.unwrap();
+        if let Command::Query(QueryCommand::Explain { collection, verbosity, query }) = cmd {
+            assert_eq!(collection, "users");
+            assert_eq!(verbosity, ExplainVerbosity::QueryPlanner);
+
+            // Inner query should be Find
+            assert!(matches!(*query, QueryCommand::Find { .. }));
+        } else {
+            panic!("Expected Explain command, got: {:?}", cmd);
+        }
+    }
+
+    #[test]
+    fn test_explain_with_where() {
+        // Test EXPLAIN with WHERE clause
+        let result = SqlParser::parse_to_command("EXPLAIN SELECT * FROM users WHERE age > 18");
+        assert!(result.is_ok(), "Failed to parse EXPLAIN with WHERE: {:?}", result);
+
+        let cmd = result.unwrap();
+        if let Command::Query(QueryCommand::Explain { collection, query, .. }) = cmd {
+            assert_eq!(collection, "users");
+
+            // Inner query should have filter
+            if let QueryCommand::Find { filter, .. } = *query {
+                assert!(!filter.is_empty(), "Filter should not be empty");
+            } else {
+                panic!("Expected Find command inside Explain");
+            }
+        } else {
+            panic!("Expected Explain command");
+        }
+    }
+
+    #[test]
+    fn test_explain_with_execution_stats() {
+        // Test EXPLAIN with executionStats verbosity (unquoted)
+        let result = SqlParser::parse_to_command("EXPLAIN executionStats SELECT * FROM users");
+        assert!(result.is_ok(), "Failed to parse EXPLAIN with executionStats: {:?}", result);
+
+        let cmd = result.unwrap();
+        if let Command::Query(QueryCommand::Explain { verbosity, .. }) = cmd {
+            assert_eq!(verbosity, ExplainVerbosity::ExecutionStats);
+        } else {
+            panic!("Expected Explain command");
+        }
+    }
+
+    #[test]
+    fn test_explain_with_all_plans_execution() {
+        // Test EXPLAIN with allPlansExecution verbosity (unquoted)
+        let result = SqlParser::parse_to_command("EXPLAIN allPlansExecution SELECT name FROM users WHERE age > 18");
+        assert!(result.is_ok(), "Failed to parse EXPLAIN with allPlansExecution: {:?}", result);
+
+        let cmd = result.unwrap();
+        if let Command::Query(QueryCommand::Explain { verbosity, .. }) = cmd {
+            assert_eq!(verbosity, ExplainVerbosity::AllPlansExecution);
+        } else {
+            panic!("Expected Explain command");
+        }
+    }
+
+    #[test]
+    fn test_explain_aggregate() {
+        // Test EXPLAIN with aggregation query (GROUP BY)
+        let result = SqlParser::parse_to_command("EXPLAIN SELECT COUNT(*) FROM users GROUP BY age");
+        assert!(result.is_ok(), "Failed to parse EXPLAIN with GROUP BY: {:?}", result);
+
+        let cmd = result.unwrap();
+        if let Command::Query(QueryCommand::Explain { query, .. }) = cmd {
+            // Inner query should be Aggregate
+            assert!(matches!(*query, QueryCommand::Aggregate { .. }));
+        } else {
+            panic!("Expected Explain command");
+        }
+    }
+
+    #[test]
+    fn test_explain_with_order_by_limit() {
+        // Test EXPLAIN with ORDER BY and LIMIT
+        let result = SqlParser::parse_to_command("EXPLAIN SELECT * FROM users ORDER BY name LIMIT 10");
+        assert!(result.is_ok(), "Failed to parse EXPLAIN with ORDER BY LIMIT: {:?}", result);
+
+        let cmd = result.unwrap();
+        if let Command::Query(QueryCommand::Explain { query, .. }) = cmd {
+            if let QueryCommand::Find { options, .. } = *query {
+                assert_eq!(options.limit, Some(10));
+                assert!(options.sort.is_some());
+            } else {
+                panic!("Expected Find command inside Explain");
+            }
+        } else {
+            panic!("Expected Explain command");
+        }
+    }
+
+    #[test]
+    fn test_explain_case_insensitive() {
+        // Test that EXPLAIN is case-insensitive
+        let result1 = SqlParser::parse_to_command("EXPLAIN SELECT * FROM users");
+        let result2 = SqlParser::parse_to_command("explain SELECT * FROM users");
+        let result3 = SqlParser::parse_to_command("Explain SELECT * FROM users");
+
+        assert!(result1.is_ok());
+        assert!(result2.is_ok());
+        assert!(result3.is_ok());
+
+        // All should produce Explain commands
+        assert!(matches!(result1.unwrap(), Command::Query(QueryCommand::Explain { .. })));
+        assert!(matches!(result2.unwrap(), Command::Query(QueryCommand::Explain { .. })));
+        assert!(matches!(result3.unwrap(), Command::Query(QueryCommand::Explain { .. })));
+    }
+
+    #[test]
+    fn test_explain_with_invalid_verbosity() {
+        // Test EXPLAIN with invalid verbosity identifier
+        let result = SqlParser::parse_to_command("EXPLAIN invalidVerbosity SELECT * FROM users");
+        assert!(
+            result.is_err(),
+            "Should reject invalid verbosity, but got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_explain_with_quoted_verbosity() {
+        // Test EXPLAIN with quoted verbosity (backwards compatibility)
+        let result = SqlParser::parse_to_command("EXPLAIN 'executionStats' SELECT * FROM users");
+        assert!(result.is_ok(), "Failed to parse EXPLAIN with quoted verbosity: {:?}", result);
+
+        let cmd = result.unwrap();
+        if let Command::Query(QueryCommand::Explain { verbosity, .. }) = cmd {
+            assert_eq!(verbosity, ExplainVerbosity::ExecutionStats);
+        } else {
+            panic!("Expected Explain command");
+        }
+    }
+
+    #[test]
+    fn test_is_sql_command_recognizes_explain() {
+        // Test that is_sql_command recognizes EXPLAIN
+        assert!(SqlParser::is_sql_command("EXPLAIN SELECT * FROM users"));
+        assert!(SqlParser::is_sql_command("explain SELECT * FROM users"));
+        assert!(SqlParser::is_sql_command("EXPLAIN executionStats SELECT * FROM users"));
+        assert!(SqlParser::is_sql_command("EXPLAIN 'executionStats' SELECT * FROM users"));
+        assert!(SqlParser::is_sql_command("EXPLAIN"));
     }
 }

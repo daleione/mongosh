@@ -42,6 +42,7 @@ impl SyntaxHighlighter {
             || trimmed.starts_with("DROP")
             || trimmed.starts_with("ALTER")
             || trimmed.starts_with("WITH")
+            || trimmed.starts_with("EXPLAIN")
         {
             return SyntaxMode::Sql;
         }
@@ -298,6 +299,7 @@ impl SqlHighlighter {
         "CREATE",
         "DROP",
         "ALTER",
+        "EXPLAIN",
         "TABLE",
         "DATABASE",
         "INDEX",
@@ -611,6 +613,14 @@ mod tests {
             SyntaxHighlighter::detect_syntax("INSERT INTO table VALUES (1)"),
             SyntaxMode::Sql
         );
+        assert_eq!(
+            SyntaxHighlighter::detect_syntax("EXPLAIN SELECT * FROM users"),
+            SyntaxMode::Sql
+        );
+        assert_eq!(
+            SyntaxHighlighter::detect_syntax("explain select * from users"),
+            SyntaxMode::Sql
+        );
     }
 
     #[test]
@@ -632,6 +642,8 @@ mod tests {
         assert!(SqlHighlighter::is_keyword("SELECT"));
         assert!(SqlHighlighter::is_keyword("select"));
         assert!(SqlHighlighter::is_keyword("WHERE"));
+        assert!(SqlHighlighter::is_keyword("EXPLAIN"));
+        assert!(SqlHighlighter::is_keyword("explain"));
         assert!(!SqlHighlighter::is_keyword("users"));
     }
 
@@ -654,6 +666,16 @@ mod tests {
         let highlighter = SyntaxHighlighter::new(SyntaxMode::Sql, true);
         let result = highlighter.highlight("SELECT * FROM users", 0);
         assert!(!result.render_simple().is_empty());
+
+        // Test EXPLAIN keyword is uppercased
+        let explain_result = highlighter.highlight("explain select * from users", 0);
+        let rendered = explain_result.render_simple();
+        println!("Input: 'explain select * from users'");
+        println!("Output: '{}'", rendered);
+        println!("Contains EXPLAIN: {}", rendered.contains("EXPLAIN"));
+        println!("Contains SELECT: {}", rendered.contains("SELECT"));
+        assert!(rendered.contains("EXPLAIN"), "Expected 'EXPLAIN' in output, got: {}", rendered);
+        assert!(rendered.contains("SELECT"), "Expected 'SELECT' in output, got: {}", rendered);
     }
 
     #[test]
