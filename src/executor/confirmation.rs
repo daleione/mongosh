@@ -32,6 +32,7 @@ pub fn is_dangerous_admin(cmd: &AdminCommand) -> bool {
             | AdminCommand::DropIndex { .. }
             | AdminCommand::DropIndexes { .. }
             | AdminCommand::DropCollection(..)
+            | AdminCommand::RenameCollection { .. }
     )
 }
 
@@ -128,6 +129,23 @@ pub fn get_admin_description(cmd: &AdminCommand) -> String {
         },
         AdminCommand::DropCollection(collection) => {
             format!("This will DROP the entire collection '{}'", collection)
+        }
+        AdminCommand::RenameCollection {
+            collection,
+            target,
+            drop_target,
+        } => {
+            if *drop_target {
+                format!(
+                    "This will RENAME collection '{}' to '{}' and DROP the target if it exists",
+                    collection, target
+                )
+            } else {
+                format!(
+                    "This will RENAME collection '{}' to '{}'",
+                    collection, target
+                )
+            }
         }
         _ => "Perform administrative operation".to_string(),
     }

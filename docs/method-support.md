@@ -79,7 +79,7 @@ This document tracks the implementation status of MongoDB Shell commands in mong
 | `db.collection.dropIndex()`              | ✅     | Removes a specified index                       |
 | `db.collection.dropIndexes()`            | ✅     | Removes all indexes on a collection             |
 | `db.collection.ensureIndex()`            | 🚫     | **Deprecated** - Use createIndex                |
-| `db.collection.explain()`                | ❌     | Returns query execution information             |
+| `db.collection.explain()`                | ✅     | Returns query execution information             |
 | `db.collection.find()`                   | ✅     | Performs a query and returns cursor             |
 | `db.collection.findAndModify()`          | ❌     | Atomically modifies and returns single document |
 | `db.collection.findOne()`                | ✅     | Performs a query and returns single document    |
@@ -94,7 +94,7 @@ This document tracks the implementation status of MongoDB Shell commands in mong
 | `db.collection.isCapped()`               | ❌     | Reports if collection is capped                 |
 | `db.collection.mapReduce()`              | 🚫     | Use aggregation pipeline instead                |
 | `db.collection.reIndex()`                | ❌     | Rebuilds all existing indexes                   |
-| `db.collection.renameCollection()`       | ❌     | Changes the name of a collection                |
+| `db.collection.renameCollection()`       | ✅     | Changes the name of a collection                |
 | `db.collection.replaceOne()`             | ✅     | Replaces a single document                      |
 | `db.collection.stats()`                  | ❌     | Reports on the state of a collection            |
 | `db.collection.storageSize()`            | ❌     | Reports total size used by collection           |

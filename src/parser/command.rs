@@ -59,7 +59,6 @@ pub enum Command {
 
 /// Query-related commands (CRUD operations)
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)]
 pub enum QueryCommand {
     /// Find documents matching a filter
     Find {
@@ -358,6 +357,13 @@ pub enum AdminCommand {
 
     /// Drop a collection
     DropCollection(String),
+
+    /// Rename a collection
+    RenameCollection {
+        collection: String,
+        target: String,
+        drop_target: bool,
+    },
 }
 
 /// Pipe commands for post-processing query results

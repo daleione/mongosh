@@ -74,6 +74,11 @@ impl AdminExecutor {
                 indexes,
             } => self.drop_indexes(collection, indexes).await,
             AdminCommand::DropCollection(collection) => self.drop_collection(collection).await,
+            AdminCommand::RenameCollection {
+                collection,
+                target,
+                drop_target,
+            } => self.rename_collection(collection, target, drop_target).await,
             _ => Err(MongoshError::NotImplemented(
                 "Admin command not yet implemented".to_string(),
             )),
@@ -520,6 +525,62 @@ impl AdminExecutor {
         Ok(ExecutionResult {
             success: true,
             data: ResultData::Message(format!("Dropped collection: {}", collection)),
+            stats: ExecutionStats::default(),
+            error: None,
+        })
+    }
+
+    /// Rename a collection
+    ///
+    /// # Arguments
+    /// * `collection` - Name of the collection to rename
+    /// * `target` - New name for the collection
+    /// * `drop_target` - Whether to drop the target collection if it exists
+    ///
+    /// # Returns
+    /// * `Result<ExecutionResult>` - Collection rename result
+    async fn rename_collection(
+        &self,
+        collection: String,
+        target: String,
+        drop_target: bool,
+    ) -> Result<ExecutionResult> {
+        use mongodb::bson::doc;
+        use tracing::debug;
+
+        debug!(
+            "Renaming collection '{}' to '{}' (dropTarget: {})",
+            collection, target, drop_target
+        );
+
+        let db = self.context.get_database().await?;
+        let db_name = db.name();
+
+        // Build the renameCollection command
+        // The command must be run on the admin database
+        let command = doc! {
+            "renameCollection": format!("{}.{}", db_name, collection),
+            "to": format!("{}.{}", db_name, target),
+            "dropTarget": drop_target,
+        };
+
+        // Execute the command on the admin database
+        let client = self.context.get_client().await?;
+        let admin_db = client.database("admin");
+
+        admin_db
+            .run_command(command)
+            .await
+            .map_err(|e| ExecutionError::QueryFailed(e.to_string()))?;
+
+        debug!("Renamed collection '{}' to '{}'", collection, target);
+
+        Ok(ExecutionResult {
+            success: true,
+            data: ResultData::Message(format!(
+                "Renamed collection '{}' to '{}'",
+                collection, target
+            )),
             stats: ExecutionStats::default(),
             error: None,
         })

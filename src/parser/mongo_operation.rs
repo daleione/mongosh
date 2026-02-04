@@ -85,6 +85,7 @@ impl DbOperationParser {
             "dropIndex" => Self::parse_drop_index(&collection, args),
             "dropIndexes" => Self::parse_drop_indexes(&collection),
             "drop" => Self::parse_drop_collection(&collection),
+            "renameCollection" => Self::parse_rename_collection(&collection, args),
             _ => Err(ParseError::InvalidCommand(format!(
                 "Unknown operation: {}. Try 'help' for available commands",
                 operation
@@ -1163,6 +1164,59 @@ impl DbOperationParser {
             collection.to_string(),
         )))
     }
+
+    /// Parse rename collection operation
+    fn parse_rename_collection(collection: &str, args: &[Expr]) -> Result<Command> {
+        // renameCollection(target, dropTarget)
+        // target is required (string)
+        // dropTarget is optional (boolean, defaults to false)
+
+        if args.is_empty() {
+            return Err(ParseError::InvalidCommand(
+                "renameCollection() requires at least 1 argument: target name".to_string(),
+            )
+            .into());
+        }
+
+        if args.len() > 2 {
+            return Err(ParseError::InvalidCommand(
+                format!("renameCollection() expects at most 2 arguments, got {}", args.len()),
+            )
+            .into());
+        }
+
+        // Parse target name (required)
+        let target = match &args[0] {
+            Expr::String(s) => s.clone(),
+            _ => {
+                return Err(ParseError::InvalidCommand(
+                    "renameCollection() target must be a string".to_string(),
+                )
+                .into());
+            }
+        };
+
+        // Parse dropTarget (optional, defaults to false)
+        let drop_target = if args.len() > 1 {
+            match &args[1] {
+                Expr::Boolean(b) => *b,
+                _ => {
+                    return Err(ParseError::InvalidCommand(
+                        "renameCollection() dropTarget must be a boolean".to_string(),
+                    )
+                    .into());
+                }
+            }
+        } else {
+            false
+        };
+
+        Ok(Command::Admin(AdminCommand::RenameCollection {
+            collection: collection.to_string(),
+            target,
+            drop_target,
+        }))
+    }
 }
 
 #[cfg(test)]
@@ -1547,6 +1601,59 @@ mod tests {
             assert_eq!(collection, "users");
         } else {
             panic!("Expected DropCollection command");
+        }
+    }
+
+    #[test]
+    fn test_parse_rename_collection() {
+        let cmd = DbOperationParser::parse("db.users.renameCollection('customers')").unwrap();
+        if let Command::Admin(AdminCommand::RenameCollection {
+            collection,
+            target,
+            drop_target,
+        }) = cmd
+        {
+            assert_eq!(collection, "users");
+            assert_eq!(target, "customers");
+            assert_eq!(drop_target, false);
+        } else {
+            panic!("Expected RenameCollection command");
+        }
+    }
+
+    #[test]
+    fn test_parse_rename_collection_with_drop_target() {
+        let cmd =
+            DbOperationParser::parse("db.users.renameCollection('customers', true)").unwrap();
+        if let Command::Admin(AdminCommand::RenameCollection {
+            collection,
+            target,
+            drop_target,
+        }) = cmd
+        {
+            assert_eq!(collection, "users");
+            assert_eq!(target, "customers");
+            assert_eq!(drop_target, true);
+        } else {
+            panic!("Expected RenameCollection command");
+        }
+    }
+
+    #[test]
+    fn test_parse_rename_collection_with_drop_target_false() {
+        let cmd =
+            DbOperationParser::parse("db.users.renameCollection('customers', false)").unwrap();
+        if let Command::Admin(AdminCommand::RenameCollection {
+            collection,
+            target,
+            drop_target,
+        }) = cmd
+        {
+            assert_eq!(collection, "users");
+            assert_eq!(target, "customers");
+            assert_eq!(drop_target, false);
+        } else {
+            panic!("Expected RenameCollection command");
         }
     }
 
