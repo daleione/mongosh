@@ -380,6 +380,12 @@ pub enum AdminCommand {
         target: String,
         drop_target: bool,
     },
+
+    /// Get collection statistics
+    CollectionStats {
+        collection: String,
+        scale: Option<i32>,
+    },
 }
 
 /// Pipe commands for post-processing query results

@@ -96,7 +96,7 @@ This document tracks the implementation status of MongoDB Shell commands in mong
 | `db.collection.reIndex()`                | ❌     | Rebuilds all existing indexes                   |
 | `db.collection.renameCollection()`       | ✅     | Changes the name of a collection                |
 | `db.collection.replaceOne()`             | ✅     | Replaces a single document                      |
-| `db.collection.stats()`                  | ❌     | Reports on the state of a collection            |
+| `db.collection.stats()`                  | ✅     | Reports on the state of a collection            |
 | `db.collection.storageSize()`            | ❌     | Reports total size used by collection           |
 | `db.collection.totalIndexSize()`         | ❌     | Reports total size used by indexes              |
 | `db.collection.totalSize()`              | ❌     | Reports total size of collection                |

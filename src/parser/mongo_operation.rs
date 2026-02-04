@@ -87,6 +87,7 @@ impl DbOperationParser {
             "dropIndexes" => Self::parse_drop_indexes(&collection),
             "drop" => Self::parse_drop_collection(&collection),
             "renameCollection" => Self::parse_rename_collection(&collection, args),
+            "stats" => Self::parse_collection_stats(&collection, args),
             _ => Err(ParseError::InvalidCommand(format!(
                 "Unknown operation: {}. Try 'help' for available commands",
                 operation
@@ -1322,6 +1323,43 @@ impl DbOperationParser {
             collation,
         }))
     }
+
+    /// Parse collection stats operation
+    fn parse_collection_stats(collection: &str, args: &[Expr]) -> Result<Command> {
+        // stats() can be called with no arguments, a scale number, or an options document
+        let scale = if args.is_empty() {
+            None
+        } else if args.len() == 1 {
+            match &args[0] {
+                // Legacy format: db.collection.stats(1024)
+                Expr::Number(n) => Some(*n as i32),
+                // New format: db.collection.stats({scale: 1024, indexDetails: true, ...})
+                Expr::Object(_) => {
+                    let options_doc = Self::get_doc_arg(args, 0)?;
+                    options_doc
+                        .get_i32("scale")
+                        .ok()
+                        .or_else(|| options_doc.get_i64("scale").ok().map(|v| v as i32))
+                }
+                _ => {
+                    return Err(ParseError::InvalidCommand(
+                        "stats() argument must be a number or options document".to_string(),
+                    )
+                    .into());
+                }
+            }
+        } else {
+            return Err(ParseError::InvalidCommand(
+                format!("stats() expects at most 1 argument, got {}", args.len()),
+            )
+            .into());
+        };
+
+        Ok(Command::Admin(AdminCommand::CollectionStats {
+            collection: collection.to_string(),
+            scale,
+        }))
+    }
 }
 
 #[cfg(test)]
@@ -2015,6 +2053,39 @@ mod tests {
             assert!(sort.is_some());
         } else {
             panic!("Expected FindAndModify command");
+        }
+    }
+
+    #[test]
+    fn test_parse_collection_stats_no_args() {
+        let cmd = DbOperationParser::parse("db.users.stats()").unwrap();
+        if let Command::Admin(AdminCommand::CollectionStats { collection, scale }) = cmd {
+            assert_eq!(collection, "users");
+            assert_eq!(scale, None);
+        } else {
+            panic!("Expected CollectionStats command");
+        }
+    }
+
+    #[test]
+    fn test_parse_collection_stats_with_scale_number() {
+        let cmd = DbOperationParser::parse("db.users.stats(1024)").unwrap();
+        if let Command::Admin(AdminCommand::CollectionStats { collection, scale }) = cmd {
+            assert_eq!(collection, "users");
+            assert_eq!(scale, Some(1024));
+        } else {
+            panic!("Expected CollectionStats command");
+        }
+    }
+
+    #[test]
+    fn test_parse_collection_stats_with_options() {
+        let cmd = DbOperationParser::parse("db.users.stats({scale: 1024})").unwrap();
+        if let Command::Admin(AdminCommand::CollectionStats { collection, scale }) = cmd {
+            assert_eq!(collection, "users");
+            assert_eq!(scale, Some(1024));
+        } else {
+            panic!("Expected CollectionStats command");
         }
     }
 }

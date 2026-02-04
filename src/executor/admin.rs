@@ -79,6 +79,9 @@ impl AdminExecutor {
                 target,
                 drop_target,
             } => self.rename_collection(collection, target, drop_target).await,
+            AdminCommand::CollectionStats { collection, scale } => {
+                self.collection_stats(collection, scale).await
+            }
             _ => Err(MongoshError::NotImplemented(
                 "Admin command not yet implemented".to_string(),
             )),
@@ -581,6 +584,54 @@ impl AdminExecutor {
                 "Renamed collection '{}' to '{}'",
                 collection, target
             )),
+            stats: ExecutionStats::default(),
+            error: None,
+        })
+    }
+
+    /// Get collection statistics
+    ///
+    /// # Arguments
+    /// * `collection` - Name of the collection
+    /// * `scale` - Optional scale factor for size values
+    ///
+    /// # Returns
+    /// * `Result<ExecutionResult>` - Collection statistics
+    async fn collection_stats(
+        &self,
+        collection: String,
+        scale: Option<i32>,
+    ) -> Result<ExecutionResult> {
+        use mongodb::bson::doc;
+        use tracing::debug;
+
+        debug!(
+            "Getting stats for collection '{}' with scale: {:?}",
+            collection, scale
+        );
+
+        let db = self.context.get_database().await?;
+
+        // Build the collStats command
+        let mut command = doc! {
+            "collStats": &collection,
+        };
+
+        if let Some(scale_value) = scale {
+            command.insert("scale", scale_value);
+        }
+
+        // Execute the command
+        let result = db
+            .run_command(command)
+            .await
+            .map_err(|e| ExecutionError::QueryFailed(e.to_string()))?;
+
+        debug!("Retrieved stats for collection '{}'", collection);
+
+        Ok(ExecutionResult {
+            success: true,
+            data: ResultData::Document(result),
             stats: ExecutionStats::default(),
             error: None,
         })

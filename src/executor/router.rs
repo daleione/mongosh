@@ -221,16 +221,6 @@ impl CommandRouter {
         } else {
             r#"MongoDB Shell Commands:
 
-Administrative:
-  show dbs                                    - List databases
-  show collections                            - List collections
-  use <database>                              - Switch database
-  db.collection.createIndex(keys, options?)  - Create an index
-  db.collection.getIndexes()                 - List indexes
-  db.collection.dropIndex(name)              - Drop a single index
-  db.collection.dropIndexes()                - Drop all indexes (except _id)
-  db.collection.drop()                       - Drop the entire collection
-
 Configuration:
   format [shell|json|json-pretty|table|compact] - Set/get output format
   color [on|off]                                - Enable/disable color output
