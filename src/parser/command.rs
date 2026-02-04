@@ -161,6 +161,21 @@ pub enum QueryCommand {
         options: FindAndModifyOptions,
     },
 
+    /// Find and modify a document (unified interface)
+    FindAndModify {
+        collection: String,
+        query: Document,
+        sort: Option<Document>,
+        remove: bool,
+        update: Option<Document>,
+        new: bool,
+        fields: Option<Document>,
+        upsert: bool,
+        array_filters: Option<Vec<Document>>,
+        max_time_ms: Option<u64>,
+        collation: Option<Document>,
+    },
+
     /// Create a distinct query
     Distinct {
         collection: String,
@@ -202,6 +217,7 @@ impl QueryCommand {
             | QueryCommand::FindOneAndDelete { collection, .. }
             | QueryCommand::FindOneAndUpdate { collection, .. }
             | QueryCommand::FindOneAndReplace { collection, .. }
+            | QueryCommand::FindAndModify { collection, .. }
             | QueryCommand::Distinct { collection, .. }
             | QueryCommand::BulkWrite { collection, .. }
             | QueryCommand::Explain { collection, .. } => collection,

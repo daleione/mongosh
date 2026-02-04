@@ -77,6 +77,7 @@ impl DbOperationParser {
             "findOneAndDelete" => Self::parse_find_one_and_delete(&collection, args),
             "findOneAndUpdate" => Self::parse_find_one_and_update(&collection, args),
             "findOneAndReplace" => Self::parse_find_one_and_replace(&collection, args),
+            "findAndModify" => Self::parse_find_and_modify(&collection, args),
             "distinct" => Self::parse_distinct(&collection, args),
             "bulkWrite" => Self::parse_bulk_write(&collection, args),
             "getIndexes" => Self::parse_get_indexes(&collection),
@@ -1217,6 +1218,110 @@ impl DbOperationParser {
             drop_target,
         }))
     }
+
+    /// Parse findAndModify operation
+    fn parse_find_and_modify(collection: &str, args: &[Expr]) -> Result<Command> {
+        // findAndModify takes a single document with all options
+        if args.is_empty() {
+            return Err(ParseError::InvalidCommand(
+                "findAndModify() requires an options document".to_string(),
+            )
+            .into());
+        }
+
+        if args.len() > 1 {
+            return Err(ParseError::InvalidCommand(
+                format!("findAndModify() expects 1 argument, got {}", args.len()),
+            )
+            .into());
+        }
+
+        // Parse the options document
+        let options_doc = Self::get_doc_arg(args, 0)?;
+
+        // Extract query (defaults to empty document)
+        let query = options_doc
+            .get_document("query")
+            .unwrap_or(&Document::new())
+            .clone();
+
+        // Extract sort (optional)
+        let sort = options_doc.get_document("sort").ok().cloned();
+
+        // Extract remove flag (defaults to false)
+        let remove = options_doc
+            .get_bool("remove")
+            .unwrap_or(false);
+
+        // Extract update (optional, but required if remove is false)
+        let update = options_doc.get_document("update").ok().cloned();
+
+        // Must specify either remove or update
+        if !remove && update.is_none() {
+            return Err(ParseError::InvalidCommand(
+                "findAndModify() requires either 'remove: true' or an 'update' document".to_string(),
+            )
+            .into());
+        }
+
+        if remove && update.is_some() {
+            return Err(ParseError::InvalidCommand(
+                "findAndModify() cannot specify both 'remove' and 'update'".to_string(),
+            )
+            .into());
+        }
+
+        // Extract new flag (defaults to false)
+        let new = options_doc
+            .get_bool("new")
+            .unwrap_or(false);
+
+        // Extract fields/projection (optional)
+        let fields = options_doc.get_document("fields").ok().cloned();
+
+        // Extract upsert (defaults to false)
+        let upsert = options_doc
+            .get_bool("upsert")
+            .unwrap_or(false);
+
+        // Extract arrayFilters (optional)
+        let array_filters = options_doc
+            .get_array("arrayFilters")
+            .ok()
+            .and_then(|arr| {
+                let docs: std::result::Result<Vec<Document>, ParseError> = arr
+                    .iter()
+                    .map(|v| v.as_document().ok_or_else(|| {
+                        ParseError::InvalidCommand("arrayFilters must be an array of documents".to_string())
+                    }).map(|d| d.clone()))
+                    .collect();
+                docs.ok()
+            });
+
+        // Extract maxTimeMS (optional)
+        let max_time_ms = options_doc
+            .get_i64("maxTimeMS")
+            .ok()
+            .map(|v| v as u64)
+            .or_else(|| options_doc.get_i32("maxTimeMS").ok().map(|v| v as u64));
+
+        // Extract collation (optional)
+        let collation = options_doc.get_document("collation").ok().cloned();
+
+        Ok(Command::Query(QueryCommand::FindAndModify {
+            collection: collection.to_string(),
+            query,
+            sort,
+            remove,
+            update,
+            new,
+            fields,
+            upsert,
+            array_filters,
+            max_time_ms,
+            collation,
+        }))
+    }
 }
 
 #[cfg(test)]
@@ -1840,6 +1945,76 @@ mod tests {
             assert!(matches!(*query, QueryCommand::Find { .. }));
         } else {
             panic!("Expected Explain command");
+        }
+    }
+
+    #[test]
+    fn test_parse_find_and_modify_update() {
+        let cmd = DbOperationParser::parse(
+            "db.users.findAndModify({query: {name: 'Alice'}, update: {$set: {age: 31}}})"
+        ).unwrap();
+        if let Command::Query(QueryCommand::FindAndModify {
+            collection,
+            query,
+            update,
+            remove,
+            ..
+        }) = cmd
+        {
+            assert_eq!(collection, "users");
+            assert_eq!(query.get_str("name").unwrap(), "Alice");
+            assert!(update.is_some());
+            assert_eq!(remove, false);
+        } else {
+            panic!("Expected FindAndModify command");
+        }
+    }
+
+    #[test]
+    fn test_parse_find_and_modify_remove() {
+        let cmd = DbOperationParser::parse(
+            "db.users.findAndModify({query: {name: 'Alice'}, remove: true})"
+        ).unwrap();
+        if let Command::Query(QueryCommand::FindAndModify {
+            collection,
+            query,
+            update,
+            remove,
+            ..
+        }) = cmd
+        {
+            assert_eq!(collection, "users");
+            assert_eq!(query.get_str("name").unwrap(), "Alice");
+            assert!(update.is_none());
+            assert_eq!(remove, true);
+        } else {
+            panic!("Expected FindAndModify command");
+        }
+    }
+
+    #[test]
+    fn test_parse_find_and_modify_with_options() {
+        let cmd = DbOperationParser::parse(
+            "db.users.findAndModify({query: {name: 'Alice'}, update: {$inc: {score: 1}}, new: true, upsert: true, sort: {score: 1}})"
+        ).unwrap();
+        if let Command::Query(QueryCommand::FindAndModify {
+            collection,
+            query,
+            update,
+            new,
+            upsert,
+            sort,
+            ..
+        }) = cmd
+        {
+            assert_eq!(collection, "users");
+            assert_eq!(query.get_str("name").unwrap(), "Alice");
+            assert!(update.is_some());
+            assert_eq!(new, true);
+            assert_eq!(upsert, true);
+            assert!(sort.is_some());
+        } else {
+            panic!("Expected FindAndModify command");
         }
     }
 }

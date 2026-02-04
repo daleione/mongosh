@@ -221,23 +221,6 @@ impl CommandRouter {
         } else {
             r#"MongoDB Shell Commands:
 
-Database Operations:
-  db.collection.find(filter, projection)     - Find documents
-  db.collection.findOne(filter, projection)  - Find one document
-  db.collection.insertOne(document)          - Insert one document
-  db.collection.insertMany([documents])      - Insert multiple documents
-  db.collection.updateOne(filter, update)    - Update one document
-  db.collection.updateMany(filter, update)   - Update multiple documents
-  db.collection.replaceOne(filter, doc)      - Replace one document
-  db.collection.deleteOne(filter)            - Delete one document
-  db.collection.deleteMany(filter)           - Delete multiple documents
-  db.collection.findOneAndDelete(filter)     - Find and delete one document
-  db.collection.findOneAndUpdate(filter, upd)- Find and update one document
-  db.collection.findOneAndReplace(filter, doc)- Find and replace one document
-  db.collection.countDocuments(filter)       - Count documents
-  db.collection.estimatedDocumentCount()     - Get estimated document count (fast)
-  db.collection.distinct(field, filter?)     - Get distinct values for a field
-
 Administrative:
   show dbs                                    - List databases
   show collections                            - List collections

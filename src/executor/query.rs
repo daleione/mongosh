@@ -158,6 +158,35 @@ impl QueryExecutor {
                     .await
             }
 
+            QueryCommand::FindAndModify {
+                collection,
+                query,
+                sort,
+                remove,
+                update,
+                new,
+                fields,
+                upsert,
+                array_filters,
+                max_time_ms,
+                collation,
+            } => {
+                self.execute_find_and_modify(
+                    collection,
+                    query,
+                    sort,
+                    remove,
+                    update,
+                    new,
+                    fields,
+                    upsert,
+                    array_filters,
+                    max_time_ms,
+                    collation,
+                )
+                .await
+            }
+
             QueryCommand::Explain {
                 collection,
                 verbosity,
@@ -1562,6 +1591,169 @@ impl QueryExecutor {
                     error: None,
                 })
             }
+        }
+    }
+
+    /// Execute findAndModify command
+    ///
+    /// # Arguments
+    /// * `collection` - Collection name
+    /// * `query` - Query filter
+    /// * `sort` - Sort specification
+    /// * `remove` - Whether to remove the document
+    /// * `update` - Update specification
+    /// * `new` - Return updated document instead of original
+    /// * `fields` - Projection specification
+    /// * `upsert` - Create document if not found
+    /// * `array_filters` - Array filters for updates
+    /// * `max_time_ms` - Maximum execution time
+    /// * `collation` - Collation specification
+    ///
+    /// # Returns
+    /// * `Result<ExecutionResult>` - Execution result with the document
+    async fn execute_find_and_modify(
+        &self,
+        collection: String,
+        query: Document,
+        sort: Option<Document>,
+        remove: bool,
+        update: Option<Document>,
+        new: bool,
+        fields: Option<Document>,
+        upsert: bool,
+        array_filters: Option<Vec<Document>>,
+        max_time_ms: Option<u64>,
+        collation: Option<Document>,
+    ) -> Result<ExecutionResult> {
+        use tracing::{debug, info};
+
+        debug!(
+            "Executing findAndModify on collection '{}' (remove: {}, new: {})",
+            collection, remove, new
+        );
+
+        let db = self.context.get_database().await?;
+        let coll: Collection<Document> = db.collection(&collection);
+
+        if remove {
+            // Delete operation
+            let mut find_opts = mongodb::options::FindOneAndDeleteOptions::default();
+
+            if let Some(s) = sort {
+                find_opts.sort = Some(s);
+            }
+            if let Some(proj) = fields {
+                find_opts.projection = Some(proj);
+            }
+            if let Some(max_time) = max_time_ms {
+                find_opts.max_time = Some(std::time::Duration::from_millis(max_time));
+            }
+            if let Some(_coll_spec) = collation {
+                // Note: Collation conversion from BSON document is not directly supported
+                // Users should use the driver's Collation builder instead
+                // For now, we skip this option
+            }
+
+            let result = coll
+                .find_one_and_delete(query)
+                .with_options(find_opts)
+                .await
+                .map_err(|e| ExecutionError::QueryFailed(e.to_string()))?;
+
+            match result {
+                Some(doc) => {
+                    info!("FindAndModify removed document");
+                    Ok(ExecutionResult {
+                        success: true,
+                        data: ResultData::Document(doc),
+                        stats: ExecutionStats {
+                            execution_time_ms: 0,
+                            documents_returned: 1,
+                            documents_affected: Some(1),
+                        },
+                        error: None,
+                    })
+                }
+                None => {
+                    info!("FindAndModify found no matching document to remove");
+                    Ok(ExecutionResult {
+                        success: true,
+                        data: ResultData::Message("null".to_string()),
+                        stats: ExecutionStats {
+                            execution_time_ms: 0,
+                            documents_returned: 0,
+                            documents_affected: Some(0),
+                        },
+                        error: None,
+                    })
+                }
+            }
+        } else if let Some(update_doc) = update {
+            // Update operation
+            let mut find_opts = mongodb::options::FindOneAndUpdateOptions::default();
+
+            if let Some(s) = sort {
+                find_opts.sort = Some(s);
+            }
+            if let Some(proj) = fields {
+                find_opts.projection = Some(proj);
+            }
+            if upsert {
+                find_opts.upsert = Some(true);
+            }
+            if new {
+                find_opts.return_document = Some(mongodb::options::ReturnDocument::After);
+            }
+            if let Some(filters) = array_filters {
+                find_opts.array_filters = Some(filters);
+            }
+            if let Some(max_time) = max_time_ms {
+                find_opts.max_time = Some(std::time::Duration::from_millis(max_time));
+            }
+            if let Some(_coll_spec) = collation {
+                // Note: Collation conversion from BSON document is not directly supported
+                // Users should use the driver's Collation builder instead
+                // For now, we skip this option
+            }
+
+            let result = coll
+                .find_one_and_update(query, update_doc)
+                .with_options(find_opts)
+                .await
+                .map_err(|e| ExecutionError::QueryFailed(e.to_string()))?;
+
+            match result {
+                Some(doc) => {
+                    info!("FindAndModify updated document");
+                    Ok(ExecutionResult {
+                        success: true,
+                        data: ResultData::Document(doc),
+                        stats: ExecutionStats {
+                            execution_time_ms: 0,
+                            documents_returned: 1,
+                            documents_affected: Some(1),
+                        },
+                        error: None,
+                    })
+                }
+                None => {
+                    info!("FindAndModify found no matching document to update");
+                    Ok(ExecutionResult {
+                        success: true,
+                        data: ResultData::Message("null".to_string()),
+                        stats: ExecutionStats {
+                            execution_time_ms: 0,
+                            documents_returned: 0,
+                            documents_affected: Some(0),
+                        },
+                        error: None,
+                    })
+                }
+            }
+        } else {
+            Err(ExecutionError::QueryFailed(
+                "findAndModify requires either remove or update".to_string(),
+            ).into())
         }
     }
 }

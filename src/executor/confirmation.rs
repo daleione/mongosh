@@ -20,6 +20,7 @@ pub fn is_dangerous_query(cmd: &QueryCommand) -> bool {
             | QueryCommand::FindOneAndDelete { .. }
             | QueryCommand::FindOneAndUpdate { .. }
             | QueryCommand::FindOneAndReplace { .. }
+            | QueryCommand::FindAndModify { .. }
     )
 }
 
@@ -86,6 +87,21 @@ pub fn get_operation_description(cmd: &QueryCommand) -> String {
                 "This will find and REPLACE one document in collection '{}'",
                 collection
             )
+        }
+        QueryCommand::FindAndModify {
+            collection, remove, ..
+        } => {
+            if *remove {
+                format!(
+                    "This will find and DELETE one document from collection '{}'",
+                    collection
+                )
+            } else {
+                format!(
+                    "This will find and MODIFY one document in collection '{}'",
+                    collection
+                )
+            }
         }
         _ => "Perform operation".to_string(),
     }

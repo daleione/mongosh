@@ -81,7 +81,7 @@ This document tracks the implementation status of MongoDB Shell commands in mong
 | `db.collection.ensureIndex()`            | 🚫     | **Deprecated** - Use createIndex                |
 | `db.collection.explain()`                | ✅     | Returns query execution information             |
 | `db.collection.find()`                   | ✅     | Performs a query and returns cursor             |
-| `db.collection.findAndModify()`          | ❌     | Atomically modifies and returns single document |
+| `db.collection.findAndModify()`          | ✅     | Atomically modifies and returns single document |
 | `db.collection.findOne()`                | ✅     | Performs a query and returns single document    |
 | `db.collection.findOneAndDelete()`       | ✅     | Finds and deletes a single document             |
 | `db.collection.findOneAndReplace()`      | ✅     | Finds and replaces a single document            |
