@@ -29,52 +29,60 @@ impl ChainHandler {
     /// Try to parse a chained call expression
     /// Returns Some((base_command, chain_methods)) if it's a chained call, None otherwise
     pub fn try_parse_chained_call(call: &CallExpr) -> Result<Option<(Command, Vec<ChainMethod>)>> {
-        // Check if the callee is a member expression AND its object is a call (chained call)
-        if let Expr::Member(member) = call.callee.as_ref() {
-            // Check if the object is also a call - this indicates chaining
-            if let Expr::Call(_inner_call) = member.object.as_ref() {
-                // Check if this chain contains an explain call anywhere
-                if Self::contains_explain_in_chain(call)? {
-                    // Check if explain is at the end of the chain (as a method call)
-                    if let MemberProperty::Ident(name) = &member.property {
-                        if name == "explain" {
-                            // Explain is at the END: db.collection.find().explain()
-                            // Treat it as a regular chain method
-                            let (base_expr, chain_methods) = Self::collect_chain_methods(call)?;
-                            if let Expr::Call(base_call) = base_expr {
-                                let base_cmd = super::parse_call_expression_simple(&base_call)?;
-                                return Ok(Some((base_cmd, chain_methods)));
-                            } else {
-                                return Err(ParseError::InvalidCommand(
-                                    "Expected base call expression".to_string(),
-                                )
-                                .into());
-                            }
-                        }
-                    }
+        // Early return: Check if this is a chained call structure
+        let member = match call.callee.as_ref() {
+            Expr::Member(m) => m,
+            _ => return Ok(None),
+        };
 
-                    // Explain is in the MIDDLE/BEGINNING: db.collection.explain().find()...
-                    return Self::try_parse_explain_chain(call);
-                }
+        // Early return: The object must be a call (indicates chaining)
+        if !matches!(member.object.as_ref(), Expr::Call(_)) {
+            return Ok(None);
+        }
 
-                // This is a regular chained call like: db.users.find().limit(10)
-                // Collect all chain methods
-                let (base_expr, chain_methods) = Self::collect_chain_methods(call)?;
+        // Check if this chain contains an explain call
+        if Self::contains_explain_in_chain(call)? {
+            return Self::handle_explain_chain(call, member);
+        }
 
-                // Parse the base expression as a call
-                if let Expr::Call(base_call) = base_expr {
-                    let base_cmd = super::parse_call_expression_simple(&base_call)?;
-                    return Ok(Some((base_cmd, chain_methods)));
-                } else {
-                    return Err(ParseError::InvalidCommand(
-                        "Expected base call expression".to_string(),
-                    )
-                    .into());
-                }
+        // Regular chained call like: db.users.find().limit(10)
+        Self::parse_regular_chain(call)
+    }
+
+    /// Handle chains that contain an explain call
+    fn handle_explain_chain(
+        call: &CallExpr,
+        member: &MemberExpr,
+    ) -> Result<Option<(Command, Vec<ChainMethod>)>> {
+        // Check if explain is at the end of the chain
+        if let MemberProperty::Ident(name) = &member.property {
+            if name == "explain" {
+                // Explain is at the END: db.collection.find().explain()
+                // Treat it as a regular chain method
+                return Self::parse_regular_chain(call);
             }
         }
 
-        Ok(None)
+        // Explain is in the MIDDLE/BEGINNING: db.collection.explain().find()...
+        Self::try_parse_explain_chain(call)
+    }
+
+    /// Parse a regular chain
+    fn parse_regular_chain(call: &CallExpr) -> Result<Option<(Command, Vec<ChainMethod>)>> {
+        let (base_expr, chain_methods) = Self::collect_chain_methods(call)?;
+
+        let base_call = match base_expr {
+            Expr::Call(call) => call,
+            _ => {
+                return Err(ParseError::InvalidCommand(
+                    "Expected base call expression".to_string(),
+                )
+                .into())
+            }
+        };
+
+        let base_cmd = super::parse_call_expression_simple(&base_call)?;
+        Ok(Some((base_cmd, chain_methods)))
     }
 
     /// Check if a call chain contains an explain call
