@@ -17,6 +17,7 @@ use crate::error::{ParseError, Result};
 use crate::parser::command::Command;
 use crate::parser::mongo_ast::*;
 use crate::parser::mongo_parser::MongoParser;
+use chain::ChainParseResult;
 
 use admin_ops::AdminOpsParser;
 use args::ArgParser;
@@ -47,9 +48,14 @@ impl DbOperationParser {
     /// Parse a call expression: db.collection.operation(...) or chained calls
     fn parse_call_expression(call: &CallExpr) -> Result<Command> {
         // Check if this is a chained call (e.g., db.users.find().limit(10))
-        if let Some((base_cmd, chain_methods)) = ChainHandler::try_parse_chained_call(call)? {
-            // Apply chained methods to the base command
-            return ChainHandler::apply_chain_methods(base_cmd, chain_methods);
+        match ChainHandler::try_parse_chained_call(call)? {
+            ChainParseResult::Chained(base_cmd, chain_methods) => {
+                // Apply chained methods to the base command
+                return ChainHandler::apply_chain_methods(base_cmd, chain_methods);
+            }
+            ChainParseResult::NotChained => {
+                // Fall through to parse as regular db.collection.operation()
+            }
         }
 
         // Not a chained call, parse as regular db.collection.operation()

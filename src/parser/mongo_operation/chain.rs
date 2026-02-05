@@ -22,22 +22,30 @@ pub struct ChainMethod {
     pub args: Vec<Expr>,
 }
 
+/// Result of parsing a chained call
+pub enum ChainParseResult {
+    /// This is a chained call with base command and chain methods
+    Chained(Command, Vec<ChainMethod>),
+    /// This is not a chained call
+    NotChained,
+}
+
 /// Chain method handler
 pub struct ChainHandler;
 
 impl ChainHandler {
     /// Try to parse a chained call expression
-    /// Returns Some((base_command, chain_methods)) if it's a chained call, None otherwise
-    pub fn try_parse_chained_call(call: &CallExpr) -> Result<Option<(Command, Vec<ChainMethod>)>> {
+    /// Returns Chained if it's a chained call, NotChained otherwise
+    pub fn try_parse_chained_call(call: &CallExpr) -> Result<ChainParseResult> {
         // Early return: Check if this is a chained call structure
         let member = match call.callee.as_ref() {
             Expr::Member(m) => m,
-            _ => return Ok(None),
+            _ => return Ok(ChainParseResult::NotChained),
         };
 
         // Early return: The object must be a call (indicates chaining)
         if !matches!(member.object.as_ref(), Expr::Call(_)) {
-            return Ok(None);
+            return Ok(ChainParseResult::NotChained);
         }
 
         // Check if this chain contains an explain call
@@ -53,7 +61,7 @@ impl ChainHandler {
     fn handle_explain_chain(
         call: &CallExpr,
         member: &MemberExpr,
-    ) -> Result<Option<(Command, Vec<ChainMethod>)>> {
+    ) -> Result<ChainParseResult> {
         // Check if explain is at the end of the chain
         if let MemberProperty::Ident(name) = &member.property {
             if name == "explain" {
@@ -68,7 +76,7 @@ impl ChainHandler {
     }
 
     /// Parse a regular chain
-    fn parse_regular_chain(call: &CallExpr) -> Result<Option<(Command, Vec<ChainMethod>)>> {
+    fn parse_regular_chain(call: &CallExpr) -> Result<ChainParseResult> {
         let (base_expr, chain_methods) = Self::collect_chain_methods(call)?;
 
         let base_call = match base_expr {
@@ -82,7 +90,7 @@ impl ChainHandler {
         };
 
         let base_cmd = super::parse_call_expression_simple(&base_call)?;
-        Ok(Some((base_cmd, chain_methods)))
+        Ok(ChainParseResult::Chained(base_cmd, chain_methods))
     }
 
     /// Check if a call chain contains an explain call
@@ -111,7 +119,7 @@ impl ChainHandler {
     }
 
     /// Try to parse an explain chain: db.collection.explain(verbosity).queryMethod().chainMethods()
-    fn try_parse_explain_chain(call: &CallExpr) -> Result<Option<(Command, Vec<ChainMethod>)>> {
+    fn try_parse_explain_chain(call: &CallExpr) -> Result<ChainParseResult> {
         // First, collect all chain methods and find the base explain().queryMethod() call
         let (base_call, chain_methods) = Self::collect_chain_until_explain(call)?;
 
@@ -125,7 +133,7 @@ impl ChainHandler {
                 if let Expr::Member(explain_member) = explain_call.callee.as_ref() {
                     if let MemberProperty::Ident(op_name) = &explain_member.property {
                         if op_name != "explain" {
-                            return Ok(None);
+                            return Ok(ChainParseResult::NotChained);
                         }
 
                         // Get collection name
@@ -136,7 +144,7 @@ impl ChainHandler {
                                     if let Expr::String(s) = expr {
                                         s.clone()
                                     } else {
-                                        return Ok(None);
+                                        return Ok(ChainParseResult::NotChained);
                                     }
                                 }
                             };
@@ -144,10 +152,10 @@ impl ChainHandler {
                             // Verify db prefix
                             if let Expr::Ident(id) = coll_member.object.as_ref() {
                                 if id != "db" {
-                                    return Ok(None);
+                                    return Ok(ChainParseResult::NotChained);
                                 }
                             } else {
-                                return Ok(None);
+                                return Ok(ChainParseResult::NotChained);
                             }
 
                             // Parse verbosity from explain() arguments
@@ -156,7 +164,7 @@ impl ChainHandler {
                             // Get query method name
                             let query_method = match &member.property {
                                 MemberProperty::Ident(name) => name.clone(),
-                                _ => return Ok(None),
+                                _ => return Ok(ChainParseResult::NotChained),
                             };
 
                             // Parse the query method
@@ -237,14 +245,14 @@ impl ChainHandler {
                                 query: Box::new(query_cmd),
                             };
 
-                            return Ok(Some((Command::Query(explain_cmd), chain_methods)));
+                            return Ok(ChainParseResult::Chained(Command::Query(explain_cmd), chain_methods));
                         }
                     }
                 }
             }
         }
 
-        Ok(None)
+        Ok(ChainParseResult::NotChained)
     }
 
     /// Collect chain methods until we reach the explain call
