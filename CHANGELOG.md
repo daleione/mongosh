@@ -4,11 +4,36 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-02-11
+
 ### Added
 
-- **Streaming export architecture** - Complete rewrite of export functionality with streaming support
-- **Export progress tracking** - Real-time visual feedback during export operations
-- **Export cancellation support** - Ability to cancel long-running export operations
+- **Query execution cancellation** - Ctrl+C support with automatic `killOp` to cancel slow MongoDB operations
+- **Query explain support** - Added `explain()` method for query execution plan analysis
+  - Chain method support: `db.collection.find().explain()`
+  - SQL EXPLAIN syntax support with highlighting
+- **New MongoDB commands**:
+  - `stats` - Collection statistics and storage information
+  - `findAndModify` - Atomic find and modify operations
+  - `renameCollection` - Rename collections
+- **Streaming export improvements**:
+  - CSV and JSONL streaming export support
+  - Live cursor-based pagination replacing skip-based pagination
+  - Real-time progress tracking and cancellation support
+
+### Changed
+
+- **Code structure refactoring**:
+  - Modularized `query.rs` for better maintainability
+  - Refactored `mongo_operation.rs` with organized test structure
+  - Improved chain parser with early returns and extracted methods
+- **Enhanced error handling**:
+  - Refined error messages and formatting
+  - Improved SQL parser error handling for WHERE clauses
+  - Simplified confirmation prompts
+- **Parser improvements**:
+  - Replaced Option with ChainParseResult for better chained call parsing
+- **Dependency updates** - Updated packages to latest versions
 
 ## [0.8.0] - 2026-01-26
 
