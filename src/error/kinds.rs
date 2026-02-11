@@ -129,13 +129,13 @@ impl fmt::Display for MongoshError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             MongoshError::MongoDb(e) => format_mongodb_error(f, e),
-            MongoshError::Connection(e) => write!(f, "Connection error: {}", e),
-            MongoshError::Parse(e) => write!(f, "Parse error: {}", e),
-            MongoshError::Execution(e) => write!(f, "Execution error: {}", e),
-            MongoshError::Config(e) => write!(f, "Configuration error: {}", e),
-            MongoshError::Io(e) => write!(f, "I/O error: {}", e),
+            MongoshError::Connection(e) => write!(f, "ConnectionError: {}", e),
+            MongoshError::Parse(e) => write!(f, "ParseError: {}", e),
+            MongoshError::Execution(e) => write!(f, "ExecutionError: {}", e),
+            MongoshError::Config(e) => write!(f, "ConfigError: {}", e),
+            MongoshError::Io(e) => write!(f, "IoError: {}", e),
             MongoshError::Generic(msg) => write!(f, "{}", msg),
-            MongoshError::NotImplemented(msg) => write!(f, "Not implemented: {}", msg),
+            MongoshError::NotImplemented(msg) => write!(f, "NotImplemented: {}", msg),
         }
     }
 }
@@ -143,15 +143,13 @@ impl fmt::Display for MongoshError {
 impl fmt::Display for ConnectionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ConnectionError::ConnectionFailed(msg) => write!(f, "Failed to connect: {}", msg),
+            ConnectionError::ConnectionFailed(msg) => write!(f, "{}", msg),
             ConnectionError::Timeout => write!(f, "Connection timeout"),
             ConnectionError::InvalidUri(uri) => write!(f, "Invalid connection URI: {}", uri),
             ConnectionError::NotConnected => write!(f, "Not connected to MongoDB"),
-            ConnectionError::PingFailed(msg) => write!(f, "Ping failed: {}", msg),
-            ConnectionError::SessionFailed(msg) => write!(f, "Session operation failed: {}", msg),
-            ConnectionError::TransactionFailed(msg) => {
-                write!(f, "Transaction operation failed: {}", msg)
-            }
+            ConnectionError::PingFailed(msg) => write!(f, "{}", msg),
+            ConnectionError::SessionFailed(msg) => write!(f, "{}", msg),
+            ConnectionError::TransactionFailed(msg) => write!(f, "{}", msg),
         }
     }
 }
@@ -159,10 +157,10 @@ impl fmt::Display for ConnectionError {
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ParseError::SyntaxError(msg) => write!(f, "Syntax error: {}", msg),
-            ParseError::InvalidCommand(cmd) => write!(f, "Invalid command: {}", cmd),
-            ParseError::InvalidQuery(msg) => write!(f, "Invalid query: {}", msg),
-            ParseError::InvalidPipeline(msg) => write!(f, "Invalid pipeline: {}", msg),
+            ParseError::SyntaxError(msg) => write!(f, "{}", msg),
+            ParseError::InvalidCommand(msg) => write!(f, "{}", msg),
+            ParseError::InvalidQuery(msg) => write!(f, "{}", msg),
+            ParseError::InvalidPipeline(msg) => write!(f, "{}", msg),
         }
     }
 }
@@ -170,10 +168,10 @@ impl fmt::Display for ParseError {
 impl fmt::Display for ExecutionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ExecutionError::QueryFailed(msg) => write!(f, "Query failed: {}", msg),
-            ExecutionError::InvalidParameters(msg) => write!(f, "Invalid parameters: {}", msg),
-            ExecutionError::CursorError(msg) => write!(f, "Cursor error: {}", msg),
-            ExecutionError::InvalidOperation(msg) => write!(f, "Invalid operation: {}", msg),
+            ExecutionError::QueryFailed(msg) => write!(f, "{}", msg),
+            ExecutionError::InvalidParameters(msg) => write!(f, "{}", msg),
+            ExecutionError::CursorError(msg) => write!(f, "{}", msg),
+            ExecutionError::InvalidOperation(msg) => write!(f, "{}", msg),
         }
     }
 }
@@ -181,9 +179,9 @@ impl fmt::Display for ExecutionError {
 impl fmt::Display for ConfigError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ConfigError::FileNotFound(path) => write!(f, "Config file not found: {}", path),
-            ConfigError::InvalidFormat(msg) => write!(f, "Invalid config format: {}", msg),
-            ConfigError::MissingField(field) => write!(f, "Missing required field: {}", field),
+            ConfigError::FileNotFound(path) => write!(f, "{}", path),
+            ConfigError::InvalidFormat(msg) => write!(f, "{}", msg),
+            ConfigError::MissingField(field) => write!(f, "{}", field),
             ConfigError::Generic(msg) => write!(f, "{}", msg),
         }
     }

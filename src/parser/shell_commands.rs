@@ -105,7 +105,7 @@ impl ShellCommandParser {
             }
             _ => {
                 return Err(ParseError::InvalidCommand(format!(
-                    "Unknown show command: show {}",
+                    "Unknown show command '{}'",
                     rest
                 ))
                 .into());
@@ -196,7 +196,7 @@ impl ShellCommandParser {
 
             if parts.len() < 2 {
                 return Err(ParseError::InvalidCommand(
-                    "Usage: query save <name> <query>".to_string(),
+                    "query save requires <name> and <query>".to_string(),
                 )
                 .into());
             }
@@ -223,7 +223,7 @@ impl ShellCommandParser {
 
             if name.is_empty() {
                 return Err(
-                    ParseError::InvalidCommand("Usage: query delete <name>".to_string()).into(),
+                    ParseError::InvalidCommand("query delete requires <name>".to_string()).into(),
                 );
             }
 

@@ -180,11 +180,9 @@ impl Parser {
 
                 Ok(PipeCommand::Export { format, file })
             }
-            other => Err(ParseError::InvalidCommand(format!(
-                "Unknown pipe command: {}. Use 'export' or 'explain'",
-                other
-            ))
-            .into()),
+            other => Err(
+                ParseError::InvalidCommand(format!("Unknown pipe command '{}'", other)).into(),
+            ),
         }
     }
 }

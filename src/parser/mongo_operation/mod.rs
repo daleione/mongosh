@@ -92,11 +92,9 @@ impl DbOperationParser {
             "drop" => AdminOpsParser::parse_drop_collection(&collection),
             "renameCollection" => AdminOpsParser::parse_rename_collection(&collection, args),
             "stats" => AdminOpsParser::parse_collection_stats(&collection, args),
-            _ => Err(ParseError::InvalidCommand(format!(
-                "Unknown operation: {}. Try 'help' for available commands",
-                operation
-            ))
-            .into()),
+            _ => Err(
+                ParseError::InvalidCommand(format!("Unknown operation '{}'", operation)).into(),
+            ),
         }
     }
 }
