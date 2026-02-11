@@ -166,6 +166,10 @@ async fn run_repl_loop(
     shared_state: &SharedState,
 ) -> Result<()> {
     while repl.is_running() {
+        // Reset cancellation token for each command
+        let mut context_clone = exec_context.clone();
+        context_clone.reset_cancel_token();
+
         let input = match repl.read_line()? {
             Some(line) if !line.trim().is_empty() => line,
             Some(_) => continue,
@@ -184,7 +188,25 @@ async fn run_repl_loop(
             break;
         }
 
-        execute_and_display(cli, exec_context, shared_state, command).await;
+        // Setup Ctrl+C handler for this command execution
+        let cancel_token = context_clone.get_cancel_token();
+        let cancel_token_clone = cancel_token.clone();
+
+        let ctrl_c_handle = tokio::spawn(async move {
+            match tokio::signal::ctrl_c().await {
+                Ok(()) => {
+                    cancel_token_clone.cancel();
+                }
+                Err(err) => {
+                    eprintln!("Failed to listen for Ctrl+C: {}", err);
+                }
+            }
+        });
+
+        execute_and_display(cli, &context_clone, shared_state, command).await;
+
+        // Cancel the Ctrl+C listener for the next command
+        ctrl_c_handle.abort();
     }
 
     Ok(())
@@ -205,7 +227,6 @@ async fn execute_and_display(
 
     match exec_context.execute(command).await {
         Ok(result) => {
-            // ExecuteNamedQuery should display its results like normal queries
             if is_execute_named_query {
                 display_result(cli, shared_state, &result);
             } else if is_config_cmd {
@@ -216,7 +237,7 @@ async fn execute_and_display(
                 display_result(cli, shared_state, &result);
             }
         }
-        Err(e) => eprintln!("Execution error: {}", e),
+        Err(e) => eprintln!("{}", e),
     }
 }
 

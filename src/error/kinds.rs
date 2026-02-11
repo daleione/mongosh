@@ -100,6 +100,9 @@ pub enum ExecutionError {
 
     /// Invalid operation.
     InvalidOperation(String),
+
+    /// Operation cancelled by user (e.g., Ctrl+C).
+    Cancelled(String),
 }
 
 /// Configuration-specific errors.
@@ -172,6 +175,7 @@ impl fmt::Display for ExecutionError {
             ExecutionError::InvalidParameters(msg) => write!(f, "{}", msg),
             ExecutionError::CursorError(msg) => write!(f, "{}", msg),
             ExecutionError::InvalidOperation(msg) => write!(f, "{}", msg),
+            ExecutionError::Cancelled(msg) => write!(f, "{}", msg),
         }
     }
 }

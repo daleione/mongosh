@@ -62,6 +62,7 @@ mod admin;
 mod confirmation;
 mod context;
 mod export;
+mod killable;
 mod query;
 mod result;
 mod router;
@@ -69,6 +70,8 @@ mod utility;
 
 // Re-export public types
 pub use context::ExecutionContext;
+#[allow(unused_imports)]
+pub use killable::run_killable_command;
 pub use result::{ExecutionResult, ResultData};
 pub use router::CommandRouter;
 

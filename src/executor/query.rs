@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use futures::stream::TryStreamExt;
 use mongodb::Collection;
-use mongodb::bson::{self, Document};
+use mongodb::bson::{self, Bson, Document};
 use mongodb::options::{AggregateOptions as MongoAggregateOptions, Hint};
 use tracing::{debug, info};
 
@@ -19,6 +19,7 @@ use crate::parser::{AggregateOptions, ExplainVerbosity, FindAndModifyOptions, Fi
 use super::confirmation::confirm_query_operation;
 use super::context::ExecutionContext;
 use super::export::streaming::{AggregateStreamingQuery, FindStreamingQuery};
+use super::killable::run_killable_command;
 use super::result::{ExecutionResult, ExecutionStats, ResultData};
 
 /// Query executor for CRUD operations
@@ -300,41 +301,67 @@ impl QueryExecutor {
             collection, filter
         );
 
-        // Get database and collection
-        let db = self.context.get_database().await?;
-        let coll: Collection<Document> = db.collection(&collection);
+        let client = self.context.get_client().await?;
+        let client_id = self.context.get_client_id();
+        let cancel_token = self.context.get_cancel_token();
+        let db_name = self.context.get_current_database().await;
 
-        // Build MongoDB find options
-        let mut find_opts = mongodb::options::FindOptions::default();
+        // Execute find with killOp support
+        let cursor = run_killable_command(
+            client,
+            client_id,
+            cancel_token,
+            |client, handle| {
+                let db_name = db_name.clone();
+                let collection = collection.clone();
+                let filter = filter.clone();
+                let options = options.clone();
 
-        // Apply user-specified limit if any
-        if let Some(limit) = options.limit {
-            find_opts.limit = Some(limit);
-            debug!("Applied limit: {}", limit);
-        }
+                Box::pin(async move {
+                    let coll: Collection<Document> = client
+                        .database(&db_name)
+                        .collection(&collection);
 
-        // Apply skip if specified
-        if let Some(skip) = options.skip {
-            find_opts.skip = Some(skip);
-            debug!("Applied skip: {}", skip);
-        }
+                    // Build MongoDB find options
+                    let mut find_opts = mongodb::options::FindOptions::default();
 
-        if let Some(ref sort) = options.sort {
-            find_opts.sort = Some(sort.clone());
-            debug!("Applied sort");
-        }
+                    // CRITICAL: Set comment for killOp support
+                    find_opts.comment = Some(Bson::String(handle.comment().to_string()));
 
-        if let Some(ref projection) = options.projection {
-            find_opts.projection = Some(projection.clone());
-            debug!("Applied projection");
-        }
+                    // Apply user-specified limit if any
+                    if let Some(limit) = options.limit {
+                        find_opts.limit = Some(limit);
+                        debug!("Applied limit: {}", limit);
+                    }
 
-        // Execute query and create cursor
-        let cursor = coll
-            .find(filter)
-            .with_options(find_opts)
-            .await
-            .map_err(|e| ExecutionError::QueryFailed(e.to_string()))?;
+                    // Apply skip if specified
+                    if let Some(skip) = options.skip {
+                        find_opts.skip = Some(skip);
+                        debug!("Applied skip: {}", skip);
+                    }
+
+                    if let Some(ref sort) = options.sort {
+                        find_opts.sort = Some(sort.clone());
+                        debug!("Applied sort");
+                    }
+
+                    if let Some(ref projection) = options.projection {
+                        find_opts.projection = Some(projection.clone());
+                        debug!("Applied projection");
+                    }
+
+                    // Execute query and create cursor
+                    let cursor = coll
+                        .find(filter)
+                        .with_options(find_opts)
+                        .await
+                        .map_err(|e| ExecutionError::QueryFailed(e.to_string()))?;
+
+                    Ok(cursor)
+                })
+            },
+        )
+        .await?;
 
         // Create streaming query wrapper
         let streaming_query = FindStreamingQuery::new_find(cursor, batch_size);
@@ -367,45 +394,71 @@ impl QueryExecutor {
         // Clear any previous cursor state - this is a new query
         self.context.shared_state.clear_cursor().await;
 
-        // Get database and collection
-        let db = self.context.get_database().await?;
-        let coll: Collection<Document> = db.collection(&collection);
+        let client = self.context.get_client().await?;
+        let client_id = self.context.get_client_id();
+        let cancel_token = self.context.get_cancel_token();
+        let db_name = self.context.get_current_database().await;
 
-        // Build MongoDB find options
-        let mut find_opts = mongodb::options::FindOptions::default();
+        // Execute find with killOp support
+        let mut cursor = run_killable_command(
+            client,
+            client_id,
+            cancel_token,
+            |client, handle| {
+                let db_name = db_name.clone();
+                let collection = collection.clone();
+                let filter = filter.clone();
+                let options = options.clone();
 
-        // Use provided batch size
-        find_opts.batch_size = Some(batch_size);
-        debug!("Applied batch_size: {}", batch_size);
+                Box::pin(async move {
+                    let coll: Collection<Document> = client
+                        .database(&db_name)
+                        .collection(&collection);
 
-        // Apply user-specified limit if any
-        if let Some(limit) = options.limit {
-            find_opts.limit = Some(limit);
-            debug!("Applied limit: {}", limit);
-        }
+                    // Build MongoDB find options
+                    let mut find_opts = mongodb::options::FindOptions::default();
 
-        // Apply skip if specified
-        if let Some(skip) = options.skip {
-            find_opts.skip = Some(skip);
-            debug!("Applied skip: {}", skip);
-        }
+                    // CRITICAL: Set comment for killOp support
+                    find_opts.comment = Some(Bson::String(handle.comment().to_string()));
 
-        if let Some(ref sort) = options.sort {
-            find_opts.sort = Some(sort.clone());
-            debug!("Applied sort");
-        }
+                    // Use provided batch size
+                    find_opts.batch_size = Some(batch_size);
+                    debug!("Applied batch_size: {}", batch_size);
 
-        if let Some(ref projection) = options.projection {
-            find_opts.projection = Some(projection.clone());
-            debug!("Applied projection");
-        }
+                    // Apply user-specified limit if any
+                    if let Some(limit) = options.limit {
+                        find_opts.limit = Some(limit);
+                        debug!("Applied limit: {}", limit);
+                    }
 
-        // Execute query and create cursor
-        let mut cursor = coll
-            .find(filter)
-            .with_options(find_opts)
-            .await
-            .map_err(|e| ExecutionError::QueryFailed(e.to_string()))?;
+                    // Apply skip if specified
+                    if let Some(skip) = options.skip {
+                        find_opts.skip = Some(skip);
+                        debug!("Applied skip: {}", skip);
+                    }
+
+                    if let Some(ref sort) = options.sort {
+                        find_opts.sort = Some(sort.clone());
+                        debug!("Applied sort");
+                    }
+
+                    if let Some(ref projection) = options.projection {
+                        find_opts.projection = Some(projection.clone());
+                        debug!("Applied projection");
+                    }
+
+                    // Execute query and create cursor
+                    let cursor = coll
+                        .find(filter)
+                        .with_options(find_opts)
+                        .await
+                        .map_err(|e| ExecutionError::QueryFailed(e.to_string()))?;
+
+                    Ok(cursor)
+                })
+            },
+        )
+        .await?;
 
         // Fetch first batch of documents
         let mut documents = Vec::new();
@@ -488,20 +541,53 @@ impl QueryExecutor {
     ) -> Result<ExecutionResult> {
         info!("Executing count on collection '{}'", collection);
 
-        let db = self.context.get_database().await?;
-        let coll: Collection<Document> = db.collection(&collection);
+        let client = self.context.get_client().await?;
+        let client_id = self.context.get_client_id();
+        let cancel_token = self.context.get_cancel_token();
+        let db_name = self.context.get_current_database().await;
 
-        let count = if let Some(f) = filter {
-            coll.count_documents(f)
-                .await
-                .map_err(|e| ExecutionError::QueryFailed(e.to_string()))?
-        } else {
-            coll.estimated_document_count()
-                .await
-                .map_err(|e| ExecutionError::QueryFailed(e.to_string()))?
-        };
+        let count = run_killable_command(
+            client,
+            client_id,
+            cancel_token,
+            |client, handle| {
+                let db_name = db_name.clone();
+                let collection = collection.clone();
+                let filter = filter.clone();
 
-        info!("Count result: {}", count);
+                Box::pin(async move {
+                    let coll: Collection<Document> = client
+                        .database(&db_name)
+                        .collection(&collection);
+
+                    let count = if let Some(f) = filter {
+                        use mongodb::options::CountOptions;
+                        let mut options = CountOptions::default();
+                        // CRITICAL: Set comment for killOp support
+                        options.comment = Some(Bson::String(handle.comment().to_string()));
+
+                        coll.count_documents(f)
+                            .with_options(options)
+                            .await
+                            .map_err(|e| ExecutionError::QueryFailed(e.to_string()))?
+                    } else {
+                        use mongodb::options::EstimatedDocumentCountOptions;
+                        let mut options = EstimatedDocumentCountOptions::default();
+                        // CRITICAL: Set comment for killOp support
+                        options.comment = Some(Bson::String(handle.comment().to_string()));
+
+                        coll.estimated_document_count()
+                            .with_options(options)
+                            .await
+                            .map_err(|e| ExecutionError::QueryFailed(e.to_string()))?
+                    };
+
+                    info!("Count result: {}", count);
+                    Ok(count)
+                })
+            },
+        )
+        .await?;
 
         Ok(ExecutionResult {
             success: true,
@@ -648,10 +734,41 @@ impl QueryExecutor {
             collection, filter
         );
 
-        let db = self.context.get_database().await?;
-        let coll: Collection<Document> = db.collection(&collection);
+        let client = self.context.get_client().await?;
+        let client_id = self.context.get_client_id();
+        let cancel_token = self.context.get_cancel_token();
+        let db_name = self.context.get_current_database().await;
 
-        let result = coll.update_many(filter, update).await?;
+        let result = run_killable_command(
+            client,
+            client_id,
+            cancel_token,
+            |client, handle| {
+                let db_name = db_name.clone();
+                let collection = collection.clone();
+                let filter = filter.clone();
+                let update = update.clone();
+
+                Box::pin(async move {
+                    let coll: Collection<Document> = client
+                        .database(&db_name)
+                        .collection(&collection);
+
+                    use mongodb::options::UpdateOptions;
+                    let mut options = UpdateOptions::default();
+                    // CRITICAL: Set comment for killOp support
+                    options.comment = Some(Bson::String(handle.comment().to_string()));
+
+                    let result = coll
+                        .update_many(filter, update)
+                        .with_options(options)
+                        .await?;
+
+                    Ok(result)
+                })
+            },
+        )
+        .await?;
 
         Ok(ExecutionResult {
             success: true,
@@ -723,10 +840,40 @@ impl QueryExecutor {
             collection, filter
         );
 
-        let db = self.context.get_database().await?;
-        let coll: Collection<Document> = db.collection(&collection);
+        let client = self.context.get_client().await?;
+        let client_id = self.context.get_client_id();
+        let cancel_token = self.context.get_cancel_token();
+        let db_name = self.context.get_current_database().await;
 
-        let result = coll.delete_many(filter).await?;
+        let result = run_killable_command(
+            client,
+            client_id,
+            cancel_token,
+            |client, handle| {
+                let db_name = db_name.clone();
+                let collection = collection.clone();
+                let filter = filter.clone();
+
+                Box::pin(async move {
+                    let coll: Collection<Document> = client
+                        .database(&db_name)
+                        .collection(&collection);
+
+                    use mongodb::options::DeleteOptions;
+                    let mut options = DeleteOptions::default();
+                    // CRITICAL: Set comment for killOp support
+                    options.comment = Some(Bson::String(handle.comment().to_string()));
+
+                    let result = coll
+                        .delete_many(filter)
+                        .with_options(options)
+                        .await?;
+
+                    Ok(result)
+                })
+            },
+        )
+        .await?;
 
         Ok(ExecutionResult {
             success: true,
@@ -1036,90 +1183,118 @@ impl QueryExecutor {
             pipeline.len()
         );
 
-        // Get database and collection
-        let db = self.context.get_database().await?;
-        let coll: Collection<Document> = db.collection(&collection);
+        let client = self.context.get_client().await?;
+        let client_id = self.context.get_client_id();
+        let cancel_token = self.context.get_cancel_token();
+        let db_name = self.context.get_current_database().await;
 
-        // Build MongoDB aggregate options
-        let mut agg_opts = MongoAggregateOptions::default();
+        // Execute aggregate with killOp support
+        let documents = run_killable_command(
+            client,
+            client_id,
+            cancel_token,
+            |client, handle| {
+                let db_name = db_name.clone();
+                let collection = collection.clone();
+                let pipeline = pipeline.clone();
+                let options = options.clone();
 
-        if options.allow_disk_use {
-            agg_opts.allow_disk_use = Some(true);
-            debug!("Applied allow_disk_use: true");
-        }
+                Box::pin(async move {
+                    let coll: Collection<Document> = client
+                        .database(&db_name)
+                        .collection(&collection);
 
-        if let Some(batch_size) = options.batch_size {
-            agg_opts.batch_size = Some(batch_size);
-            debug!("Applied batch_size: {}", batch_size);
-        }
+                    // Build MongoDB aggregate options
+                    let mut agg_opts = MongoAggregateOptions::default();
 
-        if let Some(max_time_ms) = options.max_time_ms {
-            agg_opts.max_time = Some(std::time::Duration::from_millis(max_time_ms));
-            debug!("Applied max_time_ms: {}", max_time_ms);
-        }
+                    // CRITICAL: Set comment for killOp support
+                    agg_opts.comment = Some(Bson::String(handle.comment().to_string()));
 
-        if let Some(collation_doc) = options.collation {
-            match bson::from_document(collation_doc) {
-                Ok(collation) => {
-                    agg_opts.collation = Some(collation);
-                    debug!("Applied collation");
-                }
-                Err(e) => {
-                    return Err(ExecutionError::InvalidParameters(format!(
-                        "Invalid collation: {}",
-                        e
-                    ))
-                    .into());
-                }
-            }
-        }
+                    if options.allow_disk_use {
+                        agg_opts.allow_disk_use = Some(true);
+                        debug!("Applied allow_disk_use: true");
+                    }
 
-        if let Some(hint_doc) = options.hint {
-            agg_opts.hint = Some(Hint::Keys(hint_doc));
-            debug!("Applied hint");
-        }
+                    if let Some(batch_size) = options.batch_size {
+                        agg_opts.batch_size = Some(batch_size);
+                        debug!("Applied batch_size: {}", batch_size);
+                    }
 
-        if let Some(read_concern_doc) = options.read_concern {
-            match bson::from_document(read_concern_doc) {
-                Ok(read_concern) => {
-                    agg_opts.read_concern = Some(read_concern);
-                    debug!("Applied read_concern");
-                }
-                Err(e) => {
-                    return Err(ExecutionError::InvalidParameters(format!(
-                        "Invalid read concern: {}",
-                        e
-                    ))
-                    .into());
-                }
-            }
-        }
+                    if let Some(max_time_ms) = options.max_time_ms {
+                        agg_opts.max_time = Some(std::time::Duration::from_millis(max_time_ms));
+                        debug!("Applied max_time_ms: {}", max_time_ms);
+                    }
 
-        if let Some(let_vars) = options.let_vars {
-            agg_opts.let_vars = Some(let_vars);
-            debug!("Applied let_vars");
-        }
+                    if let Some(collation_doc) = options.collation {
+                        match bson::from_document(collation_doc) {
+                            Ok(collation) => {
+                                agg_opts.collation = Some(collation);
+                                debug!("Applied collation");
+                            }
+                            Err(e) => {
+                                return Err(ExecutionError::InvalidParameters(format!(
+                                    "Invalid collation: {}",
+                                    e
+                                ))
+                                .into());
+                            }
+                        }
+                    }
 
-        // Execute aggregation
-        let mut cursor = coll
-            .aggregate(pipeline.clone())
-            .with_options(agg_opts)
-            .await
-            .map_err(|e| ExecutionError::QueryFailed(e.to_string()))?;
+                    if let Some(hint_doc) = options.hint {
+                        agg_opts.hint = Some(Hint::Keys(hint_doc));
+                        debug!("Applied hint");
+                    }
 
-        // Collect results
-        let mut documents = Vec::new();
+                    if let Some(read_concern_doc) = options.read_concern {
+                        match bson::from_document(read_concern_doc) {
+                            Ok(read_concern) => {
+                                agg_opts.read_concern = Some(read_concern);
+                                debug!("Applied read_concern");
+                            }
+                            Err(e) => {
+                                return Err(ExecutionError::InvalidParameters(format!(
+                                    "Invalid read concern: {}",
+                                    e
+                                ))
+                                .into());
+                            }
+                        }
+                    }
 
-        while let Some(doc) = cursor
-            .try_next()
-            .await
-            .map_err(|e| ExecutionError::CursorError(e.to_string()))?
-        {
-            documents.push(doc);
-        }
+                    if let Some(let_vars) = options.let_vars {
+                        agg_opts.let_vars = Some(let_vars);
+                        debug!("Applied let_vars");
+                    }
+
+                    // Execute aggregation
+                    let mut cursor = coll
+                        .aggregate(pipeline)
+                        .with_options(agg_opts)
+                        .await
+                        .map_err(|e| ExecutionError::QueryFailed(e.to_string()))?;
+
+                    // Collect results
+                    let mut documents = Vec::new();
+
+                    while let Some(doc) = cursor
+                        .try_next()
+                        .await
+                        .map_err(|e| ExecutionError::CursorError(e.to_string()))?
+                    {
+                        documents.push(doc);
+                    }
+
+                    let count = documents.len();
+                    info!("Aggregation returned {} documents", count);
+
+                    Ok(documents)
+                })
+            },
+        )
+        .await?;
 
         let count = documents.len();
-        info!("Aggregation returned {} documents", count);
 
         Ok(ExecutionResult {
             success: true,
@@ -1185,51 +1360,81 @@ impl QueryExecutor {
             pipeline.len()
         );
 
-        // Get database and collection
-        let db = self.context.get_database().await?;
-        let coll: Collection<Document> = db.collection(&collection);
+        let client = self.context.get_client().await?;
+        let client_id = self.context.get_client_id();
+        let cancel_token = self.context.get_cancel_token();
+        let db_name = self.context.get_current_database().await;
 
-        // Build MongoDB aggregate options
-        let mut agg_opts = MongoAggregateOptions::default();
+        // Execute aggregate with killOp support
+        let cursor = run_killable_command(
+            client,
+            client_id,
+            cancel_token,
+            |client, handle| {
+                let db_name = db_name.clone();
+                let collection = collection.clone();
+                let pipeline = pipeline.clone();
+                let options = options.clone();
 
-        if options.allow_disk_use {
-            agg_opts.allow_disk_use = Some(true);
-        }
+                Box::pin(async move {
+                    let coll: Collection<Document> = client
+                        .database(&db_name)
+                        .collection(&collection);
 
-        if let Some(batch_size_opt) = options.batch_size {
-            agg_opts.batch_size = Some(batch_size_opt);
-        }
+                    // Build MongoDB aggregate options
+                    let mut agg_opts = MongoAggregateOptions::default();
 
-        if let Some(max_time) = options.max_time_ms {
-            agg_opts.max_time = Some(std::time::Duration::from_millis(max_time));
-        }
+                    // CRITICAL: Set comment for killOp support
+                    agg_opts.comment = Some(Bson::String(handle.comment().to_string()));
 
-        if let Some(collation_doc) = options.collation {
-            match bson::from_document(collation_doc) {
-                Ok(collation) => {
-                    agg_opts.collation = Some(collation);
-                    debug!("Applied collation");
-                }
-                Err(e) => {
-                    return Err(ExecutionError::QueryFailed(format!(
-                        "Invalid collation: {}",
-                        e
-                    ))
-                    .into());
-                }
-            }
-        }
+                    if options.allow_disk_use {
+                        agg_opts.allow_disk_use = Some(true);
+                        debug!("Applied allow_disk_use: true");
+                    }
 
-        if let Some(ref hint_doc) = options.hint {
-            agg_opts.hint = Some(Hint::Keys(hint_doc.clone()));
-        }
+                    if let Some(batch_size_opt) = options.batch_size {
+                        agg_opts.batch_size = Some(batch_size_opt);
+                        debug!("Applied batch_size from options: {}", batch_size_opt);
+                    }
 
-        // Execute aggregation
-        let cursor = coll
-            .aggregate(pipeline)
-            .with_options(agg_opts)
-            .await
-            .map_err(|e| ExecutionError::QueryFailed(e.to_string()))?;
+                    if let Some(max_time_ms) = options.max_time_ms {
+                        agg_opts.max_time = Some(std::time::Duration::from_millis(max_time_ms));
+                        debug!("Applied max_time_ms: {}", max_time_ms);
+                    }
+
+                    if let Some(collation_doc) = options.collation {
+                        match bson::from_document(collation_doc) {
+                            Ok(collation) => {
+                                agg_opts.collation = Some(collation);
+                                debug!("Applied collation");
+                            }
+                            Err(e) => {
+                                return Err(ExecutionError::InvalidParameters(format!(
+                                    "Invalid collation: {}",
+                                    e
+                                ))
+                                .into());
+                            }
+                        }
+                    }
+
+                    if let Some(hint_doc) = options.hint {
+                        agg_opts.hint = Some(Hint::Keys(hint_doc));
+                        debug!("Applied hint");
+                    }
+
+                    // Execute aggregation
+                    let cursor = coll
+                        .aggregate(pipeline)
+                        .with_options(agg_opts)
+                        .await
+                        .map_err(|e| ExecutionError::QueryFailed(e.to_string()))?;
+
+                    Ok(cursor)
+                })
+            },
+        )
+        .await?;
 
         // Create streaming query wrapper
         let streaming_query = AggregateStreamingQuery::new_aggregate(cursor, batch_size);
@@ -1266,14 +1471,43 @@ impl QueryExecutor {
             collection, field
         );
 
-        let db = self.context.get_database().await?;
-        let coll: Collection<Document> = db.collection(&collection);
+        let client = self.context.get_client().await?;
+        let client_id = self.context.get_client_id();
+        let cancel_token = self.context.get_cancel_token();
+        let db_name = self.context.get_current_database().await;
 
-        let filter_doc = filter.unwrap_or_else(|| Document::new());
-        let values = coll
-            .distinct(&field, filter_doc)
-            .await
-            .map_err(|e| ExecutionError::QueryFailed(e.to_string()))?;
+        let values = run_killable_command(
+            client,
+            client_id,
+            cancel_token,
+            |client, handle| {
+                let db_name = db_name.clone();
+                let collection = collection.clone();
+                let field = field.clone();
+                let filter = filter.clone();
+
+                Box::pin(async move {
+                    let coll: Collection<Document> = client
+                        .database(&db_name)
+                        .collection(&collection);
+
+                    use mongodb::options::DistinctOptions;
+                    let mut options = DistinctOptions::default();
+                    // CRITICAL: Set comment for killOp support
+                    options.comment = Some(Bson::String(handle.comment().to_string()));
+
+                    let filter_doc = filter.unwrap_or_else(|| Document::new());
+                    let values = coll
+                        .distinct(&field, filter_doc)
+                        .with_options(options)
+                        .await
+                        .map_err(|e| ExecutionError::QueryFailed(e.to_string()))?;
+
+                    Ok(values)
+                })
+            },
+        )
+        .await?;
 
         // Convert Bson values to Documents for display
         let count = values.len();

@@ -8,6 +8,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use mongodb::{Client, Database};
+use tokio_util::sync::CancellationToken;
 
 use crate::connection::ConnectionManager;
 use crate::error::Result;
@@ -24,6 +25,12 @@ pub struct ExecutionContext {
 
     /// Configuration file path
     pub(crate) config_path: Option<PathBuf>,
+
+    /// Client ID for this mongosh instance (used for killOp comment tagging)
+    client_id: Arc<String>,
+
+    /// Cancellation token for Ctrl+C handling
+    cancel_token: CancellationToken,
 }
 
 impl ExecutionContext {
@@ -36,11 +43,7 @@ impl ExecutionContext {
     /// # Returns
     /// * `Self` - New execution context
     pub fn new(connection: ConnectionManager, shared_state: SharedState) -> Self {
-        Self {
-            connection: Arc::new(RwLock::new(connection)),
-            shared_state,
-            config_path: None,
-        }
+        Self::with_config_path(connection, shared_state, None)
     }
 
     /// Create a new execution context with config path
@@ -57,11 +60,36 @@ impl ExecutionContext {
         shared_state: SharedState,
         config_path: Option<PathBuf>,
     ) -> Self {
+        // Generate a unique client ID for this session
+        let client_id = Self::generate_client_id();
+
         Self {
             connection: Arc::new(RwLock::new(connection)),
             shared_state,
             config_path,
+            client_id: Arc::new(client_id),
+            cancel_token: CancellationToken::new(),
         }
+    }
+
+    /// Generate a unique client ID for this mongosh instance
+    ///
+    /// Format: hostname-pid-timestamp
+    fn generate_client_id() -> String {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let hostname = hostname::get()
+            .ok()
+            .and_then(|h| h.into_string().ok())
+            .unwrap_or_else(|| "unknown".to_string());
+
+        let pid = std::process::id();
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        format!("{}-{}-{}", hostname, pid, timestamp)
     }
 
     /// Get current database name
@@ -99,5 +127,28 @@ impl ExecutionContext {
     pub async fn get_client(&self) -> Result<Client> {
         let conn = self.connection.read().await;
         Ok(conn.get_client()?.clone())
+    }
+
+    /// Get the client ID for this mongosh instance
+    ///
+    /// # Returns
+    /// * `&str` - Client ID string
+    pub fn get_client_id(&self) -> &str {
+        &self.client_id
+    }
+
+    /// Get the cancellation token for this context
+    ///
+    /// # Returns
+    /// * `CancellationToken` - Token that can be used to cancel operations
+    pub fn get_cancel_token(&self) -> CancellationToken {
+        self.cancel_token.clone()
+    }
+
+    /// Reset the cancellation token (after a cancellation, for the next command)
+    ///
+    /// This creates a fresh token so subsequent commands aren't pre-cancelled
+    pub fn reset_cancel_token(&mut self) {
+        self.cancel_token = CancellationToken::new();
     }
 }
