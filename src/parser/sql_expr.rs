@@ -334,6 +334,35 @@ impl SqlExprConverter {
                     .into()),
                 }
             }
+            "ISODATE" | "DATE" => {
+                // ISODate/Date expects a single string argument with ISO 8601 format
+                if args.len() != 1 {
+                    return Err(ParseError::InvalidCommand(format!(
+                        "{}() expects 1 argument, got {}",
+                        name,
+                        args.len()
+                    ))
+                    .into());
+                }
+
+                let date_str = match &args[0] {
+                    SqlExpr::Literal(SqlLiteral::String(s)) => s.clone(),
+                    _ => {
+                        return Err(ParseError::InvalidCommand(
+                            format!("{}() expects a string argument", name),
+                        )
+                        .into());
+                    }
+                };
+
+                // Parse ISO 8601 date string using MongoDB's built-in parser
+                mongodb::bson::DateTime::parse_rfc3339_str(&date_str)
+                    .map(mongodb::bson::Bson::DateTime)
+                    .map_err(|e| ParseError::InvalidCommand(format!(
+                        "Invalid date string '{}': {}. Expected ISO 8601 format (e.g., '2026-02-15T16:00:00.000Z')",
+                        date_str, e
+                    )).into())
+            }
             _ => Err(ParseError::InvalidCommand(format!("Unsupported function: {}", name)).into()),
         }
     }
@@ -675,5 +704,67 @@ mod tests {
         let doc = result.unwrap();
         assert!(doc.contains_key("_id"));
         assert!(doc.contains_key("count"));
+    }
+
+    #[test]
+    fn test_isodate_function() {
+        let args = vec![SqlExpr::Literal(SqlLiteral::String(
+            "2026-02-15T16:00:00.000Z".to_string(),
+        ))];
+        let result = SqlExprConverter::function_to_bson("ISODate", &args);
+        assert!(result.is_ok());
+        match result.unwrap() {
+            mongodb::bson::Bson::DateTime(_) => {} // Success
+            _ => panic!("Expected DateTime type"),
+        }
+    }
+
+    #[test]
+    fn test_date_function() {
+        let args = vec![SqlExpr::Literal(SqlLiteral::String(
+            "2024-01-01T00:00:00Z".to_string(),
+        ))];
+        let result = SqlExprConverter::function_to_bson("DATE", &args);
+        assert!(result.is_ok());
+        match result.unwrap() {
+            mongodb::bson::Bson::DateTime(_) => {} // Success
+            _ => panic!("Expected DateTime type"),
+        }
+    }
+
+    #[test]
+    fn test_isodate_with_milliseconds() {
+        let args = vec![SqlExpr::Literal(SqlLiteral::String(
+            "2024-06-15T10:30:00.500Z".to_string(),
+        ))];
+        let result = SqlExprConverter::function_to_bson("ISODate", &args);
+        assert!(result.is_ok());
+        match result.unwrap() {
+            mongodb::bson::Bson::DateTime(_) => {} // Success
+            _ => panic!("Expected DateTime type"),
+        }
+    }
+
+    #[test]
+    fn test_isodate_invalid_format() {
+        let args = vec![SqlExpr::Literal(SqlLiteral::String(
+            "invalid-date".to_string(),
+        ))];
+        let result = SqlExprConverter::function_to_bson("ISODate", &args);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_isodate_wrong_arg_count() {
+        let args = vec![];
+        let result = SqlExprConverter::function_to_bson("ISODate", &args);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_isodate_non_string_arg() {
+        let args = vec![SqlExpr::Literal(SqlLiteral::Number(123.0))];
+        let result = SqlExprConverter::function_to_bson("ISODate", &args);
+        assert!(result.is_err());
     }
 }
