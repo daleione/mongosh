@@ -2,11 +2,13 @@
 
 ## Overview
 
-mongosh SQL mode supports standard SQL datetime syntax, providing a more intuitive way to work with dates and times in your queries. This feature bridges the gap between traditional SQL databases and MongoDB, making it easier for SQL users to work with temporal data.
+mongosh SQL mode supports standard SQL datetime syntax for date and time literals. This feature makes it easier for SQL users to work with temporal data in MongoDB using familiar syntax.
 
-## Date and Time Literals
+## Supported Features
 
-### DATE Literals
+### Date and Time Literals
+
+#### DATE Literals
 
 Use the `DATE` keyword to define date values in standard SQL format.
 
@@ -18,7 +20,7 @@ SELECT * FROM orders WHERE order_date > DATE '2024-01-15'
 -- Equivalent to: TIMESTAMP '2024-01-15T00:00:00Z'
 ```
 
-### TIMESTAMP Literals
+#### TIMESTAMP Literals
 
 Use the `TIMESTAMP` keyword for precise date and time values.
 
@@ -38,42 +40,35 @@ SELECT * FROM tasks WHERE deadline < TIMESTAMP '2024-12-31T23:59:59Z'
 
 ### Supported Date Formats
 
-| Format | Example | Description |
-|--------|---------|-------------|
-| ISO 8601 full | `2024-01-15T14:30:00.000Z` | Standard format, recommended |
-| ISO 8601 no ms | `2024-01-15T14:30:00Z` | Auto-completes milliseconds to .000 |
-| Space-separated | `2024-01-15 14:30:00` | Auto-converts to ISO, adds UTC |
-| Date only | `2024-01-15` | Auto-adds time as 00:00:00 UTC |
-| Slash-separated | `2024/01/15` | Auto-converts to standard format |
+| Format          | Example                    | Description                         |
+| --------------- | -------------------------- | ----------------------------------- |
+| ISO 8601 full   | `2024-01-15T14:30:00.000Z` | Standard format, recommended        |
+| ISO 8601 no ms  | `2024-01-15T14:30:00Z`     | Auto-completes milliseconds to .000 |
+| Space-separated | `2024-01-15 14:30:00`      | Auto-converts to ISO, adds UTC      |
+| Date only       | `2024-01-15`               | Auto-adds time as 00:00:00 UTC      |
+| Slash-separated | `2024/01/15`               | Auto-converts to standard format    |
 
-## Current Time Functions
+### Current Time Functions
 
-### CURRENT_TIMESTAMP
+#### CURRENT_TIMESTAMP
 
 Returns the current date and time.
 
 ```sql
 -- Standard SQL syntax (no parentheses)
 SELECT * FROM sessions WHERE last_active > CURRENT_TIMESTAMP
-
--- Find records created in the last hour
-SELECT * FROM notifications 
-WHERE created_at > CURRENT_TIMESTAMP - INTERVAL '1' HOUR
 ```
 
-### CURRENT_DATE
+#### CURRENT_DATE
 
 Returns the current date with time set to 00:00:00.
 
 ```sql
 -- Get today's orders
-SELECT * FROM orders WHERE order_date = CURRENT_DATE
-
--- Get orders from the last 7 days
-SELECT * FROM orders WHERE order_date >= CURRENT_DATE - INTERVAL '7' DAY
+SELECT * FROM orders WHERE order_date >= CURRENT_DATE
 ```
 
-### NOW()
+#### NOW()
 
 Alternative syntax for getting the current timestamp.
 
@@ -85,7 +80,7 @@ SELECT * FROM events WHERE event_time > NOW()
 SELECT * FROM events WHERE event_time > NOW
 ```
 
-## MongoDB Compatibility
+### MongoDB Compatibility
 
 The legacy `ISODate()` function continues to work for backward compatibility.
 
@@ -109,37 +104,22 @@ SELECT * FROM orders WHERE order_date > DATE '2024-01-01'
 SELECT * FROM users WHERE registered_at < TIMESTAMP '2024-12-31 23:59:59'
 
 -- Today's activity logs
-SELECT * FROM activity_logs WHERE created_at > CURRENT_DATE
+SELECT * FROM activity_logs WHERE created_at >= CURRENT_DATE
 ```
 
 ### Date Range Queries
 
 ```sql
 -- Orders from January 2024
-SELECT * FROM orders 
-WHERE order_date >= DATE '2024-01-01' 
+SELECT * FROM orders
+WHERE order_date >= DATE '2024-01-01'
   AND order_date < DATE '2024-02-01'
 
--- Recent events (last 24 hours)
-SELECT * FROM events 
-WHERE event_time > CURRENT_TIMESTAMP - INTERVAL '24' HOUR
-ORDER BY event_time DESC
-```
-
-### Aggregation with Dates
-
-```sql
--- Count orders by date
-SELECT DATE(order_date) AS date, COUNT(*) AS order_count
-FROM orders 
-WHERE order_date >= DATE '2024-01-01'
-GROUP BY DATE(order_date)
-ORDER BY date DESC
-
--- Today's order total
-SELECT SUM(amount) AS daily_total
-FROM orders 
-WHERE order_date >= CURRENT_DATE
+-- Orders from the last week
+SELECT * FROM orders
+WHERE order_date >= DATE '2024-01-15'
+  AND order_date <= DATE '2024-01-22'
+ORDER BY order_date DESC
 ```
 
 ### Complex Date Conditions
@@ -156,6 +136,17 @@ SELECT * FROM tasks
 WHERE due_date < CURRENT_TIMESTAMP
   AND completed_at IS NULL
 ORDER BY due_date ASC
+```
+
+### Using with GROUP BY
+
+```sql
+-- Count orders by day (using date field directly)
+SELECT order_date, COUNT(*) AS order_count
+FROM orders
+WHERE order_date >= DATE '2024-01-01'
+GROUP BY order_date
+ORDER BY order_date DESC
 ```
 
 ## Timezone Handling
@@ -177,29 +168,29 @@ DATE '2024-01-15'
 
 ## Comparison: MongoDB vs Standard SQL
 
-| MongoDB Syntax | Standard SQL Syntax | Benefit |
-|----------------|---------------------|---------|
-| `ISODate('2024-01-15T14:30:00.000Z')` | `TIMESTAMP '2024-01-15 14:30:00'` | More concise |
-| `ISODate('2024-01-15')` | `DATE '2024-01-15'` | Clearer semantics |
-| `new Date()` | `CURRENT_TIMESTAMP` or `NOW()` | SQL standard |
-| N/A | `CURRENT_DATE` | Easier date comparison |
+| MongoDB Syntax                        | Standard SQL Syntax               | Benefit                |
+| ------------------------------------- | --------------------------------- | ---------------------- |
+| `ISODate('2024-01-15T14:30:00.000Z')` | `TIMESTAMP '2024-01-15 14:30:00'` | More concise           |
+| `ISODate('2024-01-15')`               | `DATE '2024-01-15'`               | Clearer semantics      |
+| `new Date()`                          | `CURRENT_TIMESTAMP` or `NOW()`    | SQL standard           |
+| N/A                                   | `CURRENT_DATE`                    | Easier date comparison |
 
 ## Performance Considerations
 
 - Type literals are converted to MongoDB `DateTime` objects during parsing
 - Performance is equivalent to using `ISODate()` function
 - For indexed fields, use precise timestamps to leverage indexes effectively
-- Avoid complex date calculations in WHERE clauses when possible
+- Use range queries to take advantage of indexes
 
 ```sql
--- Good: Uses index efficiently
-SELECT * FROM orders 
+-- Good: Uses index efficiently with range query
+SELECT * FROM orders
 WHERE order_date >= DATE '2024-01-01'
   AND order_date < DATE '2024-02-01'
 
--- Less efficient: Date function prevents index usage
-SELECT * FROM orders 
-WHERE EXTRACT(MONTH FROM order_date) = 1
+-- Also good: Uses index for greater-than comparison
+SELECT * FROM events
+WHERE event_time > TIMESTAMP '2024-01-15 14:30:00'
 ```
 
 ## Error Handling
@@ -211,7 +202,7 @@ WHERE EXTRACT(MONTH FROM order_date) = 1
 SELECT * FROM orders WHERE order_date > DATE 'not-a-date'
 
 -- Error message:
--- Invalid date string 'not-a-date'. Expected ISO 8601 format 
+-- Invalid date string 'not-a-date'. Expected ISO 8601 format
 -- (e.g., '2024-01-15T14:30:00Z', '2024-01-15 14:30:00', or '2024-01-15')
 ```
 
@@ -242,13 +233,13 @@ SELECT * FROM orders WHERE order_date > TIMESTAMP '2024-01-15 25:00:00'
    - More aligned with SQL standards
    - Better for SQL-to-MongoDB migrations
 
-2. **Specify Timezones**
+2. **Specify Timezones Explicitly**
    - Always use `Z` suffix for UTC in production
    - Document timezone conventions in your team
-   - Consider storing all times in UTC
+   - Store all times in UTC to avoid confusion
 
-3. **Use CURRENT_TIMESTAMP**
-   - Use `CURRENT_TIMESTAMP` instead of constructing `new Date()`
+3. **Use CURRENT_TIMESTAMP for Dynamic Queries**
+   - Use `CURRENT_TIMESTAMP` instead of hardcoded dates for "now"
    - More portable across databases
    - Clearer intent in queries
 
@@ -267,7 +258,7 @@ SELECT * FROM orders WHERE order_date > TIMESTAMP '2024-01-15 25:00:00'
 db.orders.createIndex({ order_date: 1 })
 
 -- Efficient range query using index
-SELECT * FROM orders 
+SELECT * FROM orders
 WHERE order_date >= DATE '2024-01-01'
   AND order_date < DATE '2024-02-01'
 ```
@@ -279,118 +270,50 @@ WHERE order_date >= DATE '2024-01-01'
 ```sql
 -- Today's revenue
 SELECT SUM(total_amount) AS daily_revenue
-FROM orders 
+FROM orders
 WHERE order_date >= CURRENT_DATE
   AND status = 'completed'
 
--- Monthly sales report
-SELECT 
-    DATE_TRUNC('month', order_date) AS month,
-    COUNT(*) AS order_count,
-    SUM(total_amount) AS revenue
-FROM orders 
+-- Orders this month
+SELECT COUNT(*) AS order_count, SUM(total_amount) AS revenue
+FROM orders
 WHERE order_date >= DATE '2024-01-01'
-GROUP BY DATE_TRUNC('month', order_date)
-ORDER BY month DESC
+  AND order_date < DATE '2024-02-01'
+  AND status = 'completed'
 ```
 
 ### User Activity Tracking
 
 ```sql
--- Active users in the last 30 days
-SELECT COUNT(DISTINCT user_id) AS active_users
-FROM user_activity 
-WHERE last_seen >= CURRENT_DATE - INTERVAL '30' DAY
-
--- User registration trend
-SELECT 
-    DATE(registered_at) AS date,
-    COUNT(*) AS new_users
-FROM users 
+-- Recently registered users
+SELECT user_id, username, registered_at
+FROM users
 WHERE registered_at >= DATE '2024-01-01'
-GROUP BY DATE(registered_at)
-ORDER BY date DESC
+ORDER BY registered_at DESC
+
+-- Active users today
+SELECT COUNT(DISTINCT user_id) AS active_users
+FROM user_sessions
+WHERE last_active >= CURRENT_DATE
 ```
 
 ### Subscription Management
 
 ```sql
--- Expiring subscriptions (next 7 days)
+-- Active subscriptions
 SELECT user_id, plan_name, end_date
-FROM subscriptions 
+FROM subscriptions
+WHERE start_date <= CURRENT_DATE
+  AND (end_date IS NULL OR end_date >= CURRENT_DATE)
+  AND status = 'active'
+
+-- Subscriptions expiring this week
+SELECT user_id, plan_name, end_date
+FROM subscriptions
 WHERE end_date >= CURRENT_DATE
-  AND end_date <= CURRENT_DATE + INTERVAL '7' DAY
+  AND end_date <= DATE '2024-01-22'
   AND auto_renew = false
 ORDER BY end_date ASC
-
--- Active premium subscribers
-SELECT COUNT(*) AS premium_count
-FROM subscriptions 
-WHERE plan_type = 'premium'
-  AND start_date <= CURRENT_DATE
-  AND (end_date IS NULL OR end_date >= CURRENT_DATE)
-```
-
-## Future Enhancements
-
-The following features are planned for future releases:
-
-### INTERVAL Expressions
-
-```sql
--- Calculate date ranges dynamically
-SELECT * FROM orders 
-WHERE order_date > CURRENT_TIMESTAMP - INTERVAL '7' DAY
-
-SELECT * FROM events 
-WHERE event_time BETWEEN 
-    CURRENT_DATE - INTERVAL '1' MONTH 
-    AND CURRENT_DATE
-```
-
-### Date Extraction Functions
-
-```sql
--- Extract date components
-SELECT 
-    EXTRACT(YEAR FROM order_date) AS year,
-    EXTRACT(MONTH FROM order_date) AS month,
-    COUNT(*) AS order_count
-FROM orders 
-GROUP BY year, month
-
--- Date part functions
-SELECT * FROM events 
-WHERE YEAR(event_time) = 2024
-  AND MONTH(event_time) = 1
-```
-
-### Timezone Conversion
-
-```sql
--- Convert between timezones
-SELECT * FROM events 
-WHERE event_time AT TIME ZONE 'America/New_York' > '2024-01-01'
-
--- Display in different timezone
-SELECT 
-    event_name,
-    event_time AT TIME ZONE 'Asia/Shanghai' AS beijing_time
-FROM events
-```
-
-### Date Arithmetic
-
-```sql
--- Add/subtract time units
-SELECT * FROM reminders 
-WHERE remind_at = due_date - INTERVAL '1' DAY
-
--- Calculate date differences
-SELECT 
-    order_id,
-    DATE_DIFF('day', order_date, delivery_date) AS delivery_days
-FROM orders
 ```
 
 ## Related Documentation
@@ -405,20 +328,20 @@ FROM orders
 
 ### Supported Functions
 
-| Function | Description | Example |
-|----------|-------------|---------|
-| `DATE` | Create date literal | `DATE '2024-01-15'` |
-| `TIMESTAMP` | Create timestamp literal | `TIMESTAMP '2024-01-15 14:30:00'` |
-| `CURRENT_TIMESTAMP` | Current date and time | `CURRENT_TIMESTAMP` |
-| `CURRENT_DATE` | Current date (time = 00:00:00) | `CURRENT_DATE` |
-| `NOW()` | Current date and time | `NOW()` |
-| `ISODate()` | MongoDB date (legacy) | `ISODate('2024-01-15')` |
+| Function            | Description                    | Example                           |
+| ------------------- | ------------------------------ | --------------------------------- |
+| `DATE`              | Create date literal            | `DATE '2024-01-15'`               |
+| `TIMESTAMP`         | Create timestamp literal       | `TIMESTAMP '2024-01-15 14:30:00'` |
+| `CURRENT_TIMESTAMP` | Current date and time          | `CURRENT_TIMESTAMP`               |
+| `CURRENT_DATE`      | Current date (time = 00:00:00) | `CURRENT_DATE`                    |
+| `NOW()`             | Current date and time          | `NOW()`                           |
+| `ISODate()`         | MongoDB date (legacy)          | `ISODate('2024-01-15')`           |
 
 ### Date Format Patterns
 
-| Pattern | Format | Example |
-|---------|--------|---------|
-| ISO 8601 | `YYYY-MM-DDTHH:MM:SS.sssZ` | `2024-01-15T14:30:00.123Z` |
-| ISO No MS | `YYYY-MM-DDTHH:MM:SSZ` | `2024-01-15T14:30:00Z` |
-| Space Sep | `YYYY-MM-DD HH:MM:SS` | `2024-01-15 14:30:00` |
-| Date Only | `YYYY-MM-DD` | `2024-01-15` |
+| Pattern   | Format                     | Example                    |
+| --------- | -------------------------- | -------------------------- |
+| ISO 8601  | `YYYY-MM-DDTHH:MM:SS.sssZ` | `2024-01-15T14:30:00.123Z` |
+| ISO No MS | `YYYY-MM-DDTHH:MM:SSZ`     | `2024-01-15T14:30:00Z`     |
+| Space Sep | `YYYY-MM-DD HH:MM:SS`      | `2024-01-15 14:30:00`      |
+| Date Only | `YYYY-MM-DD`               | `2024-01-15`               |
