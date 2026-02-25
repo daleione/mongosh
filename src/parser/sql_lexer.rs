@@ -57,6 +57,16 @@ pub enum TokenKind {
     Group,
     Order,
     Explain,
+    Date,
+    Timestamp,
+    Time,
+    Current,
+    CurrentTimestamp,
+    CurrentDate,
+    CurrentTime,
+    Cast,
+    Interval,
+    Now,
 
     // Identifiers and Literals
     Ident(String),
@@ -375,6 +385,16 @@ impl SqlLexer {
             "NULL" => TokenKind::Null,
             "TRUE" => TokenKind::True,
             "FALSE" => TokenKind::False,
+            "DATE" => TokenKind::Date,
+            "TIMESTAMP" => TokenKind::Timestamp,
+            "TIME" => TokenKind::Time,
+            "CURRENT" => TokenKind::Current,
+            "CURRENT_TIMESTAMP" => TokenKind::CurrentTimestamp,
+            "CURRENT_DATE" => TokenKind::CurrentDate,
+            "CURRENT_TIME" => TokenKind::CurrentTime,
+            "CAST" => TokenKind::Cast,
+            "INTERVAL" => TokenKind::Interval,
+            "NOW" => TokenKind::Now,
             _ => TokenKind::Ident(value),
         };
 

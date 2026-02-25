@@ -103,6 +103,18 @@ impl SqlExprConverter {
             SqlExpr::Like { expr, pattern } => Self::like_to_filter(expr, pattern),
 
             SqlExpr::IsNull { expr, negated } => Self::is_null_to_filter(expr, *negated),
+
+            SqlExpr::TypedLiteral { .. } => {
+                Err(ParseError::InvalidCommand("Cannot use typed literal as filter".to_string()).into())
+            }
+
+            SqlExpr::CurrentTime { .. } => {
+                Err(ParseError::InvalidCommand("Cannot use current time function as filter".to_string()).into())
+            }
+
+            SqlExpr::Interval { .. } => {
+                Err(ParseError::InvalidCommand("Cannot use interval as filter".to_string()).into())
+            }
         }
     }
 
@@ -294,6 +306,12 @@ impl SqlExprConverter {
                 }
             }
             SqlExpr::Function { name, args } => Self::function_to_bson(name, args),
+            SqlExpr::TypedLiteral { type_name, value } => Self::typed_literal_to_bson(type_name, value),
+            SqlExpr::CurrentTime { kind } => Self::current_time_to_bson(kind),
+            SqlExpr::Interval { .. } => Err(ParseError::InvalidCommand(
+                "INTERVAL not yet supported as a standalone value".to_string(),
+            )
+            .into()),
             _ => Err(ParseError::InvalidCommand(
                 "Complex expressions not supported as values".to_string(),
             )
@@ -364,6 +382,96 @@ impl SqlExprConverter {
                     )).into())
             }
             _ => Err(ParseError::InvalidCommand(format!("Unsupported function: {}", name)).into()),
+        }
+    }
+
+    /// Convert typed literal to BSON (DATE '...', TIMESTAMP '...')
+    fn typed_literal_to_bson(type_name: &str, value: &str) -> Result<mongodb::bson::Bson> {
+        match type_name.to_uppercase().as_str() {
+            "DATE" | "TIMESTAMP" => Self::parse_datetime_string(value),
+            "TIME" => Err(ParseError::InvalidCommand(
+                "TIME type not yet supported. Use TIMESTAMP instead.".to_string(),
+            ).into()),
+            _ => Err(ParseError::InvalidCommand(
+                format!("Unsupported type: {}", type_name)
+            ).into()),
+        }
+    }
+
+    /// Parse datetime string with multiple format support
+    fn parse_datetime_string(value: &str) -> Result<mongodb::bson::Bson> {
+        use mongodb::bson::DateTime as BsonDateTime;
+
+        // Fast path: try RFC 3339 directly (most common case)
+        if let Ok(dt) = BsonDateTime::parse_rfc3339_str(value) {
+            return Ok(mongodb::bson::Bson::DateTime(dt));
+        }
+
+        // Analyze string characteristics once
+        let has_t = value.contains('T');
+        let has_space = value.contains(' ');
+        let has_tz = value.ends_with('Z')
+            || value.contains('+')
+            || Self::has_negative_tz_offset(value);
+
+        // Build normalized ISO 8601 string based on input format
+        let iso_str = match (has_t, has_space) {
+            // Space-separated: '2026-02-15 16:00:00' → '2026-02-15T16:00:00Z'
+            (false, true) => {
+                let base = value.replace(' ', "T");
+                if has_tz { base } else { format!("{}Z", base) }
+            }
+            // Has 'T' but no timezone: '2026-02-15T16:00:00' → '2026-02-15T16:00:00Z'
+            (true, _) if !has_tz => format!("{}Z", value),
+            // Date only: '2026-02-15' or '2026/02/15'
+            (false, false) => {
+                let normalized = value.replace('/', "-");
+                format!("{}T00:00:00Z", normalized)
+            }
+            // Already handled by fast path or invalid
+            _ => return Err(Self::datetime_parse_error(value)),
+        };
+
+        BsonDateTime::parse_rfc3339_str(&iso_str)
+            .map(mongodb::bson::Bson::DateTime)
+            .map_err(|_| Self::datetime_parse_error(value))
+    }
+
+    /// Check if string has negative timezone offset (e.g., '-08:00')
+    fn has_negative_tz_offset(value: &str) -> bool {
+        // Look for pattern like '-HH:MM' at end, distinguishing from date dashes
+        if let Some(pos) = value.rfind('-') {
+            // Timezone offset appears after 'T' and has ':' following
+            pos > 10 && value[pos..].contains(':')
+        } else {
+            false
+        }
+    }
+
+    /// Build datetime parse error with supported formats
+    #[inline]
+    fn datetime_parse_error(value: &str) -> crate::error::MongoshError {
+        ParseError::InvalidCommand(format!(
+            "Invalid date string '{}'. Supported formats:\n  \
+             - ISO 8601: '2026-02-15T16:00:00Z'\n  \
+             - Date only: '2026-02-15'\n  \
+             - Space-separated: '2026-02-15 16:00:00'\n  \
+             - Slash-separated: '2026/02/15'",
+            value
+        )).into()
+    }
+
+    /// Convert current time function to BSON (CURRENT_TIMESTAMP, NOW())
+    fn current_time_to_bson(kind: &str) -> Result<mongodb::bson::Bson> {
+        match kind.to_uppercase().as_str() {
+            "CURRENT_TIMESTAMP" | "CURRENT_DATE" | "CURRENT_TIME" | "NOW" => {
+                Ok(mongodb::bson::Bson::DateTime(mongodb::bson::DateTime::now()))
+            }
+            _ => Err(ParseError::InvalidCommand(format!(
+                "Unsupported current time function: {}",
+                kind
+            ))
+            .into()),
         }
     }
 

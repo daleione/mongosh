@@ -1007,6 +1007,79 @@ impl SqlParser {
 
     /// Parse a value expression (literal or function call)
     fn parse_value_expr(&mut self) -> ParseResult<SqlExpr> {
+        // Check for typed literals: DATE '...', TIMESTAMP '...', TIME '...'
+        if let Some(token_kind) = self.peek_kind() {
+            match token_kind {
+                TokenKind::Date | TokenKind::Timestamp | TokenKind::Time => {
+                    let type_name = match token_kind {
+                        TokenKind::Date => "DATE",
+                        TokenKind::Timestamp => "TIMESTAMP",
+                        TokenKind::Time => "TIME",
+                        _ => unreachable!(),
+                    }.to_string();
+
+                    self.advance();
+
+                    // Expect string literal
+                    if let Some(TokenKind::String(value)) = self.peek_kind() {
+                        let value = value.clone();
+                        self.advance();
+                        return ParseResult::Ok(SqlExpr::TypedLiteral { type_name, value });
+                    } else if self.is_at_eof() {
+                        return ParseResult::Partial(
+                            SqlExpr::TypedLiteral { type_name, value: String::new() },
+                            vec![Expected::String],
+                        );
+                    } else {
+                        return ParseResult::Error(ParseError::new(
+                            format!("Expected string literal after {}", type_name),
+                            self.current_position()..self.current_position(),
+                        ));
+                    }
+                }
+                TokenKind::CurrentTimestamp => {
+                    self.advance();
+                    return ParseResult::Ok(SqlExpr::CurrentTime {
+                        kind: "CURRENT_TIMESTAMP".to_string()
+                    });
+                }
+                TokenKind::CurrentDate => {
+                    self.advance();
+                    return ParseResult::Ok(SqlExpr::CurrentTime {
+                        kind: "CURRENT_DATE".to_string()
+                    });
+                }
+                TokenKind::CurrentTime => {
+                    self.advance();
+                    return ParseResult::Ok(SqlExpr::CurrentTime {
+                        kind: "CURRENT_TIME".to_string()
+                    });
+                }
+                TokenKind::Now => {
+                    self.advance();
+
+                    // NOW can be used with or without parentheses
+                    if self.match_token(&TokenKind::LParen) {
+                        if !self.match_token(&TokenKind::RParen) {
+                            if self.is_at_eof() {
+                                return ParseResult::Partial(
+                                    SqlExpr::CurrentTime { kind: "NOW".to_string() },
+                                    vec![Expected::Keyword(")")],
+                                );
+                            }
+                            return ParseResult::Error(ParseError::new(
+                                "Expected ')' after NOW(".to_string(),
+                                self.current_position()..self.current_position(),
+                            ));
+                        }
+                    }
+
+                    return ParseResult::Ok(SqlExpr::CurrentTime { kind: "NOW".to_string() });
+                }
+                _ => {}
+            }
+        }
+
         // Check if it's a function call (identifier followed by '(')
         if let Some(TokenKind::Ident(name)) = self.peek_kind() {
             let name = name.clone();
@@ -2267,5 +2340,61 @@ mod tests {
         assert!(SqlParser::is_sql_command("EXPLAIN executionStats SELECT * FROM users"));
         assert!(SqlParser::is_sql_command("EXPLAIN 'executionStats' SELECT * FROM users"));
         assert!(SqlParser::is_sql_command("EXPLAIN"));
+    }
+
+    #[test]
+    fn test_parse_with_date_literal() {
+        // Test DATE 'yyyy-mm-dd' syntax
+        let result = SqlParser::parse_to_command("SELECT * FROM tasks WHERE create_time > DATE '2026-02-15'");
+        assert!(result.is_ok(), "Failed to parse DATE literal: {:?}", result);
+    }
+
+    #[test]
+    fn test_parse_with_timestamp_literal() {
+        // Test TIMESTAMP 'yyyy-mm-dd HH:MM:SS' syntax
+        let result = SqlParser::parse_to_command("SELECT * FROM tasks WHERE create_time > TIMESTAMP '2026-02-15 16:00:00'");
+        assert!(result.is_ok(), "Failed to parse TIMESTAMP literal: {:?}", result);
+    }
+
+    #[test]
+    fn test_parse_with_current_timestamp() {
+        // Test CURRENT_TIMESTAMP (no parentheses)
+        let result = SqlParser::parse_to_command("SELECT * FROM tasks WHERE create_time > CURRENT_TIMESTAMP");
+        assert!(result.is_ok(), "Failed to parse CURRENT_TIMESTAMP: {:?}", result);
+    }
+
+    #[test]
+    fn test_parse_with_current_date() {
+        // Test CURRENT_DATE
+        let result = SqlParser::parse_to_command("SELECT * FROM tasks WHERE create_time > CURRENT_DATE");
+        assert!(result.is_ok(), "Failed to parse CURRENT_DATE: {:?}", result);
+    }
+
+    #[test]
+    fn test_parse_with_now_function() {
+        // Test NOW() function
+        let result = SqlParser::parse_to_command("SELECT * FROM tasks WHERE create_time > NOW()");
+        assert!(result.is_ok(), "Failed to parse NOW(): {:?}", result);
+    }
+
+    #[test]
+    fn test_parse_with_now_no_parens() {
+        // Test NOW without parentheses (should also work)
+        let result = SqlParser::parse_to_command("SELECT * FROM tasks WHERE create_time > NOW");
+        assert!(result.is_ok(), "Failed to parse NOW without parens: {:?}", result);
+    }
+
+    #[test]
+    fn test_date_literal_simple_format() {
+        // Test simple date format: '2026-02-15' (auto-converts to ISO)
+        let result = SqlParser::parse_to_command("SELECT * FROM tasks WHERE create_time > DATE '2026-02-15'");
+        assert!(result.is_ok(), "Failed to parse simple DATE format: {:?}", result);
+    }
+
+    #[test]
+    fn test_timestamp_with_full_iso() {
+        // Test full ISO 8601 format with timezone
+        let result = SqlParser::parse_to_command("SELECT * FROM tasks WHERE create_time > TIMESTAMP '2026-02-15T16:00:00.000Z'");
+        assert!(result.is_ok(), "Failed to parse full ISO TIMESTAMP: {:?}", result);
     }
 }

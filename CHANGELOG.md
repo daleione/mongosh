@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **SQL standard datetime support** - Added support for SQL-92 standard date and time syntax
+
 ## [0.9.0] - 2026-02-11
 
 ### Added

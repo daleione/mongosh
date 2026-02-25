@@ -488,6 +488,23 @@ pub enum SqlExpr {
 
     /// IS NULL / IS NOT NULL
     IsNull { expr: Box<SqlExpr>, negated: bool },
+
+    /// Typed literal: DATE '2026-02-15', TIMESTAMP '2026-02-15 16:00:00'
+    TypedLiteral {
+        type_name: String,  // "DATE", "TIMESTAMP", "TIME"
+        value: String,
+    },
+
+    /// Current time functions: CURRENT_TIMESTAMP, CURRENT_DATE, NOW()
+    CurrentTime {
+        kind: String,  // "CURRENT_TIMESTAMP", "CURRENT_DATE", "CURRENT_TIME", "NOW"
+    },
+
+    /// Interval: INTERVAL '7' DAY
+    Interval {
+        value: String,
+        unit: String,  // "DAY", "HOUR", "MINUTE", "SECOND"
+    },
 }
 
 /// SQL literal value
