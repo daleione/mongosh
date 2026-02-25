@@ -16,9 +16,9 @@ use mongodb::bson::{Document, doc};
 
 use super::command::{AggregateOptions, Command, FindOptions, QueryCommand};
 use super::sql_context::{
-    ArrayAccessError, ArrayIndex, ArraySlice, Expected, FieldPath, ParseError, ParseResult,
-    SliceIndex, SqlClause, SqlColumn, SqlContext, SqlExpr, SqlLiteral, SqlLogicalOperator,
-    SqlOperator, SqlOrderBy, SqlSelect,
+    ArithmeticOperator, ArrayAccessError, ArrayIndex, ArraySlice, Expected, FieldPath,
+    ParseError, ParseResult, SliceIndex, SqlClause, SqlColumn, SqlContext, SqlExpr, SqlLiteral,
+    SqlLogicalOperator, SqlOperator, SqlOrderBy, SqlSelect,
 };
 use super::sql_expr::SqlExprConverter;
 use super::sql_lexer::{SqlLexer, Token, TokenKind};
@@ -388,7 +388,7 @@ impl SqlParser {
         ParseResult::Ok(columns)
     }
 
-    /// Parse a single column (field or aggregate function)
+    /// Parse a single column (field, aggregate function, or arithmetic expression)
     fn parse_column(&mut self) -> ParseResult<SqlColumn> {
         // Check for aggregate functions
         if let Some(token) = self.peek() {
@@ -398,10 +398,12 @@ impl SqlParser {
                 | TokenKind::Avg
                 | TokenKind::Min
                 | TokenKind::Max => {
-                    return self.parse_aggregate_column();
+                    // Parse aggregate function, but check if it's followed by arithmetic
+                    return self.parse_aggregate_or_expression();
                 }
                 TokenKind::Ident(name) => {
                     let name = name.clone();
+                    let saved_pos = self.pos;
                     self.advance();
 
                     // Parse field path (supports nested fields and array access)
@@ -414,6 +416,19 @@ impl SqlParser {
                             ));
                         }
                     };
+
+                    // Check if next token is an arithmetic operator
+                    if let Some(kind) = self.peek_kind() {
+                        match kind {
+                            TokenKind::Plus | TokenKind::Minus | TokenKind::Star
+                            | TokenKind::Slash | TokenKind::Percent => {
+                                // This is an arithmetic expression, reparse from beginning
+                                self.pos = saved_pos;
+                                return self.parse_expression_column();
+                            }
+                            _ => {}
+                        }
+                    }
 
                     // Check for AS alias
                     let alias = if self.match_keyword(&TokenKind::As) {
@@ -443,6 +458,10 @@ impl SqlParser {
 
                     return ParseResult::Ok(SqlColumn::Field { path, alias });
                 }
+                TokenKind::LParen => {
+                    // Parenthesized expression
+                    return self.parse_expression_column();
+                }
                 _ => {}
             }
         }
@@ -464,8 +483,157 @@ impl SqlParser {
         ))
     }
 
-    /// Parse aggregate function column (COUNT, SUM, etc.)
-    fn parse_aggregate_column(&mut self) -> ParseResult<SqlColumn> {
+    /// Parse an expression column (arithmetic expression with optional alias)
+    fn parse_expression_column(&mut self) -> ParseResult<SqlColumn> {
+        // Parse arithmetic expression
+        let expr = match self.parse_arithmetic_expr(0) {
+            ParseResult::Ok(expr) => expr,
+            ParseResult::Partial(expr, exp) => {
+                return ParseResult::Partial(
+                    SqlColumn::Expression {
+                        expr: Box::new(expr),
+                        alias: None,
+                    },
+                    exp,
+                );
+            }
+            ParseResult::Error(err) => return ParseResult::Error(err),
+        };
+
+        // Check for AS alias
+        let alias = if self.match_keyword(&TokenKind::As) {
+            match self.peek_kind() {
+                Some(TokenKind::Ident(alias_name)) => {
+                    let alias = alias_name.clone();
+                    self.advance();
+                    Some(alias)
+                }
+                Some(TokenKind::String(alias_name)) => {
+                    let alias = alias_name.clone();
+                    self.advance();
+                    Some(alias)
+                }
+                _ if self.is_at_eof() => {
+                    self.expected = vec![Expected::ColumnName];
+                    return ParseResult::Partial(
+                        SqlColumn::Expression {
+                            expr: Box::new(expr),
+                            alias: None,
+                        },
+                        self.expected.clone(),
+                    );
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
+
+        ParseResult::Ok(SqlColumn::Expression {
+            expr: Box::new(expr),
+            alias,
+        })
+    }
+
+    /// Parse aggregate function, checking if it's part of an arithmetic expression
+    fn parse_aggregate_or_expression(&mut self) -> ParseResult<SqlColumn> {
+        // First parse the aggregate function as an expression
+        let agg_expr = match self.parse_aggregate_as_expr() {
+            ParseResult::Ok(expr) => expr,
+            ParseResult::Partial(expr, exp) => return ParseResult::Partial(
+                SqlColumn::Expression { expr: Box::new(expr), alias: None },
+                exp,
+            ),
+            ParseResult::Error(err) => return ParseResult::Error(err),
+        };
+
+        // Check if followed by arithmetic operator
+        if let Some(kind) = self.peek_kind() {
+            match kind {
+                TokenKind::Plus | TokenKind::Minus | TokenKind::Star
+                | TokenKind::Slash | TokenKind::Percent => {
+                    // This is an arithmetic expression starting with aggregate
+                    // We need to continue parsing the arithmetic expression
+                    let full_expr = match self.continue_arithmetic_expr(agg_expr, 0) {
+                        Ok(expr) => expr,
+                        Err(err) => return ParseResult::Error(err),
+                    };
+
+                    // Check for AS alias
+                    let alias = if self.match_keyword(&TokenKind::As) {
+                        match self.peek_kind() {
+                            Some(TokenKind::Ident(alias_name)) => {
+                                let alias = alias_name.clone();
+                                self.advance();
+                                Some(alias)
+                            }
+                            Some(TokenKind::String(alias_name)) => {
+                                let alias = alias_name.clone();
+                                self.advance();
+                                Some(alias)
+                            }
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
+
+                    return ParseResult::Ok(SqlColumn::Expression {
+                        expr: Box::new(full_expr),
+                        alias,
+                    });
+                }
+                _ => {}
+            }
+        }
+
+        // Not followed by arithmetic - convert back to SqlColumn::Aggregate
+        match agg_expr {
+            SqlExpr::Function { name, args } => {
+                // Extract field from args if present
+                let (field, distinct) = if args.is_empty() {
+                    (None, false)
+                } else if let Some(SqlExpr::FieldPath(path)) = args.first() {
+                    (Some(path.clone()), false)
+                } else {
+                    (None, false)
+                };
+
+                // Check for AS alias
+                let alias = if self.match_keyword(&TokenKind::As) {
+                    match self.peek_kind() {
+                        Some(TokenKind::Ident(alias_name)) => {
+                            let alias = alias_name.clone();
+                            self.advance();
+                            Some(alias)
+                        }
+                        Some(TokenKind::String(alias_name)) => {
+                            let alias = alias_name.clone();
+                            self.advance();
+                            Some(alias)
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+
+                ParseResult::Ok(SqlColumn::Aggregate {
+                    func: name,
+                    field,
+                    alias,
+                    distinct,
+                })
+            }
+            _ => ParseResult::Ok(SqlColumn::Expression {
+                expr: Box::new(agg_expr),
+                alias: None,
+            }),
+        }
+    }
+
+    /// Parse aggregate function as SqlExpr::Function
+    fn parse_aggregate_as_expr(&mut self) -> ParseResult<SqlExpr> {
         let func = match self.peek_kind() {
             Some(TokenKind::Count) => "COUNT".to_string(),
             Some(TokenKind::Sum) => "SUM".to_string(),
@@ -484,41 +652,22 @@ impl SqlParser {
 
         // Expect opening parenthesis
         if !self.match_token(&TokenKind::LParen) {
-            if self.is_at_eof() {
-                self.expected = vec![Expected::Keyword("(")];
-                return ParseResult::Partial(
-                    SqlColumn::Aggregate {
-                        func,
-                        field: None,
-                        alias: None,
-                        distinct: false,
-                    },
-                    self.expected.clone(),
-                );
-            }
             return ParseResult::Error(ParseError::new(
                 "Expected '(' after aggregate function".to_string(),
                 self.current_position()..self.current_position(),
             ));
         }
 
-        // Check for DISTINCT keyword
-        let distinct = self.match_token(&TokenKind::Distinct);
+        // Check for DISTINCT keyword (skip for now in expression context)
+        self.match_token(&TokenKind::Distinct);
 
         // Parse field or *
-        let field = if self.match_token(&TokenKind::Star) {
-            if distinct {
-                return ParseResult::Error(ParseError::new(
-                    "DISTINCT cannot be used with *".to_string(),
-                    self.current_position()..self.current_position(),
-                ));
-            }
-            None
+        let args = if self.match_token(&TokenKind::Star) {
+            vec![] // COUNT(*) has no args
         } else if let Some(TokenKind::Ident(name)) = self.peek_kind() {
             let name = name.clone();
             self.advance();
 
-            // Parse field path (supports nested fields and array access)
             let path = match self.parse_field_path_continuation(FieldPath::simple(name)) {
                 Ok(p) => p,
                 Err(err) => {
@@ -529,82 +678,61 @@ impl SqlParser {
                 }
             };
 
-            Some(path)
-        } else if self.is_at_eof() {
-            self.expected = vec![Expected::Star, Expected::ColumnName];
-            return ParseResult::Partial(
-                SqlColumn::Aggregate {
-                    func,
-                    field: None,
-                    alias: None,
-                    distinct,
-                },
-                self.expected.clone(),
-            );
+            vec![SqlExpr::FieldPath(path)]
         } else {
-            return ParseResult::Error(ParseError::new(
-                "Expected field name or * in aggregate function".to_string(),
-                self.current_position()..self.current_position(),
-            ));
+            vec![]
         };
 
         // Expect closing parenthesis
         if !self.match_token(&TokenKind::RParen) {
-            if self.is_at_eof() {
-                self.expected = vec![Expected::Keyword(")")];
-                return ParseResult::Partial(
-                    SqlColumn::Aggregate {
-                        func,
-                        field,
-                        alias: None,
-                        distinct,
-                    },
-                    self.expected.clone(),
-                );
-            }
             return ParseResult::Error(ParseError::new(
                 "Expected ')' after aggregate function".to_string(),
                 self.current_position()..self.current_position(),
             ));
         }
 
-        // Check for AS alias
-        let alias = if self.match_keyword(&TokenKind::As) {
-            match self.peek_kind() {
-                Some(TokenKind::Ident(alias_name)) => {
-                    let alias = alias_name.clone();
-                    self.advance();
-                    Some(alias)
-                }
-                Some(TokenKind::String(alias_name)) => {
-                    let alias = alias_name.clone();
-                    self.advance();
-                    Some(alias)
-                }
-                _ if self.is_at_eof() => {
-                    self.expected = vec![Expected::ColumnName];
-                    return ParseResult::Partial(
-                        SqlColumn::Aggregate {
-                            func,
-                            field,
-                            alias: None,
-                            distinct,
-                        },
-                        self.expected.clone(),
-                    );
-                }
-                _ => None,
-            }
-        } else {
-            None
-        };
+        ParseResult::Ok(SqlExpr::Function { name: func, args })
+    }
 
-        ParseResult::Ok(SqlColumn::Aggregate {
-            func,
-            field,
-            alias,
-            distinct,
-        })
+    /// Continue parsing arithmetic expression with given left side
+    fn continue_arithmetic_expr(&mut self, left: SqlExpr, min_bp: u8) -> std::result::Result<SqlExpr, ParseError> {
+        let mut left = left;
+
+        loop {
+            if self.is_at_eof() {
+                return Ok(left);
+            }
+
+            // Check for arithmetic operator
+            let (op, l_bp, r_bp) = match self.peek_kind() {
+                Some(TokenKind::Plus) => (ArithmeticOperator::Add, 9, 10),
+                Some(TokenKind::Minus) => (ArithmeticOperator::Subtract, 9, 10),
+                Some(TokenKind::Star) => (ArithmeticOperator::Multiply, 11, 12),
+                Some(TokenKind::Slash) => (ArithmeticOperator::Divide, 11, 12),
+                Some(TokenKind::Percent) => (ArithmeticOperator::Modulo, 11, 12),
+                _ => break,
+            };
+
+            if l_bp < min_bp {
+                break;
+            }
+
+            self.advance(); // Consume operator
+
+            let right = match self.parse_arithmetic_expr(r_bp) {
+                ParseResult::Ok(expr) => expr,
+                ParseResult::Error(err) => return Err(err),
+                ParseResult::Partial(expr, _) => expr,
+            };
+
+            left = SqlExpr::ArithmeticOp {
+                left: Box::new(left),
+                op,
+                right: Box::new(right),
+            };
+        }
+
+        Ok(left)
     }
 
     /// Parse field path continuation (dots, brackets)
@@ -892,37 +1020,35 @@ impl SqlParser {
     }
 
     /// Parse primary expression (comparison, literal, column)
+    /// Now supports arithmetic expressions on both sides of comparison
     fn parse_primary_expr(&mut self) -> ParseResult<SqlExpr> {
-        // Parse left side (should be column)
-        let left = if let Some(TokenKind::Ident(name)) = self.peek_kind() {
-            let name = name.clone();
-            self.advance();
-
-            // Parse field path (supports nested fields and array access)
-            let path = match self.parse_field_path_continuation(FieldPath::simple(name)) {
-                Ok(p) => p,
-                Err(err) => {
-                    return ParseResult::Error(ParseError::new(
-                        err.to_user_message(),
-                        self.current_position()..self.current_position(),
-                    ));
-                }
+        // Handle parenthesized expressions at the top level
+        if self.check_token(&TokenKind::LParen) {
+            // Could be a parenthesized arithmetic expression
+            let left = match self.parse_comparison_operand() {
+                ParseResult::Ok(expr) => expr,
+                result => return result,
             };
+            return self.parse_comparison_with_left(left);
+        }
 
-            SqlExpr::FieldPath(path)
-        } else if self.is_at_eof() {
-            self.expected = vec![Expected::ColumnName];
-            return ParseResult::Partial(
-                SqlExpr::Literal(SqlLiteral::Boolean(true)),
-                self.expected.clone(),
-            );
-        } else {
-            return ParseResult::Error(ParseError::new(
-                "Expected column name in expression".to_string(),
-                self.current_position()..self.current_position(),
-            ));
+        // Parse left side as an arithmetic expression (field, literal, or arithmetic)
+        let left = match self.parse_comparison_operand() {
+            ParseResult::Ok(expr) => expr,
+            ParseResult::Partial(expr, exp) => return ParseResult::Partial(expr, exp),
+            ParseResult::Error(err) => return ParseResult::Error(err),
         };
 
+        self.parse_comparison_with_left(left)
+    }
+
+    /// Parse a comparison operand (arithmetic expression)
+    fn parse_comparison_operand(&mut self) -> ParseResult<SqlExpr> {
+        self.parse_arithmetic_expr(0)
+    }
+
+    /// Parse comparison operator and right side, given the left side
+    fn parse_comparison_with_left(&mut self, left: SqlExpr) -> ParseResult<SqlExpr> {
         // Check for comparison operator
         let op = if self.match_token(&TokenKind::Eq) {
             SqlOperator::Eq
@@ -948,14 +1074,14 @@ impl SqlParser {
                         // Logical operators - this is actually invalid SQL (field without comparison)
                         // but we'll let the expression parser handle it for better error messages
                         return ParseResult::Error(ParseError::new(
-                            format!("Expected comparison operator (=, !=, >, <, >=, <=) after field name, found {:?}", kind),
+                            format!("Expected comparison operator (=, !=, >, <, >=, <=) after expression, found {:?}", kind),
                             self.current_position()..self.current_position(),
                         ));
                     }
                     TokenKind::GroupBy | TokenKind::OrderBy | TokenKind::Limit | TokenKind::Offset => {
                         // Next clause - field without comparison is invalid
                         return ParseResult::Error(ParseError::new(
-                            "Expected comparison operator (=, !=, >, <, >=, <=) after field name".to_string(),
+                            "Expected comparison operator (=, !=, >, <, >=, <=) after expression".to_string(),
                             self.current_position()..self.current_position(),
                         ));
                     }
@@ -969,7 +1095,7 @@ impl SqlParser {
                     _ => {
                         // Any other token is unexpected
                         return ParseResult::Error(ParseError::new(
-                            format!("Expected comparison operator (=, !=, >, <, >=, <=) after field name, found unexpected token"),
+                            "Expected comparison operator (=, !=, >, <, >=, <=) after expression".to_string(),
                             self.current_position()..self.current_position(),
                         ));
                     }
@@ -977,13 +1103,13 @@ impl SqlParser {
             }
             // This shouldn't happen as we already checked is_at_eof() above
             return ParseResult::Error(ParseError::new(
-                "Expected comparison operator after field name".to_string(),
+                "Expected comparison operator after expression".to_string(),
                 self.current_position()..self.current_position(),
             ));
         };
 
-        // Parse right side (literal value or function call)
-        let right = match self.parse_value_expr() {
+        // Parse right side as arithmetic expression too
+        let right = match self.parse_comparison_operand() {
             ParseResult::Ok(expr) => expr,
             ParseResult::Partial(expr, exp) => {
                 return ParseResult::Partial(
@@ -1005,8 +1131,114 @@ impl SqlParser {
         })
     }
 
-    /// Parse a value expression (literal or function call)
-    fn parse_value_expr(&mut self) -> ParseResult<SqlExpr> {
+    /// Parse an arithmetic expression with operator precedence (Pratt parser)
+    fn parse_arithmetic_expr(&mut self, min_bp: u8) -> ParseResult<SqlExpr> {
+        // Parse left-hand side (atom: literal, field, or parenthesized expression)
+        let mut left = match self.parse_arithmetic_atom() {
+            ParseResult::Ok(expr) => expr,
+            result => return result,
+        };
+
+        // Parse operators with precedence
+        loop {
+            if self.is_at_eof() {
+                return ParseResult::Ok(left);
+            }
+
+            // Check for arithmetic operator
+            let (op, l_bp, r_bp) = match self.peek_kind() {
+                Some(TokenKind::Plus) => (ArithmeticOperator::Add, 9, 10),
+                Some(TokenKind::Minus) => (ArithmeticOperator::Subtract, 9, 10),
+                Some(TokenKind::Star) => (ArithmeticOperator::Multiply, 11, 12),
+                Some(TokenKind::Slash) => (ArithmeticOperator::Divide, 11, 12),
+                Some(TokenKind::Percent) => (ArithmeticOperator::Modulo, 11, 12),
+                _ => break, // Not an arithmetic operator
+            };
+
+            if l_bp < min_bp {
+                break;
+            }
+
+            self.advance(); // Consume operator
+
+            let right = match self.parse_arithmetic_expr(r_bp) {
+                ParseResult::Ok(expr) => expr,
+                ParseResult::Partial(expr, exp) => {
+                    return ParseResult::Partial(
+                        SqlExpr::ArithmeticOp {
+                            left: Box::new(left),
+                            op,
+                            right: Box::new(expr),
+                        },
+                        exp,
+                    );
+                }
+                ParseResult::Error(err) => return ParseResult::Error(err),
+            };
+
+            left = SqlExpr::ArithmeticOp {
+                left: Box::new(left),
+                op,
+                right: Box::new(right),
+            };
+        }
+
+        ParseResult::Ok(left)
+    }
+
+    /// Parse an arithmetic atom (literal, field reference, function, or parenthesized expression)
+    fn parse_arithmetic_atom(&mut self) -> ParseResult<SqlExpr> {
+        // Handle parenthesized expressions
+        if self.match_token(&TokenKind::LParen) {
+            let inner = match self.parse_arithmetic_expr(0) {
+                ParseResult::Ok(expr) => expr,
+                result => return result,
+            };
+
+            if !self.match_token(&TokenKind::RParen) {
+                if self.is_at_eof() {
+                    return ParseResult::Partial(inner, vec![Expected::Keyword(")")]);
+                }
+                return ParseResult::Error(ParseError::new(
+                    "Expected ')' after expression".to_string(),
+                    self.current_position()..self.current_position(),
+                ));
+            }
+
+            return ParseResult::Ok(inner);
+        }
+
+        // Check for field reference (identifier)
+        if let Some(TokenKind::Ident(name)) = self.peek_kind() {
+            let name = name.clone();
+            let saved_pos = self.pos;
+            self.advance();
+
+            // Check if it's a function call
+            if self.check_token(&TokenKind::LParen) {
+                self.pos = saved_pos; // Restore position and parse as function below
+            } else {
+                // Parse field path continuation (nested fields, array access)
+                let path = match self.parse_field_path_continuation(FieldPath::simple(name)) {
+                    Ok(p) => p,
+                    Err(err) => {
+                        return ParseResult::Error(ParseError::new(
+                            err.to_user_message(),
+                            self.current_position()..self.current_position(),
+                        ));
+                    }
+                };
+                return ParseResult::Ok(SqlExpr::FieldPath(path));
+            }
+        }
+
+        // Parse as literal (number, string, etc.) or other value expressions
+        // Delegate to the existing logic for typed literals, functions, etc.
+        self.parse_value_atom()
+    }
+
+    /// Parse a value atom (literal, function call, typed literal, etc.)
+    fn parse_value_atom(&mut self) -> ParseResult<SqlExpr> {
         // Check for typed literals: DATE '...', TIMESTAMP '...', TIME '...'
         if let Some(token_kind) = self.peek_kind() {
             match token_kind {
@@ -1020,7 +1252,6 @@ impl SqlParser {
 
                     self.advance();
 
-                    // Expect string literal
                     if let Some(TokenKind::String(value)) = self.peek_kind() {
                         let value = value.clone();
                         self.advance();
@@ -1057,8 +1288,6 @@ impl SqlParser {
                 }
                 TokenKind::Now => {
                     self.advance();
-
-                    // NOW can be used with or without parentheses
                     if self.match_token(&TokenKind::LParen) {
                         if !self.match_token(&TokenKind::RParen) {
                             if self.is_at_eof() {
@@ -1073,36 +1302,33 @@ impl SqlParser {
                             ));
                         }
                     }
-
                     return ParseResult::Ok(SqlExpr::CurrentTime { kind: "NOW".to_string() });
                 }
                 _ => {}
             }
         }
 
-        // Check if it's a function call (identifier followed by '(')
+        // Check for function call
         if let Some(TokenKind::Ident(name)) = self.peek_kind() {
             let name = name.clone();
             let saved_pos = self.pos;
             self.advance();
 
-            // Check for opening parenthesis
             if self.match_token(&TokenKind::LParen) {
-                // Parse function arguments
                 let mut args = Vec::new();
 
-                // Parse first argument if not immediately closing paren
                 if !self.check_token(&TokenKind::RParen) {
                     loop {
-                        match self.parse_literal() {
-                            ParseResult::Ok(lit) => {
-                                args.push(SqlExpr::Literal(lit));
+                        // Parse argument as arithmetic expression to support: ROUND(price * 1.13, 2)
+                        match self.parse_arithmetic_expr(0) {
+                            ParseResult::Ok(expr) => {
+                                args.push(expr);
                             }
-                            ParseResult::Partial(lit, exp) => {
+                            ParseResult::Partial(expr, exp) => {
                                 return ParseResult::Partial(
                                     SqlExpr::Function {
                                         name,
-                                        args: vec![SqlExpr::Literal(lit)],
+                                        args: vec![expr],
                                     },
                                     exp,
                                 );
@@ -1110,7 +1336,6 @@ impl SqlParser {
                             ParseResult::Error(err) => return ParseResult::Error(err),
                         }
 
-                        // Check for comma (more arguments) or closing paren
                         if self.match_token(&TokenKind::Comma) {
                             continue;
                         } else {
@@ -1119,7 +1344,6 @@ impl SqlParser {
                     }
                 }
 
-                // Expect closing parenthesis
                 if !self.match_token(&TokenKind::RParen) {
                     if self.is_at_eof() {
                         return ParseResult::Partial(
@@ -1135,7 +1359,6 @@ impl SqlParser {
 
                 return ParseResult::Ok(SqlExpr::Function { name, args });
             } else {
-                // Not a function call, restore position and parse as literal
                 self.pos = saved_pos;
             }
         }
@@ -1431,7 +1654,7 @@ impl SqlParser {
         false
     }
 
-    /// Check if expression contains complex field paths
+    /// Check if expression contains complex field paths or arithmetic operations
     fn expr_has_complex_paths(&self, expr: &SqlExpr) -> bool {
         match expr {
             SqlExpr::FieldPath(path) => path.requires_aggregation(),
@@ -1440,6 +1663,10 @@ impl SqlParser {
             }
             SqlExpr::LogicalOp { left, right, .. } => {
                 self.expr_has_complex_paths(left) || self.expr_has_complex_paths(right)
+            }
+            SqlExpr::ArithmeticOp { .. } => {
+                // Arithmetic operations always require aggregation pipeline
+                true
             }
             SqlExpr::In { expr, values } => {
                 self.expr_has_complex_paths(expr)
@@ -1517,21 +1744,15 @@ impl SqlParser {
             pipeline.push(doc! { "$sort": sort_doc });
         }
 
-        // Add $skip stage for OFFSET (before $limit and $project)
-        if let Some(offset) = ast.offset {
-            pipeline.push(doc! { "$skip": offset as i64 });
-        }
-
-        // Add $limit stage (before $project to limit documents early)
-        if let Some(limit) = ast.limit {
-            pipeline.push(doc! { "$limit": limit as i64 });
-        }
-
-        // Check if we have any aggregate functions
+        // Check if we have any aggregate functions (either as SqlColumn::Aggregate or inside Expression)
         let has_aggregates = ast
             .columns
             .iter()
-            .any(|c| matches!(c, SqlColumn::Aggregate { .. }));
+            .any(|c| match c {
+                SqlColumn::Aggregate { .. } => true,
+                SqlColumn::Expression { expr, .. } => Self::expr_contains_aggregate(expr),
+                _ => false,
+            });
 
         // Add $group stage
         if let Some(ref group_by) = ast.group_by {
@@ -1582,84 +1803,115 @@ impl SqlParser {
             let mut group_doc = Document::new();
             group_doc.insert("_id", mongodb::bson::Bson::Null); // Group all documents together
 
-            // Add aggregate functions
+            // Add aggregate functions - collect intermediate results for expressions
+            let mut expr_columns: Vec<(&SqlExpr, Option<&String>)> = Vec::new();
+
             for col in &ast.columns {
-                if let SqlColumn::Aggregate {
-                    func,
-                    field,
-                    alias,
-                    distinct,
-                } = col
-                {
-                    let output_name = alias.clone().unwrap_or_else(|| func.to_lowercase());
-                    // Convert FieldPath to string for aggregate expr
-                    let field_str = field.as_ref().and_then(|p| p.to_mongodb_path());
-                    let aggregate_expr = SqlExprConverter::build_aggregate_expr(
+                match col {
+                    SqlColumn::Aggregate {
                         func,
-                        field_str.as_deref(),
-                        *distinct,
-                    )?;
-                    group_doc.insert(output_name, aggregate_expr);
+                        field,
+                        alias,
+                        distinct,
+                    } => {
+                        let output_name = alias.clone().unwrap_or_else(|| func.to_lowercase());
+                        // Convert FieldPath to string for aggregate expr
+                        let field_str = field.as_ref().and_then(|p| p.to_mongodb_path());
+                        let aggregate_expr = SqlExprConverter::build_aggregate_expr(
+                            func,
+                            field_str.as_deref(),
+                            *distinct,
+                        )?;
+                        group_doc.insert(output_name, aggregate_expr);
+                    }
+                    SqlColumn::Expression { expr, alias } => {
+                        // For expressions containing aggregates, we need to:
+                        // 1. Add intermediate aggregate results to $group
+                        // 2. Compute the final expression in $project
+                        Self::add_aggregate_to_group(expr, &mut group_doc)?;
+                        expr_columns.push((expr, alias.as_ref()));
+                    }
+                    _ => {}
                 }
             }
 
             pipeline.push(doc! { "$group": group_doc });
 
-            // Add $project stage to exclude _id and keep only aggregate results
+            // Add $project stage to exclude _id and compute final results
             let mut project_doc = Document::new();
             project_doc.insert("_id", 0); // Exclude _id
 
             for col in &ast.columns {
-                if let SqlColumn::Aggregate {
-                    func,
-                    alias,
-                    distinct,
-                    ..
-                } = col
-                {
-                    let output_name = alias.clone().unwrap_or_else(|| func.to_lowercase());
-                    // For COUNT(DISTINCT), we need to count the array size
-                    if *distinct && func.to_uppercase() == "COUNT" {
-                        project_doc.insert(
-                            output_name.clone(),
-                            doc! { "$size": format!("${}", output_name) },
-                        );
-                    } else {
-                        project_doc.insert(output_name.clone(), format!("${}", output_name));
+                match col {
+                    SqlColumn::Aggregate {
+                        func,
+                        alias,
+                        distinct,
+                        ..
+                    } => {
+                        let output_name = alias.clone().unwrap_or_else(|| func.to_lowercase());
+                        // For COUNT(DISTINCT), we need to count the array size
+                        if *distinct && func.to_uppercase() == "COUNT" {
+                            project_doc.insert(
+                                output_name.clone(),
+                                doc! { "$size": format!("${}", output_name) },
+                            );
+                        } else {
+                            project_doc.insert(output_name.clone(), format!("${}", output_name));
+                        }
                     }
+                    SqlColumn::Expression { expr, alias } => {
+                        // Build expression using $group results
+                        let field_name = alias.clone().unwrap_or_else(|| expr.to_display_string());
+                        if let Ok(bson_expr) = Self::build_post_group_expr(expr) {
+                            project_doc.insert(field_name, bson_expr);
+                        }
+                    }
+                    _ => {}
                 }
             }
 
             pipeline.push(doc! { "$project": project_doc });
         } else {
-            // No GROUP BY, no aggregates: just field aliases
-            // Add $project stage to handle field renaming
+            // No GROUP BY, no aggregates: just field aliases or expressions
+            // Add $project stage to handle field renaming and expressions
             let mut project_doc = Document::new();
             let mut has_id = false;
 
             for col in &ast.columns {
-                if let SqlColumn::Field { path, alias } = col {
-                    // Check if this is the _id field
-                    if let Some(path_str) = path.to_mongodb_path() {
-                        if path_str == "_id" {
-                            has_id = true;
-                        }
+                match col {
+                    SqlColumn::Field { path, alias } => {
+                        // Check if this is the _id field
+                        if let Some(path_str) = path.to_mongodb_path() {
+                            if path_str == "_id" {
+                                has_id = true;
+                            }
 
-                        if let Some(alias_name) = alias {
-                            // Rename field using alias
-                            project_doc.insert(alias_name.clone(), format!("${}", path_str));
+                            if let Some(alias_name) = alias {
+                                // Rename field using alias
+                                project_doc.insert(alias_name.clone(), format!("${}", path_str));
+                            } else {
+                                // Keep field with original name
+                                project_doc.insert(path_str.clone(), 1);
+                            }
                         } else {
-                            // Keep field with original name
-                            project_doc.insert(path_str.clone(), 1);
-                        }
-                    } else {
-                        // Complex path requires aggregation expression
-                        let base_field = path.base_field();
-                        let field_name = alias.as_ref().unwrap_or(&base_field);
-                        if let Ok(bson_expr) = SqlExprConverter::field_path_to_bson(path) {
-                            project_doc.insert(field_name.clone(), bson_expr);
+                            // Complex path requires aggregation expression
+                            let base_field = path.base_field();
+                            let field_name = alias.as_ref().unwrap_or(&base_field);
+                            if let Ok(bson_expr) = SqlExprConverter::field_path_to_bson(path) {
+                                project_doc.insert(field_name.clone(), bson_expr);
+                            }
                         }
                     }
+                    SqlColumn::Expression { expr, alias } => {
+                        // Convert expression to aggregation expression
+                        if let Ok(bson_expr) = SqlExprConverter::expr_to_aggregate_value(expr) {
+                            // Use alias if provided, otherwise use the expression string
+                            let field_name = alias.clone().unwrap_or_else(|| expr.to_display_string());
+                            project_doc.insert(field_name, bson_expr);
+                        }
+                    }
+                    _ => {}
                 }
             }
 
@@ -1671,11 +1923,126 @@ impl SqlParser {
             pipeline.push(doc! { "$project": project_doc });
         }
 
+        // Add $skip and $limit AFTER $group/$project
+        // This ensures LIMIT applies to final results, not documents before aggregation
+        if let Some(offset) = ast.offset {
+            pipeline.push(doc! { "$skip": offset as i64 });
+        }
+        if let Some(limit) = ast.limit {
+            pipeline.push(doc! { "$limit": limit as i64 });
+        }
+
         Ok(Command::Query(QueryCommand::Aggregate {
             collection,
             pipeline,
             options: AggregateOptions::default(),
         }))
+    }
+
+    /// Check if an expression contains aggregate functions
+    fn expr_contains_aggregate(expr: &SqlExpr) -> bool {
+        match expr {
+            SqlExpr::Function { name, .. } => {
+                let upper = name.to_uppercase();
+                matches!(upper.as_str(), "COUNT" | "SUM" | "AVG" | "MIN" | "MAX")
+            }
+            SqlExpr::ArithmeticOp { left, right, .. } => {
+                Self::expr_contains_aggregate(left) || Self::expr_contains_aggregate(right)
+            }
+            _ => false,
+        }
+    }
+
+    /// Add aggregate functions from expression to $group document
+    fn add_aggregate_to_group(expr: &SqlExpr, group_doc: &mut Document) -> Result<()> {
+        match expr {
+            SqlExpr::Function { name, args } => {
+                let upper = name.to_uppercase();
+                if matches!(upper.as_str(), "COUNT" | "SUM" | "AVG" | "MIN" | "MAX") {
+                    // Use function name as intermediate field name
+                    let field_name = if args.is_empty() {
+                        format!("_agg_{}", upper.to_lowercase())
+                    } else {
+                        format!("_agg_{}_{}", upper.to_lowercase(), args.len())
+                    };
+
+                    if !group_doc.contains_key(&field_name) {
+                        let agg_expr = match upper.as_str() {
+                            "COUNT" => doc! { "$sum": 1 },
+                            "SUM" => {
+                                if let Some(SqlExpr::FieldPath(path)) = args.first() {
+                                    let field = path.to_mongodb_path().unwrap_or_else(|| path.base_field());
+                                    doc! { "$sum": format!("${}", field) }
+                                } else {
+                                    doc! { "$sum": 1 }
+                                }
+                            }
+                            "AVG" => {
+                                if let Some(SqlExpr::FieldPath(path)) = args.first() {
+                                    let field = path.to_mongodb_path().unwrap_or_else(|| path.base_field());
+                                    doc! { "$avg": format!("${}", field) }
+                                } else {
+                                    doc! { "$avg": 0 }
+                                }
+                            }
+                            "MIN" => {
+                                if let Some(SqlExpr::FieldPath(path)) = args.first() {
+                                    let field = path.to_mongodb_path().unwrap_or_else(|| path.base_field());
+                                    doc! { "$min": format!("${}", field) }
+                                } else {
+                                    doc! { "$min": 0 }
+                                }
+                            }
+                            "MAX" => {
+                                if let Some(SqlExpr::FieldPath(path)) = args.first() {
+                                    let field = path.to_mongodb_path().unwrap_or_else(|| path.base_field());
+                                    doc! { "$max": format!("${}", field) }
+                                } else {
+                                    doc! { "$max": 0 }
+                                }
+                            }
+                            _ => doc! { "$sum": 1 },
+                        };
+                        group_doc.insert(field_name, agg_expr);
+                    }
+                }
+            }
+            SqlExpr::ArithmeticOp { left, right, .. } => {
+                Self::add_aggregate_to_group(left, group_doc)?;
+                Self::add_aggregate_to_group(right, group_doc)?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Build expression for $project stage that references $group results
+    fn build_post_group_expr(expr: &SqlExpr) -> Result<mongodb::bson::Bson> {
+        match expr {
+            SqlExpr::Function { name, args } => {
+                let upper = name.to_uppercase();
+                if matches!(upper.as_str(), "COUNT" | "SUM" | "AVG" | "MIN" | "MAX") {
+                    // Reference the intermediate field from $group
+                    let field_name = if args.is_empty() {
+                        format!("_agg_{}", upper.to_lowercase())
+                    } else {
+                        format!("_agg_{}_{}", upper.to_lowercase(), args.len())
+                    };
+                    Ok(mongodb::bson::Bson::String(format!("${}", field_name)))
+                } else {
+                    SqlExprConverter::expr_to_aggregate_value(expr)
+                }
+            }
+            SqlExpr::ArithmeticOp { left, op, right } => {
+                let left_expr = Self::build_post_group_expr(left)?;
+                let right_expr = Self::build_post_group_expr(right)?;
+                Ok(mongodb::bson::Bson::Document(doc! {
+                    op.to_mongo_operator(): [left_expr, right_expr]
+                }))
+            }
+            SqlExpr::Literal(lit) => Ok(SqlExprConverter::literal_to_bson_public(lit)),
+            _ => SqlExprConverter::expr_to_aggregate_value(expr),
+        }
     }
 
     // Helper methods for token manipulation
@@ -2396,5 +2763,146 @@ mod tests {
         // Test full ISO 8601 format with timezone
         let result = SqlParser::parse_to_command("SELECT * FROM tasks WHERE create_time > TIMESTAMP '2026-02-15T16:00:00.000Z'");
         assert!(result.is_ok(), "Failed to parse full ISO TIMESTAMP: {:?}", result);
+    }
+
+    // ============== Arithmetic Expression Tests ==============
+
+    #[test]
+    fn test_arithmetic_in_where_clause() {
+        // Test arithmetic expression in WHERE: price * quantity > 100
+        let result = SqlParser::parse_to_command(
+            "SELECT * FROM orders WHERE price * quantity > 100"
+        );
+        assert!(result.is_ok(), "Failed to parse arithmetic in WHERE: {:?}", result);
+
+        let cmd = result.unwrap();
+        // Should use aggregation pipeline for $expr
+        assert!(matches!(cmd, Command::Query(QueryCommand::Aggregate { .. })));
+    }
+
+    #[test]
+    fn test_arithmetic_in_select() {
+        // Test arithmetic expression in SELECT: price * quantity AS total
+        let result = SqlParser::parse_to_command(
+            "SELECT product_name, price * quantity AS total FROM orders"
+        );
+        assert!(result.is_ok(), "Failed to parse arithmetic in SELECT: {:?}", result);
+    }
+
+    #[test]
+    fn test_arithmetic_with_addition() {
+        // Test addition: price + tax
+        let result = SqlParser::parse_to_command(
+            "SELECT * FROM orders WHERE price + tax > 50"
+        );
+        assert!(result.is_ok(), "Failed to parse addition: {:?}", result);
+    }
+
+    #[test]
+    fn test_arithmetic_with_subtraction() {
+        // Test subtraction: total - discount
+        let result = SqlParser::parse_to_command(
+            "SELECT * FROM orders WHERE total - discount > 100"
+        );
+        assert!(result.is_ok(), "Failed to parse subtraction: {:?}", result);
+    }
+
+    #[test]
+    fn test_arithmetic_with_division() {
+        // Test division: total / quantity
+        let result = SqlParser::parse_to_command(
+            "SELECT * FROM orders WHERE total / quantity > 10"
+        );
+        assert!(result.is_ok(), "Failed to parse division: {:?}", result);
+    }
+
+    #[test]
+    fn test_arithmetic_with_modulo() {
+        // Test modulo: id % 2 = 0
+        let result = SqlParser::parse_to_command(
+            "SELECT * FROM numbers WHERE id % 2 = 0"
+        );
+        assert!(result.is_ok(), "Failed to parse modulo: {:?}", result);
+    }
+
+    #[test]
+    fn test_arithmetic_with_parentheses() {
+        // Test parenthesized expression: (price + tax) * quantity
+        let result = SqlParser::parse_to_command(
+            "SELECT * FROM orders WHERE (price + tax) * quantity > 1000"
+        );
+        assert!(result.is_ok(), "Failed to parse parenthesized arithmetic: {:?}", result);
+    }
+
+    #[test]
+    fn test_arithmetic_operator_precedence() {
+        // Test operator precedence: price + tax * quantity (multiply binds tighter)
+        let result = SqlParser::parse_to_command(
+            "SELECT * FROM orders WHERE price + tax * quantity > 100"
+        );
+        assert!(result.is_ok(), "Failed to parse arithmetic with precedence: {:?}", result);
+    }
+
+    #[test]
+    fn test_arithmetic_with_literals() {
+        // Test arithmetic with literals: price * 1.13
+        let result = SqlParser::parse_to_command(
+            "SELECT * FROM products WHERE price * 1.13 > 50"
+        );
+        assert!(result.is_ok(), "Failed to parse arithmetic with literals: {:?}", result);
+    }
+
+    #[test]
+    fn test_round_function_with_arithmetic() {
+        // Test ROUND function with arithmetic: ROUND(price * 1.13, 2)
+        let result = SqlParser::parse_to_command(
+            "SELECT * FROM products WHERE ROUND(price * 1.13, 2) > 50"
+        );
+        assert!(result.is_ok(), "Failed to parse ROUND with arithmetic: {:?}", result);
+    }
+
+    #[test]
+    fn test_complex_arithmetic_expression() {
+        // Test complex expression: ((price * quantity) - discount) * 1.13
+        let result = SqlParser::parse_to_command(
+            "SELECT * FROM orders WHERE ((price * quantity) - discount) * 1.13 > 500"
+        );
+        assert!(result.is_ok(), "Failed to parse complex arithmetic: {:?}", result);
+    }
+
+    #[test]
+    fn test_aggregate_with_arithmetic() {
+        // Test COUNT(*) - number
+        let result = SqlParser::parse_to_command(
+            "SELECT COUNT(*) - 100 FROM tasks"
+        );
+        assert!(result.is_ok(), "Failed to parse COUNT(*) - 100: {:?}", result);
+    }
+
+    #[test]
+    fn test_aggregate_with_arithmetic_and_alias() {
+        // Test COUNT(*) - number AS alias
+        let result = SqlParser::parse_to_command(
+            "SELECT COUNT(*) - 100 AS adjusted_count FROM tasks"
+        );
+        assert!(result.is_ok(), "Failed to parse COUNT(*) - 100 AS alias: {:?}", result);
+    }
+
+    #[test]
+    fn test_multiple_aggregates_with_arithmetic() {
+        // Test multiple aggregate expressions with arithmetic
+        let result = SqlParser::parse_to_command(
+            "SELECT COUNT(*) - 1, SUM(price) * 1.13 FROM orders"
+        );
+        assert!(result.is_ok(), "Failed to parse multiple aggregates with arithmetic: {:?}", result);
+    }
+
+    #[test]
+    fn test_aggregate_arithmetic_with_literal() {
+        // Test aggregate with arithmetic on right side: COUNT(*) * 2
+        let result = SqlParser::parse_to_command(
+            "SELECT COUNT(*) * 2 AS doubled_count FROM orders"
+        );
+        assert!(result.is_ok(), "Failed to parse COUNT(*) * 2: {:?}", result);
     }
 }

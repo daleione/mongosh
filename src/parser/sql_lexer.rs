@@ -89,6 +89,9 @@ pub enum TokenKind {
     RBracket,
     Colon,
     Minus,
+    Plus,
+    Slash,
+    Percent,
     Semicolon,
 
     // Special tokens
@@ -231,6 +234,18 @@ impl SqlLexer {
             '-' => {
                 self.advance();
                 Token::new(TokenKind::Minus, start..self.pos)
+            }
+            '+' => {
+                self.advance();
+                Token::new(TokenKind::Plus, start..self.pos)
+            }
+            '/' => {
+                self.advance();
+                Token::new(TokenKind::Slash, start..self.pos)
+            }
+            '%' => {
+                self.advance();
+                Token::new(TokenKind::Percent, start..self.pos)
             }
 
             // String literals

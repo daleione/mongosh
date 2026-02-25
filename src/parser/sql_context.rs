@@ -402,6 +402,7 @@ impl SqlSelect {
             || self.columns.iter().any(|c| match c {
                 SqlColumn::Aggregate { .. } => true,
                 SqlColumn::Field { alias, .. } => alias.is_some(),
+                SqlColumn::Expression { .. } => true, // Expressions always need aggregation
                 _ => false,
             })
     }
@@ -431,6 +432,12 @@ pub enum SqlColumn {
         field: Option<FieldPath>,
         alias: Option<String>,
         distinct: bool,
+    },
+
+    /// SELECT expression AS alias (e.g., price * quantity AS total)
+    Expression {
+        expr: Box<SqlExpr>,
+        alias: Option<String>,
     },
 }
 
@@ -471,6 +478,13 @@ pub enum SqlExpr {
     LogicalOp {
         left: Box<SqlExpr>,
         op: SqlLogicalOperator,
+        right: Box<SqlExpr>,
+    },
+
+    /// Arithmetic operation (+, -, *, /, %)
+    ArithmeticOp {
+        left: Box<SqlExpr>,
+        op: ArithmeticOperator,
         right: Box<SqlExpr>,
     },
 
@@ -575,6 +589,107 @@ impl SqlLogicalOperator {
             SqlLogicalOperator::Or => (1, 2),
             SqlLogicalOperator::And => (3, 4),
             SqlLogicalOperator::Not => (7, 8),
+        }
+    }
+}
+
+/// SQL arithmetic operators
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ArithmeticOperator {
+    /// + (addition)
+    Add,
+
+    /// - (subtraction)
+    Subtract,
+
+    /// * (multiplication)
+    Multiply,
+
+    /// / (division)
+    Divide,
+
+    /// % (modulo)
+    Modulo,
+}
+
+impl ArithmeticOperator {
+    /// Get operator precedence for Pratt parsing
+    /// Higher precedence binds tighter (* / % bind tighter than + -)
+    pub fn binding_power(&self) -> (u8, u8) {
+        match self {
+            ArithmeticOperator::Add | ArithmeticOperator::Subtract => (9, 10),
+            ArithmeticOperator::Multiply
+            | ArithmeticOperator::Divide
+            | ArithmeticOperator::Modulo => (11, 12),
+        }
+    }
+
+    /// Convert to MongoDB aggregation operator
+    pub fn to_mongo_operator(&self) -> &'static str {
+        match self {
+            ArithmeticOperator::Add => "$add",
+            ArithmeticOperator::Subtract => "$subtract",
+            ArithmeticOperator::Multiply => "$multiply",
+            ArithmeticOperator::Divide => "$divide",
+            ArithmeticOperator::Modulo => "$mod",
+        }
+    }
+
+    /// Convert to symbol for display
+    pub fn to_symbol(&self) -> &'static str {
+        match self {
+            ArithmeticOperator::Add => "+",
+            ArithmeticOperator::Subtract => "-",
+            ArithmeticOperator::Multiply => "*",
+            ArithmeticOperator::Divide => "/",
+            ArithmeticOperator::Modulo => "%",
+        }
+    }
+}
+
+impl SqlExpr {
+    /// Convert expression to display string (for column name generation)
+    pub fn to_display_string(&self) -> String {
+        match self {
+            SqlExpr::Literal(lit) => match lit {
+                SqlLiteral::String(s) => format!("'{}'", s),
+                SqlLiteral::Number(n) => {
+                    if n.fract() == 0.0 {
+                        format!("{}", *n as i64)
+                    } else {
+                        format!("{}", n)
+                    }
+                }
+                SqlLiteral::Boolean(b) => b.to_string(),
+                SqlLiteral::Null => "NULL".to_string(),
+            },
+            SqlExpr::FieldPath(path) => path.to_mongodb_path().unwrap_or_else(|| path.base_field()),
+            SqlExpr::ArithmeticOp { left, op, right } => {
+                format!("{}{}{}", left.to_display_string(), op.to_symbol(), right.to_display_string())
+            }
+            SqlExpr::Function { name, args } => {
+                // Special case: COUNT(*) has empty args but should display as COUNT(*)
+                if args.is_empty() && name.to_uppercase() == "COUNT" {
+                    format!("{}(*)", name)
+                } else {
+                    let args_str: Vec<String> = args.iter().map(|a| a.to_display_string()).collect();
+                    format!("{}({})", name, args_str.join(","))
+                }
+            }
+            SqlExpr::BinaryOp { left, op, right } => {
+                let op_str = match op {
+                    SqlOperator::Eq => "=",
+                    SqlOperator::Ne => "!=",
+                    SqlOperator::Gt => ">",
+                    SqlOperator::Lt => "<",
+                    SqlOperator::Ge => ">=",
+                    SqlOperator::Le => "<=",
+                };
+                format!("{}{}{}", left.to_display_string(), op_str, right.to_display_string())
+            }
+            SqlExpr::CurrentTime { kind } => kind.clone(),
+            SqlExpr::TypedLiteral { type_name, value } => format!("{} '{}'", type_name, value),
+            _ => "expr".to_string(),
         }
     }
 }

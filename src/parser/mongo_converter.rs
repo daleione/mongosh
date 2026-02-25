@@ -4,7 +4,8 @@
 //! It replaces the previous oxc-based implementation with a lightweight converter
 //! that works directly with our purpose-built AST.
 
-use mongodb::bson::{Bson, Document};
+use mongodb::bson::{Bson, Decimal128, Document};
+use std::str::FromStr;
 
 use super::mongo_ast::*;
 use crate::error::{ParseError, Result};
@@ -310,14 +311,22 @@ impl ExpressionConverter {
         }
     }
 
-    /// Parse NumberDecimal argument (using string representation)
+    /// Parse NumberDecimal argument and convert to Decimal128
     fn parse_decimal_argument(expr: &Expr) -> Result<Bson> {
         match expr {
             Expr::String(s) => {
-                // Store as string for now (BSON doesn't have native decimal in Rust driver)
-                Ok(Bson::String(s.clone()))
+                Decimal128::from_str(s)
+                    .map(Bson::Decimal128)
+                    .map_err(|e| ParseError::InvalidQuery(
+                        format!("Invalid Decimal128 string '{}': {}", s, e)
+                    ).into())
             }
-            Expr::Number(n) => Ok(Bson::Double(*n)),
+            Expr::Number(n) => {
+                // Convert number to Decimal128 for precision
+                Ok(Decimal128::from_str(&n.to_string())
+                    .map(Bson::Decimal128)
+                    .unwrap_or_else(|_| Bson::Double(*n)))  // fallback to Double
+            }
             _ => Err(ParseError::InvalidQuery(
                 "NumberDecimal argument must be number or string".to_string(),
             )

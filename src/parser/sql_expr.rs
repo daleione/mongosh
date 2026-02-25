@@ -6,8 +6,8 @@
 use mongodb::bson::{Document, doc};
 
 use super::sql_context::{
-    ArrayIndex, ArraySlice, FieldPath, SliceIndex, SqlColumn, SqlExpr, SqlLiteral,
-    SqlLogicalOperator, SqlOperator,
+    ArithmeticOperator, ArrayIndex, ArraySlice, FieldPath, SliceIndex, SqlColumn, SqlExpr,
+    SqlLiteral, SqlLogicalOperator, SqlOperator,
 };
 use crate::error::{ParseError, Result};
 
@@ -51,6 +51,13 @@ impl SqlExprConverter {
                 SqlColumn::Aggregate { alias, .. } => {
                     // For aggregates, we need aggregation pipeline
                     // The projection will be built in the pipeline
+                    if let Some(alias_name) = alias {
+                        projection.insert(alias_name.clone(), 1);
+                    }
+                }
+                SqlColumn::Expression { alias, .. } => {
+                    // Expression columns require aggregation pipeline
+                    // The projection will be built in the pipeline with $project stage
                     if let Some(alias_name) = alias {
                         projection.insert(alias_name.clone(), 1);
                     }
@@ -115,12 +122,244 @@ impl SqlExprConverter {
             SqlExpr::Interval { .. } => {
                 Err(ParseError::InvalidCommand("Cannot use interval as filter".to_string()).into())
             }
+
+            SqlExpr::ArithmeticOp { left, op, right } => {
+                // Arithmetic operations in WHERE need $expr with aggregation operators
+                Self::arithmetic_comparison_to_filter(left, op, right)
+            }
         }
+    }
+
+    /// Convert arithmetic expression to MongoDB aggregation expression
+    pub fn arithmetic_to_aggregate(
+        left: &SqlExpr,
+        op: &ArithmeticOperator,
+        right: &SqlExpr,
+    ) -> Result<mongodb::bson::Bson> {
+        let left_expr = Self::expr_to_aggregate_value(left)?;
+        let right_expr = Self::expr_to_aggregate_value(right)?;
+
+        Ok(mongodb::bson::Bson::Document(doc! {
+            op.to_mongo_operator(): [left_expr, right_expr]
+        }))
+    }
+
+    /// Convert SQL expression to aggregation pipeline value
+    pub fn expr_to_aggregate_value(expr: &SqlExpr) -> Result<mongodb::bson::Bson> {
+        match expr {
+            SqlExpr::Literal(lit) => Ok(Self::literal_to_bson(lit)),
+
+            SqlExpr::FieldPath(path) => {
+                if let Some(path_str) = path.to_mongodb_path() {
+                    Ok(mongodb::bson::Bson::String(format!("${}", path_str)))
+                } else {
+                    Err(ParseError::InvalidCommand(
+                        "Complex field paths require special handling".to_string(),
+                    )
+                    .into())
+                }
+            }
+
+            SqlExpr::ArithmeticOp { left, op, right } => {
+                Self::arithmetic_to_aggregate(left, op, right)
+            }
+
+            SqlExpr::Function { name, args } => {
+                Self::function_to_aggregate(name, args)
+            }
+
+            SqlExpr::TypedLiteral { type_name, value } => {
+                Self::typed_literal_to_bson(type_name, value)
+            }
+
+            SqlExpr::CurrentTime { kind } => {
+                Self::current_time_to_bson(kind)
+            }
+
+            _ => Err(ParseError::InvalidCommand(
+                "Expression not supported in aggregation context".to_string(),
+            )
+            .into()),
+        }
+    }
+
+    /// Convert function call to aggregation expression
+    fn function_to_aggregate(name: &str, args: &[SqlExpr]) -> Result<mongodb::bson::Bson> {
+        let upper_name = name.to_uppercase();
+        match upper_name.as_str() {
+            "ROUND" => {
+                if args.is_empty() || args.len() > 2 {
+                    return Err(ParseError::InvalidCommand(
+                        "ROUND requires 1 or 2 arguments".to_string(),
+                    )
+                    .into());
+                }
+                let value = Self::expr_to_aggregate_value(&args[0])?;
+                let place = if args.len() == 2 {
+                    Self::expr_to_aggregate_value(&args[1])?
+                } else {
+                    mongodb::bson::Bson::Int32(0)
+                };
+                Ok(mongodb::bson::Bson::Document(doc! {
+                    "$round": [value, place]
+                }))
+            }
+            "ABS" => {
+                if args.len() != 1 {
+                    return Err(ParseError::InvalidCommand(
+                        "ABS requires exactly 1 argument".to_string(),
+                    )
+                    .into());
+                }
+                let value = Self::expr_to_aggregate_value(&args[0])?;
+                Ok(mongodb::bson::Bson::Document(doc! { "$abs": value }))
+            }
+            "CEIL" | "CEILING" => {
+                if args.len() != 1 {
+                    return Err(ParseError::InvalidCommand(
+                        "CEIL requires exactly 1 argument".to_string(),
+                    )
+                    .into());
+                }
+                let value = Self::expr_to_aggregate_value(&args[0])?;
+                Ok(mongodb::bson::Bson::Document(doc! { "$ceil": value }))
+            }
+            "FLOOR" => {
+                if args.len() != 1 {
+                    return Err(ParseError::InvalidCommand(
+                        "FLOOR requires exactly 1 argument".to_string(),
+                    )
+                    .into());
+                }
+                let value = Self::expr_to_aggregate_value(&args[0])?;
+                Ok(mongodb::bson::Bson::Document(doc! { "$floor": value }))
+            }
+            "TRUNC" | "TRUNCATE" => {
+                if args.is_empty() || args.len() > 2 {
+                    return Err(ParseError::InvalidCommand(
+                        "TRUNC requires 1 or 2 arguments".to_string(),
+                    )
+                    .into());
+                }
+                let value = Self::expr_to_aggregate_value(&args[0])?;
+                let place = if args.len() == 2 {
+                    Self::expr_to_aggregate_value(&args[1])?
+                } else {
+                    mongodb::bson::Bson::Int32(0)
+                };
+                Ok(mongodb::bson::Bson::Document(doc! {
+                    "$trunc": [value, place]
+                }))
+            }
+            "OBJECTID" => {
+                // ObjectId function - convert string argument to ObjectId literal
+                if args.len() != 1 {
+                    return Err(ParseError::InvalidCommand(
+                        "ObjectId requires exactly 1 argument".to_string(),
+                    )
+                    .into());
+                }
+                // Get the string value and convert to ObjectId
+                match &args[0] {
+                    SqlExpr::Literal(SqlLiteral::String(s)) => {
+                        match mongodb::bson::oid::ObjectId::parse_str(s) {
+                            Ok(oid) => Ok(mongodb::bson::Bson::ObjectId(oid)),
+                            Err(e) => Err(ParseError::InvalidCommand(format!(
+                                "Invalid ObjectId string '{}': {}", s, e
+                            )).into()),
+                        }
+                    }
+                    _ => Err(ParseError::InvalidCommand(
+                        "ObjectId argument must be a string literal".to_string(),
+                    ).into()),
+                }
+            }
+            // Aggregate functions - convert to MongoDB aggregation operators
+            "COUNT" => {
+                // COUNT(*) or COUNT(field) - in expression context, return $sum: 1 or $sum with condition
+                if args.is_empty() {
+                    // COUNT(*) - just returns count, represented as literal in expression
+                    Ok(mongodb::bson::Bson::Document(doc! { "$sum": 1 }))
+                } else {
+                    let field = Self::expr_to_aggregate_value(&args[0])?;
+                    Ok(mongodb::bson::Bson::Document(doc! {
+                        "$sum": { "$cond": [{ "$ne": [field, mongodb::bson::Bson::Null] }, 1, 0] }
+                    }))
+                }
+            }
+            "SUM" => {
+                if args.len() != 1 {
+                    return Err(ParseError::InvalidCommand(
+                        "SUM requires exactly 1 argument".to_string(),
+                    ).into());
+                }
+                let value = Self::expr_to_aggregate_value(&args[0])?;
+                Ok(mongodb::bson::Bson::Document(doc! { "$sum": value }))
+            }
+            "AVG" => {
+                if args.len() != 1 {
+                    return Err(ParseError::InvalidCommand(
+                        "AVG requires exactly 1 argument".to_string(),
+                    ).into());
+                }
+                let value = Self::expr_to_aggregate_value(&args[0])?;
+                Ok(mongodb::bson::Bson::Document(doc! { "$avg": value }))
+            }
+            "MIN" => {
+                if args.len() != 1 {
+                    return Err(ParseError::InvalidCommand(
+                        "MIN requires exactly 1 argument".to_string(),
+                    ).into());
+                }
+                let value = Self::expr_to_aggregate_value(&args[0])?;
+                Ok(mongodb::bson::Bson::Document(doc! { "$min": value }))
+            }
+            "MAX" => {
+                if args.len() != 1 {
+                    return Err(ParseError::InvalidCommand(
+                        "MAX requires exactly 1 argument".to_string(),
+                    ).into());
+                }
+                let value = Self::expr_to_aggregate_value(&args[0])?;
+                Ok(mongodb::bson::Bson::Document(doc! { "$max": value }))
+            }
+            _ => Err(ParseError::InvalidCommand(format!(
+                "Function {} not supported in aggregation",
+                name
+            ))
+            .into()),
+        }
+    }
+
+    /// Convert arithmetic comparison to $expr filter (for WHERE clause with arithmetic)
+    fn arithmetic_comparison_to_filter(
+        left: &SqlExpr,
+        op: &ArithmeticOperator,
+        right: &SqlExpr,
+    ) -> Result<Document> {
+        // For standalone arithmetic in WHERE, we need to check if it's part of a comparison
+        // This handles cases like: WHERE price * quantity > 100
+        // The arithmetic expression itself needs $expr wrapper
+        let arith_expr = Self::arithmetic_to_aggregate(left, op, right)?;
+
+        // Return as $expr for use in comparisons
+        Ok(doc! {
+            "$expr": {
+                "$ne": [arith_expr, mongodb::bson::Bson::Null]
+            }
+        })
     }
 
     /// Convert binary operation to filter
     fn binary_op_to_filter(left: &SqlExpr, op: &SqlOperator, right: &SqlExpr) -> Result<Document> {
-        // Left side should be a field path
+        // Check if either side contains complex expressions that need $expr
+        let needs_expr = Self::expr_needs_aggregation(left) || Self::expr_needs_aggregation(right);
+
+        if needs_expr {
+            return Self::binary_op_to_expr_filter(left, op, right);
+        }
+
+        // Standard case: left side should be a field path
         let column = match left {
             SqlExpr::FieldPath(path) => {
                 if let Some(path_str) = path.to_mongodb_path() {
@@ -153,6 +392,48 @@ impl SqlExprConverter {
         };
 
         Ok(filter)
+    }
+
+    /// Check if an expression requires aggregation ($expr) context
+    fn expr_needs_aggregation(expr: &SqlExpr) -> bool {
+        match expr {
+            SqlExpr::ArithmeticOp { .. } => true,
+            SqlExpr::Function { name, .. } => {
+                // Literal-value functions don't need aggregation context
+                let upper_name = name.to_uppercase();
+                !matches!(upper_name.as_str(), "OBJECTID" | "ISODATE" | "DATE" | "NUMBERLONG" | "NUMBERINT" | "NUMBERDECIMAL")
+            }
+            SqlExpr::BinaryOp { left, right, .. } => {
+                Self::expr_needs_aggregation(left) || Self::expr_needs_aggregation(right)
+            }
+            _ => false,
+        }
+    }
+
+    /// Convert binary operation with arithmetic to $expr filter
+    /// Handles cases like: WHERE price * quantity > 100
+    fn binary_op_to_expr_filter(
+        left: &SqlExpr,
+        op: &SqlOperator,
+        right: &SqlExpr,
+    ) -> Result<Document> {
+        let left_expr = Self::expr_to_aggregate_value(left)?;
+        let right_expr = Self::expr_to_aggregate_value(right)?;
+
+        let mongo_op = match op {
+            SqlOperator::Eq => "$eq",
+            SqlOperator::Ne => "$ne",
+            SqlOperator::Gt => "$gt",
+            SqlOperator::Lt => "$lt",
+            SqlOperator::Ge => "$gte",
+            SqlOperator::Le => "$lte",
+        };
+
+        Ok(doc! {
+            "$expr": {
+                mongo_op: [left_expr, right_expr]
+            }
+        })
     }
 
     /// Convert logical operation to filter
@@ -473,6 +754,11 @@ impl SqlExprConverter {
             ))
             .into()),
         }
+    }
+
+    /// Convert SQL literal to BSON value (public version for use outside this module)
+    pub fn literal_to_bson_public(lit: &SqlLiteral) -> mongodb::bson::Bson {
+        Self::literal_to_bson(lit)
     }
 
     /// Convert SQL literal to BSON value
