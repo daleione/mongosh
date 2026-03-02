@@ -14,6 +14,35 @@ use crate::error::{ExecutionError, Result};
 use super::super::killable::run_killable_command;
 use super::super::result::{ExecutionResult, ExecutionStats, ResultData};
 
+/// Check if MongoDB server version supports comment field on write operations
+///
+/// The comment field for delete and update operations was added in MongoDB 4.4
+///
+/// # Arguments
+/// * `version_str` - Server version string (e.g., "4.2.0", "4.4.0", "5.0.0")
+///
+/// # Returns
+/// * `bool` - True if version >= 4.4.0, False otherwise
+fn supports_write_comment(version_str: Option<&str>) -> bool {
+    let version_str = match version_str {
+        Some(v) => v,
+        None => return false,
+    };
+
+    // Parse version string like "4.4.0" or "5.0.0-rc1"
+    let parts: Vec<&str> = version_str.split('.').collect();
+    if parts.len() < 2 {
+        return false;
+    }
+
+    // Extract major and minor version numbers
+    let major: u32 = parts[0].parse().unwrap_or(0);
+    let minor: u32 = parts[1].split('-').next().unwrap_or("0").parse().unwrap_or(0);
+
+    // Comment field supported in MongoDB 4.4+
+    major > 4 || (major == 4 && minor >= 4)
+}
+
 /// Write operations implementation
 impl super::QueryExecutor {
     /// Execute insertOne command
@@ -151,6 +180,7 @@ impl super::QueryExecutor {
         let client_id = self.context.get_client_id();
         let cancel_token = self.context.get_cancel_token();
         let db_name = self.context.get_current_database().await;
+        let server_version = self.context.shared_state.get_server_version();
 
         let result = run_killable_command(
             client,
@@ -161,6 +191,7 @@ impl super::QueryExecutor {
                 let collection = collection.clone();
                 let filter = filter.clone();
                 let update = update.clone();
+                let server_version = server_version.clone();
 
                 Box::pin(async move {
                     let coll: Collection<Document> = client
@@ -169,8 +200,10 @@ impl super::QueryExecutor {
 
                     use mongodb::options::UpdateOptions;
                     let mut options = UpdateOptions::default();
-                    // CRITICAL: Set comment for killOp support
-                    options.comment = Some(Bson::String(handle.comment().to_string()));
+                    // CRITICAL: Set comment for killOp support (only if server supports it)
+                    if supports_write_comment(server_version.as_deref()) {
+                        options.comment = Some(Bson::String(handle.comment().to_string()));
+                    }
 
                     let result = coll
                         .update_many(filter, update)
@@ -257,6 +290,7 @@ impl super::QueryExecutor {
         let client_id = self.context.get_client_id();
         let cancel_token = self.context.get_cancel_token();
         let db_name = self.context.get_current_database().await;
+        let server_version = self.context.shared_state.get_server_version();
 
         let result = run_killable_command(
             client,
@@ -266,6 +300,7 @@ impl super::QueryExecutor {
                 let db_name = db_name.clone();
                 let collection = collection.clone();
                 let filter = filter.clone();
+                let server_version = server_version.clone();
 
                 Box::pin(async move {
                     let coll: Collection<Document> = client
@@ -274,8 +309,10 @@ impl super::QueryExecutor {
 
                     use mongodb::options::DeleteOptions;
                     let mut options = DeleteOptions::default();
-                    // CRITICAL: Set comment for killOp support
-                    options.comment = Some(Bson::String(handle.comment().to_string()));
+                    // CRITICAL: Set comment for killOp support (only if server supports it)
+                    if supports_write_comment(server_version.as_deref()) {
+                        options.comment = Some(Bson::String(handle.comment().to_string()));
+                    }
 
                     let result = coll
                         .delete_many(filter)
@@ -348,5 +385,37 @@ impl super::QueryExecutor {
             },
             error: None,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_supports_write_comment() {
+        // MongoDB 4.4+ supports comment
+        assert!(supports_write_comment(Some("4.4.0")));
+        assert!(supports_write_comment(Some("4.4.1")));
+        assert!(supports_write_comment(Some("5.0.0")));
+        assert!(supports_write_comment(Some("5.0.1")));
+        assert!(supports_write_comment(Some("6.0.0")));
+        assert!(supports_write_comment(Some("7.0.0")));
+
+        // MongoDB < 4.4 does not support comment
+        assert!(!supports_write_comment(Some("4.2.0")));
+        assert!(!supports_write_comment(Some("4.3.0")));
+        assert!(!supports_write_comment(Some("4.0.0")));
+        assert!(!supports_write_comment(Some("3.6.0")));
+
+        // Edge cases
+        assert!(!supports_write_comment(None));
+        assert!(!supports_write_comment(Some("")));
+        assert!(!supports_write_comment(Some("invalid")));
+
+        // Version strings with release candidates or other suffixes
+        assert!(supports_write_comment(Some("4.4.0-rc1")));
+        assert!(supports_write_comment(Some("5.0.0-rc2")));
+        assert!(!supports_write_comment(Some("4.2.0-rc1")));
     }
 }

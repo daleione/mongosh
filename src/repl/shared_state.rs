@@ -126,4 +126,9 @@ impl SharedState {
         *self.connected.write().unwrap() = true;
         *self.server_version.write().unwrap() = version;
     }
+
+    /// Get server version.
+    pub fn get_server_version(&self) -> Option<String> {
+        self.server_version.read().unwrap().clone()
+    }
 }
