@@ -32,6 +32,9 @@ pub struct ConnectionManager {
 
     /// Connection URI
     uri: String,
+
+    /// Last activity timestamp for connection health tracking
+    last_activity: Arc<RwLock<Option<Instant>>>,
 }
 
 /// Connection state information
@@ -103,6 +106,7 @@ impl ConnectionManager {
             config,
             state: Arc::new(RwLock::new(ConnectionState::Disconnected)),
             uri,
+            last_activity: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -125,6 +129,7 @@ impl ConnectionManager {
                 // The client creation itself validates basic connectivity
                 self.client = Some(client);
                 self.set_state(ConnectionState::Connected).await;
+                self.update_last_activity().await;
                 info!("Successfully connected to MongoDB");
                 Ok(())
             }
@@ -220,6 +225,12 @@ impl ConnectionManager {
     /// # Returns
     /// * `Result<&Client>` - Reference to client or error
     pub fn get_client(&self) -> Result<&Client> {
+        // Update last activity when getting client
+        let last_activity = self.last_activity.clone();
+        tokio::spawn(async move {
+            *last_activity.write().await = Some(Instant::now());
+        });
+
         self.client
             .as_ref()
             .ok_or_else(|| ConnectionError::NotConnected.into())
@@ -274,6 +285,11 @@ impl ConnectionManager {
         let server_selection_timeout = std::cmp::max(self.config.timeout, 30);
         options.server_selection_timeout = Some(Duration::from_secs(server_selection_timeout));
 
+        // Set heartbeat frequency to detect stale connections faster
+        // Default is 10 seconds, we set it to 30 seconds to balance between
+        // connection health monitoring and network overhead
+        options.heartbeat_freq = Some(Duration::from_secs(30));
+
         // Set application name for tracking
         if options.app_name.is_none() {
             options.app_name = Some("mongosh-rs".to_string());
@@ -295,7 +311,7 @@ impl ConnectionManager {
         }
 
         debug!(
-            "Configured connection pool: max={}, min={}, readPreference={:?}, direct={:?}, server_selection_timeout={:?}s",
+            "Configured connection pool: max={}, min={}, readPreference={:?}, direct={:?}, server_selection_timeout={:?}s, heartbeat_freq=30s",
             self.config.max_pool_size,
             self.config.min_pool_size,
             options.selection_criteria,
@@ -312,6 +328,56 @@ impl ConnectionManager {
     /// * `new_state` - New connection state
     async fn set_state(&self, new_state: ConnectionState) {
         *self.state.write().await = new_state;
+    }
+
+    /// Update last activity timestamp
+    async fn update_last_activity(&self) {
+        *self.last_activity.write().await = Some(Instant::now());
+    }
+
+    /// Check if connection might be stale based on last activity
+    ///
+    /// # Returns
+    /// * `bool` - True if connection might be stale (idle for too long)
+    async fn is_connection_stale(&self) -> bool {
+        if let Some(last_activity) = *self.last_activity.read().await {
+            // Consider connection stale if idle for more than idle_timeout
+            let idle_duration = Instant::now().duration_since(last_activity);
+            let idle_timeout = Duration::from_secs(self.config.idle_timeout);
+            idle_duration > idle_timeout
+        } else {
+            false
+        }
+    }
+
+    /// Ensure connection is alive, reconnect if stale or broken
+    ///
+    /// This method should be called before executing any database operation
+    /// to ensure the connection is healthy.
+    ///
+    /// # Returns
+    /// * `Result<()>` - Success or reconnection error
+    pub async fn ensure_connected(&mut self) -> Result<()> {
+        // Check if we're already connected
+        if !self.is_connected().await {
+            debug!("Not connected, attempting to connect");
+            return self.connect().await;
+        }
+
+        // Check if connection is stale
+        if self.is_connection_stale().await {
+            warn!("Connection is stale, attempting to reconnect");
+            // Try a quick ping to verify connection
+            if let Some(client) = &self.client {
+                if self.ping_internal(client).await.is_err() {
+                    info!("Stale connection detected, reconnecting...");
+                    return self.reconnect().await;
+                }
+            }
+        }
+
+        self.update_last_activity().await;
+        Ok(())
     }
 
     /// Attempt connection with retries

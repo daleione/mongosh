@@ -112,9 +112,15 @@ impl ExecutionContext {
 
     /// Get database handle
     ///
+    /// This method ensures the connection is healthy before returning a database handle.
+    /// If the connection is stale or broken, it will attempt to reconnect.
+    ///
     /// # Returns
     /// * `Result<Database>` - Database handle or error
     pub async fn get_database(&self) -> Result<Database> {
+        // Ensure connection is alive before getting database
+        self.ensure_connected().await?;
+
         let conn = self.connection.read().await;
         let db_name = self.shared_state.get_database();
         conn.get_database(&db_name)
@@ -122,12 +128,33 @@ impl ExecutionContext {
 
     /// Get client handle
     ///
+    /// This method ensures the connection is healthy before returning a client handle.
+    /// If the connection is stale or broken, it will attempt to reconnect.
+    ///
     /// # Returns
     /// * `Result<Client>` - Client reference
     pub async fn get_client(&self) -> Result<Client> {
+        // Ensure connection is alive before getting client
+        self.ensure_connected().await?;
+
         let conn = self.connection.read().await;
         Ok(conn.get_client()?.clone())
     }
+
+    /// Ensure connection is alive, reconnect if necessary
+    ///
+    /// This internal method checks if the connection is healthy and
+    /// reconnects if it's stale or broken. This prevents "Broken pipe"
+    /// errors when the connection has been idle for too long.
+    ///
+    /// # Returns
+    /// * `Result<()>` - Success or reconnection error
+    async fn ensure_connected(&self) -> Result<()> {
+        let mut conn = self.connection.write().await;
+        conn.ensure_connected().await
+    }
+
+
 
     /// Get the client ID for this mongosh instance
     ///

@@ -34,7 +34,12 @@ max_pool_size = 10
 min_pool_size = 2
 
 # Connection idle timeout in seconds
-# Range: 60-3600
+# This setting controls when a connection is considered stale and needs health check
+# If a connection is idle (no activity) for longer than this duration, the shell will
+# automatically verify the connection health before the next operation to prevent
+# "Broken pipe" errors when the server has closed the connection.
+# Range: 60-3600 (default: 300, i.e., 5 minutes)
+# Note: MongoDB driver also performs heartbeat checks every 30 seconds to detect dead connections
 idle_timeout = 300
 
 
