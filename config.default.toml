@@ -135,3 +135,102 @@ timestamps = true
 [named_query]
 # Add your named query here
 # simple = "db.collection.find()"
+
+
+# ============================================
+# MCP (Model Context Protocol) Configuration
+# ============================================
+[mcp]
+
+# Enable or disable MCP server functionality
+# Options: true, false
+enabled = false
+
+[mcp.security]
+
+# Allow read operations (find, aggregate, count, distinct, etc.)
+# Options: true, false
+allow_read = true
+
+# Allow write operations (insert, update)
+# Options: true, false
+allow_write = false
+
+# Allow delete operations
+# Options: true, false
+allow_delete = false
+
+# Maximum number of documents that can be returned in a single query
+# Range: 1-10000
+max_documents_per_query = 1000
+
+# Maximum number of pipeline stages allowed in aggregation
+# Range: 1-50
+max_pipeline_stages = 10
+
+# Query timeout in seconds
+# Range: 1-300
+query_timeout_seconds = 30
+
+# List of allowed databases (empty array means all databases are allowed)
+# Example: allowed_databases = ["testdb", "devdb"]
+allowed_databases = []
+
+# List of forbidden collection patterns (supports * as wildcard)
+# Patterns can match either the full "database.collection" name or just the collection name
+# Examples:
+#   - "system.*" blocks all collections starting with "system."
+#   - "*.internal" blocks all collections ending with ".internal"
+#   - "admin.secrets" blocks exactly "admin.secrets"
+forbidden_collections = ["system.*", "admin.*"]
+
+# Enable audit logging for all MCP operations
+# Options: true, false
+audit_enabled = true
+
+
+# ============================================
+# MCP Configuration Examples
+# ============================================
+
+# Production Environment Example:
+# [mcp]
+# enabled = true
+# [mcp.security]
+# allow_read = true
+# allow_write = true
+# allow_delete = false
+# max_documents_per_query = 500
+# max_pipeline_stages = 5
+# query_timeout_seconds = 60
+# allowed_databases = ["production_db"]
+# forbidden_collections = ["system.*", "admin.*", "*.internal", "*.sensitive"]
+# audit_enabled = true
+
+# Development Environment Example:
+# [mcp]
+# enabled = true
+# [mcp.security]
+# allow_read = true
+# allow_write = true
+# allow_delete = true
+# max_documents_per_query = 100
+# max_pipeline_stages = 10
+# query_timeout_seconds = 30
+# allowed_databases = []
+# forbidden_collections = ["system.*"]
+# audit_enabled = true
+
+# Read-Only Environment Example:
+# [mcp]
+# enabled = true
+# [mcp.security]
+# allow_read = true
+# allow_write = false
+# allow_delete = false
+# max_documents_per_query = 1000
+# max_pipeline_stages = 10
+# query_timeout_seconds = 30
+# allowed_databases = []
+# forbidden_collections = ["system.*", "admin.*"]
+# audit_enabled = true

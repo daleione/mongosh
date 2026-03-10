@@ -37,6 +37,10 @@ pub struct Config {
     #[serde(default)]
     pub logging: LoggingConfig,
 
+    /// MCP (Model Context Protocol) configuration
+    #[serde(default)]
+    pub mcp: Option<McpConfig>,
+
     /// Named query
     #[serde(default)]
     pub named_query: HashMap<String, String>,
@@ -49,6 +53,7 @@ impl Default for Config {
             display: DisplayConfig::default(),
             history: HistoryConfig::default(),
             logging: LoggingConfig::default(),
+            mcp: None,
             named_query: HashMap::new(),
         }
     }
@@ -666,6 +671,27 @@ impl LogLevel {
             LogLevel::Info => tracing::Level::INFO,
             LogLevel::Debug => tracing::Level::DEBUG,
             LogLevel::Trace => tracing::Level::TRACE,
+        }
+    }
+}
+
+/// MCP (Model Context Protocol) configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpConfig {
+    /// Enable MCP server functionality
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// MCP security configuration
+    #[serde(default)]
+    pub security: crate::mcp::SecurityConfig,
+}
+
+impl Default for McpConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            security: crate::mcp::SecurityConfig::default(),
         }
     }
 }

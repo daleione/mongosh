@@ -44,6 +44,7 @@ pub mod executor;
 pub mod formatter;
 pub mod parser;
 pub mod repl;
+pub mod mcp;
 
 // Re-export commonly used types
 pub use config::Config;
@@ -53,6 +54,7 @@ pub use executor::{CommandRouter, ExecutionResult};
 pub use formatter::Formatter;
 pub use parser::{Command, Parser};
 pub use repl::ReplEngine;
+pub use mcp::MongoShellServer;
 
 /// Library version
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

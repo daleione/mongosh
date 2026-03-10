@@ -29,6 +29,7 @@ mod connection;
 mod error;
 mod executor;
 mod formatter;
+mod mcp;
 mod parser;
 mod repl;
 
@@ -73,11 +74,51 @@ async fn run() -> Result<()> {
         return Ok(());
     }
 
+    // Check if MCP mode is enabled
+    if cli.args().mcp {
+        return run_mcp_server(&cli).await;
+    }
+
     // Print banner if not in quiet mode
     cli.print_banner();
 
     // Run in interactive mode
     run_interactive_mode(&cli).await
+}
+
+/// Run MCP server mode
+async fn run_mcp_server(cli: &CliInterface) -> Result<()> {
+    use mcp::MongoShellServer;
+    use rmcp::{ServiceExt, transport::stdio};
+
+    // Setup connection
+    let uri = cli.get_connection_uri();
+    let conn_manager = ConnectionManager::new(uri.clone(), cli.config().connection.clone());
+
+    // Initialize shared state
+    let database = cli.get_database();
+    let shared_state = SharedState::with_config(database, &cli.config().display);
+
+    // Get MCP security configuration from config file
+    let security_config = cli.config()
+        .mcp
+        .as_ref()
+        .map(|mcp| mcp.security.clone())
+        .unwrap_or_default();
+
+    // Create MCP server
+    let server = MongoShellServer::new(conn_manager, shared_state, security_config);
+
+    // Start MCP server on stdio
+    tracing::info!("Starting MCP server on stdio");
+    let service = server.serve(stdio()).await
+        .map_err(|e| error::MongoshError::Generic(format!("Failed to start MCP server: {}", e)))?;
+
+    // Wait for server to complete
+    service.waiting().await
+        .map_err(|e| error::MongoshError::Generic(format!("MCP server error: {}", e)))?;
+
+    Ok(())
 }
 
 /// Run application in interactive REPL mode

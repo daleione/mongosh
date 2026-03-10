@@ -135,6 +135,10 @@ pub struct CliArgs {
     #[arg(long)]
     pub tls_insecure: bool,
 
+    /// Enable MCP (Model Context Protocol) server mode
+    #[arg(long)]
+    pub mcp: bool,
+
     /// Subcommands
     #[command(subcommand)]
     pub command: Option<Commands>,
