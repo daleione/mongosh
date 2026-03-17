@@ -92,7 +92,7 @@ impl SharedState {
     }
 
     /// Set current database name.
-    pub fn set_database(&mut self, database: String) {
+    pub fn set_database(&self, database: String) {
         *self.current_database.write().unwrap() = database;
     }
 

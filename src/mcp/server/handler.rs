@@ -11,6 +11,7 @@ use std::sync::Arc;
 use crate::connection::ConnectionManager;
 use crate::executor::ExecutionContext;
 use crate::mcp::security::{SecurityConfig, SecurityManager};
+use crate::mcp::tools::UseDatabaseParams;
 use crate::mcp::tools::*;
 use crate::mcp::utils::*;
 use crate::parser::{
@@ -654,6 +655,73 @@ impl MongoShellServer {
         Ok(execution_result_to_mcp_tool_result(result))
     }
 
+    /// Switch the active database context for this session.
+    ///
+    /// Call this tool BEFORE any query/write/delete tool when you need to operate
+    /// on a database that is different from the current one. After switching, all
+    /// subsequent tools that accept a "database" parameter will still use whatever
+    /// database name you pass explicitly — but the session default is updated so
+    /// that context-aware tooling (e.g. listCollections) reflects the right DB.
+    ///
+    /// Typical workflow:
+    ///   1. mongo_list_databases  →  see what databases exist
+    ///   2. mongo_use_database    →  switch to the right one (e.g. "imagen")
+    ///   3. mongo_list_collections / mongo_find / …  →  operate on that DB
+    #[tool(
+        description = "Switch the active database context. Call this first when you need to work \
+        with a specific database (e.g. 'imagen', 'paysync_test'). \
+        Use mongo_list_databases to discover available databases first."
+    )]
+    async fn mongo_use_database(
+        &self,
+        Parameters(params): Parameters<UseDatabaseParams>,
+    ) -> Result<CallToolResult, McpError> {
+        // Security check: verify the database is in the allowed list
+        self.security
+            .check_database_access(&params.database)
+            .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+
+        // Audit log
+        self.security
+            .audit_log("useDatabase", &params.database, "", "")
+            .await;
+
+        // Switch the session-level current database
+        self.context
+            .set_current_database(params.database.clone())
+            .await;
+
+        let output = serde_json::json!({
+            "ok": 1,
+            "currentDatabase": params.database,
+            "message": format!("Switched to database '{}'", params.database)
+        });
+
+        Ok(CallToolResult::success(vec![rmcp::model::Content::text(
+            serde_json::to_string_pretty(&output).unwrap_or_else(|_| "{}".to_string()),
+        )]))
+    }
+
+    /// Return the name of the database that is currently active for this session.
+    ///
+    /// Use this to verify which database you are on before running queries,
+    /// especially after calling mongo_use_database.
+    #[tool(
+        description = "Return the currently active database name for this session. \
+        Useful to verify context before running queries."
+    )]
+    async fn mongo_get_current_database(&self) -> Result<CallToolResult, McpError> {
+        let db = self.context.get_current_database().await;
+
+        let output = serde_json::json!({
+            "currentDatabase": db
+        });
+
+        Ok(CallToolResult::success(vec![rmcp::model::Content::text(
+            serde_json::to_string_pretty(&output).unwrap_or_else(|_| "{}".to_string()),
+        )]))
+    }
+
     /// List all databases
     ///
     /// # Returns
@@ -868,31 +936,51 @@ impl ServerHandler for MongoShellServer {
         .with_instructions(
             "This server provides MongoDB operations through MCP tools.\n\
             \n\
-            IMPORTANT - BSON Type Handling:\n\
-            Results use MongoDB Extended JSON v2 (Relaxed) format to preserve type information.\n\
-            - ObjectId fields appear as: {\"$oid\": \"69297ddcb4c39276cb39b05b\"}\n\
-            - DateTime fields appear as: {\"$date\": \"2025-11-28T10:47:07.965Z\"}\n\
-            - Decimal128 fields appear as: {\"$numberDecimal\": \"3.14\"}\n\
-            - Integer and floating-point numbers remain plain JSON numbers.\n\
+            ── DATABASE CONTEXT ──────────────────────────────────────────────────────\n\
+            This server may be connected to a MongoDB instance that hosts MULTIPLE\n\
+            databases (e.g. 'imagen', 'paysync_test', 'analytics', …).\n\
             \n\
-            When constructing filters, documents, or pipeline stages you MUST use the\n\
-            same Extended JSON v2 wrappers for type-specific values. Plain strings will\n\
-            NOT match ObjectId or DateTime fields.\n\
+            MANDATORY workflow when the target database is not obvious:\n\
+            1. Call mongo_list_databases   → discover all available databases.\n\
+            2. Call mongo_use_database     → switch to the correct database\n\
+               (e.g. image-related queries → 'imagen',\n\
+                payment queries           → 'paysync_test').\n\
+            3. Call mongo_get_current_database  → verify you are on the right DB.\n\
+            4. Call mongo_list_collections → inspect the schema before querying.\n\
+            5. Run your query / mutation.\n\
+            \n\
+            Every query/write/delete tool also accepts an explicit \"database\" field.\n\
+            Always fill it in — do NOT leave it empty or assume a default.\n\
+            \n\
+            ── BSON TYPE HANDLING ────────────────────────────────────────────────────\n\
+            Results use MongoDB Extended JSON v2 (Relaxed) format to preserve types.\n\
+            - ObjectId  → {\"$oid\": \"69297ddcb4c39276cb39b05b\"}\n\
+            - DateTime  → {\"$date\": \"2025-11-28T10:47:07.965Z\"}\n\
+            - Decimal128→ {\"$numberDecimal\": \"3.14\"}\n\
+            - Numbers remain plain JSON numbers (relaxed mode).\n\
+            \n\
+            When constructing filters/documents use the SAME wrappers.\n\
+            Plain strings will NOT match ObjectId or DateTime fields.\n\
             \n\
             Filter examples:\n\
-            - Match by ObjectId:   {\"_id\": {\"$oid\": \"69297ddcb4c39276cb39b05b\"}}\n\
-            - Multiple ObjectIds:  {\"_id\": {\"$in\": [{\"$oid\": \"...\"}, {\"$oid\": \"...\"}]}}\n\
-            - DateTime comparison: {\"create_time\": {\"$gte\": {\"$date\": \"2025-01-01T00:00:00Z\"}}}\n\
-            - Date only (midnight UTC): {\"create_time\": {\"$gte\": {\"$date\": \"2025-01-01\"}}}\n\
-            - Epoch milliseconds: {\"create_time\": {\"$gte\": {\"$date\": 1735689600000}}}\n\
+            - ObjectId exact:    {\"_id\": {\"$oid\": \"69297ddcb4c39276cb39b05b\"}}\n\
+            - ObjectId $in:      {\"_id\": {\"$in\": [{\"$oid\": \"...\"}, {\"$oid\": \"...\"}]}}\n\
+            - DateTime range:    {\"create_time\": {\"$gte\": {\"$date\": \"2025-01-01T00:00:00Z\"}}}\n\
+            - Date only:         {\"create_time\": {\"$gte\": {\"$date\": \"2025-01-01\"}}}\n\
+            - Epoch ms:          {\"create_time\": {\"$gte\": {\"$date\": 1735689600000}}}\n\
             \n\
             Insert/update examples:\n\
-            - DateTime field: {\"created_at\": {\"$date\": \"2025-01-01T00:00:00Z\"}}\n\
-            - ObjectId ref:   {\"group_id\": {\"$oid\": \"69297ddcb4c39276cb39b05b\"}}\n\
+            - DateTime field:    {\"created_at\": {\"$date\": \"2025-01-01T00:00:00Z\"}}\n\
+            - ObjectId ref:      {\"group_id\": {\"$oid\": \"69297ddcb4c39276cb39b05b\"}}\n\
             \n\
-            Available tools: find, findOne, aggregate, count, distinct, insertOne, insertMany,\n\
-            updateOne, updateMany, deleteOne, deleteMany, listDatabases, listCollections,\n\
-            listIndexes, collectionStats, explain.\n\
+            ── AVAILABLE TOOLS ───────────────────────────────────────────────────────\n\
+            Context : useDatabase, getCurrentDatabase\n\
+            Read    : find, findOne, aggregate, count, distinct\n\
+            Write   : insertOne, insertMany, updateOne, updateMany\n\
+            Delete  : deleteOne, deleteMany\n\
+            Admin   : listDatabases, listCollections, listIndexes,\n\
+                      collectionStats, explain\n\
+            \n\
             All operations are subject to security policies configured on the server."
                 .to_string(),
         )

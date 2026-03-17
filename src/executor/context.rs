@@ -105,9 +105,9 @@ impl ExecutionContext {
     /// # Arguments
     /// * `database` - New database name
     pub async fn set_current_database(&self, database: String) {
-        // Clone to get mutable access
-        let mut state = self.shared_state.clone();
-        state.set_database(database);
+        // SharedState holds Arc<RwLock<String>> internally, so we can write
+        // through a shared reference without cloning.
+        self.shared_state.set_database(database);
     }
 
     /// Get database handle
@@ -153,8 +153,6 @@ impl ExecutionContext {
         let mut conn = self.connection.write().await;
         conn.ensure_connected().await
     }
-
-
 
     /// Get the client ID for this mongosh instance
     ///

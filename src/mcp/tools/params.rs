@@ -327,6 +327,16 @@ pub struct ExplainParams {
     pub verbosity: String,
 }
 
+/// Parameters for switching the active database context
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct UseDatabaseParams {
+    /// Name of the database to switch to.
+    /// After calling this tool, subsequent operations that omit the "database" field
+    /// will use this database by default. You can call mongo_get_current_database
+    /// to verify the switch was successful.
+    pub database: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
