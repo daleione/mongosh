@@ -206,6 +206,13 @@ impl MongoParser {
                     self.expect_token(&MongoTokenKind::RParen, "Expected ')' after expression")?;
                     Ok(expr)
                 }
+                // Regular expression literal: /pattern/flags
+                MongoTokenKind::Regex(pattern, flags) => {
+                    let pattern = pattern.clone();
+                    let flags = flags.clone();
+                    self.advance();
+                    Ok(Expr::Regex(pattern, flags))
+                }
                 _ => Err(
                     ParseError::SyntaxError(format!("Unexpected token: {:?}", token.kind)).into(),
                 ),

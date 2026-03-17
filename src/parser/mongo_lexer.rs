@@ -49,6 +49,8 @@ pub enum MongoTokenKind {
     String(String),
     /// Number literal
     Number(String),
+    /// Regular expression literal: /pattern/flags
+    Regex(String, String),
     /// End of file
     EOF,
     /// Unknown character
@@ -166,6 +168,7 @@ impl MongoLexer {
                 self.advance();
                 MongoToken::new(MongoTokenKind::Bang, start..self.pos)
             }
+            '/' => self.scan_regex(start),
             '\'' | '"' => self.scan_string(ch, start),
             '0'..='9' => self.scan_number(start),
             'a'..='z' | 'A'..='Z' | '_' | '$' => self.scan_identifier(start),
@@ -211,6 +214,51 @@ impl MongoLexer {
         }
 
         MongoToken::new(MongoTokenKind::String(value), start..self.pos)
+    }
+
+    /// Scan a regex literal: /pattern/flags
+    fn scan_regex(&mut self, start: usize) -> MongoToken {
+        self.advance(); // Skip opening '/'
+
+        let mut pattern = String::new();
+
+        while !self.is_at_end() {
+            let ch = self.current_char();
+            if ch == '/' {
+                break;
+            }
+            if ch == '\\' {
+                // Escape sequence inside regex
+                pattern.push(ch);
+                self.advance();
+                if !self.is_at_end() {
+                    pattern.push(self.current_char());
+                    self.advance();
+                }
+            } else {
+                pattern.push(ch);
+                self.advance();
+            }
+        }
+
+        // Skip closing '/'
+        if self.current_char() == '/' {
+            self.advance();
+        }
+
+        // Collect flags (e.g. i, g, m, s, x)
+        let mut flags = String::new();
+        while !self.is_at_end() {
+            let ch = self.current_char();
+            if ch.is_ascii_alphabetic() {
+                flags.push(ch);
+                self.advance();
+            } else {
+                break;
+            }
+        }
+
+        MongoToken::new(MongoTokenKind::Regex(pattern, flags), start..self.pos)
     }
 
     /// Scan a number (integer or decimal)
@@ -428,6 +476,36 @@ mod tests {
             tokens
                 .iter()
                 .any(|t| matches!(t.kind, MongoTokenKind::Unknown('@')))
+        );
+    }
+
+    #[test]
+    fn test_tokenize_regex_simple() {
+        let tokens = MongoLexer::tokenize("/hello/");
+        assert!(
+            tokens
+                .iter()
+                .any(|t| matches!(t.kind, MongoTokenKind::Regex(ref p, ref f) if p == "hello" && f.is_empty()))
+        );
+    }
+
+    #[test]
+    fn test_tokenize_regex_with_flags() {
+        let tokens = MongoLexer::tokenize("/hello/i");
+        assert!(
+            tokens
+                .iter()
+                .any(|t| matches!(t.kind, MongoTokenKind::Regex(ref p, ref f) if p == "hello" && f == "i"))
+        );
+    }
+
+    #[test]
+    fn test_tokenize_regex_in_query() {
+        let tokens = MongoLexer::tokenize("{ name: { $regex: /^acme/i } }");
+        assert!(
+            tokens
+                .iter()
+                .any(|t| matches!(t.kind, MongoTokenKind::Regex(ref p, ref f) if p == "^acme" && f == "i"))
         );
     }
 }

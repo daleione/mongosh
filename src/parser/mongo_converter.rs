@@ -53,6 +53,14 @@ impl ExpressionConverter {
             // Call expression: ObjectId("..."), ISODate("...")
             Expr::Call(call) => Self::call_expression_to_bson(call),
 
+            // Regular expression literal: /pattern/flags
+            Expr::Regex(pattern, flags) => {
+                Ok(Bson::RegularExpression(mongodb::bson::Regex {
+                    pattern: pattern.clone(),
+                    options: flags.clone(),
+                }))
+            }
+
             // Member expression (not supported in BSON literals)
             Expr::Member(_) => Err(ParseError::InvalidQuery(
                 "Member expressions not supported in BSON literals".to_string(),
@@ -471,6 +479,45 @@ mod tests {
         let bson = parse_and_convert("{message: 'Hello\\nWorld'}");
         if let Bson::Document(doc) = bson {
             assert!(doc.get_str("message").unwrap().contains('\n'));
+        } else {
+            panic!("Expected document");
+        }
+    }
+
+    #[test]
+    fn test_regex_literal_simple() {
+        let bson = parse_and_convert("/hello/");
+        if let Bson::RegularExpression(re) = bson {
+            assert_eq!(re.pattern, "hello");
+            assert_eq!(re.options, "");
+        } else {
+            panic!("Expected RegularExpression");
+        }
+    }
+
+    #[test]
+    fn test_regex_literal_with_flags() {
+        let bson = parse_and_convert("/hello/i");
+        if let Bson::RegularExpression(re) = bson {
+            assert_eq!(re.pattern, "hello");
+            assert_eq!(re.options, "i");
+        } else {
+            panic!("Expected RegularExpression");
+        }
+    }
+
+    #[test]
+    fn test_regex_in_query_filter() {
+        let bson = parse_and_convert("{ name: { $regex: /^acme/i } }");
+        if let Bson::Document(doc) = bson {
+            let inner = doc.get_document("name").unwrap();
+            let re_bson = inner.get("$regex").unwrap();
+            if let Bson::RegularExpression(re) = re_bson {
+                assert_eq!(re.pattern, "^acme");
+                assert_eq!(re.options, "i");
+            } else {
+                panic!("Expected RegularExpression for $regex");
+            }
         } else {
             panic!("Expected document");
         }

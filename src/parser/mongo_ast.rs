@@ -34,6 +34,8 @@ pub enum Expr {
     New(Box<NewExpr>),
     /// Unary expression: -x, +x, !x
     Unary(Box<UnaryExpr>),
+    /// Regular expression literal: /pattern/flags
+    Regex(String, String),
 }
 
 /// Object expression: { key: value, ... }
