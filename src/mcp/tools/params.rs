@@ -1,7 +1,33 @@
 //! Parameter structures for MongoDB MCP tools
+//!
+//! ## BSON Type Handling in Filters and Documents
+//!
+//! All filter, document, and pipeline parameters support **MongoDB Extended JSON v2** format
+//! for expressing BSON-specific types. This is critical for correct operation:
+//!
+//! ### ObjectId
+//! ```json
+//! {"_id": {"$oid": "69297ddcb4c39276cb39b05b"}}
+//! ```
+//!
+//! ### DateTime
+//! ```json
+//! {"create_time": {"$gte": {"$date": "2025-01-01T00:00:00Z"}}}
+//! {"create_time": {"$gte": {"$date": "2025-01-01"}}}
+//! {"create_time": {"$gte": {"$date": 1735689600000}}}
+//! ```
+//!
+//! ### Other types
+//! ```json
+//! {"amount": {"$numberDecimal": "3.14"}}
+//! {"count":  {"$numberLong":    "9007199254740993"}}
+//! ```
+//!
+//! **Warning:** Using a plain string like `"2025-01-01 00:00:00"` will NOT match
+//! a DateTime field — you must use the `{"$date": "..."}` wrapper.
 
-use serde::{Deserialize, Serialize};
 use rmcp::schemars::{self, JsonSchema};
+use serde::{Deserialize, Serialize};
 
 /// Default limit value for queries
 fn default_limit() -> i64 {
@@ -27,15 +53,23 @@ pub struct FindParams {
     /// Collection name
     pub collection: String,
 
-    /// Query filter as JSON object
+    /// Query filter as a JSON object. Supports all MongoDB query operators ($eq, $gt, $lt, $in, $and, $or, etc.).
+    /// IMPORTANT: For BSON-typed fields use Extended JSON v2 wrappers, NOT plain strings:
+    ///   - ObjectId:  {"_id": {"$oid": "69297ddcb4c39276cb39b05b"}}
+    ///   - DateTime:  {"create_time": {"$gte": {"$date": "2025-01-01T00:00:00Z"}}}
+    ///   - Date only: {"create_time": {"$gte": {"$date": "2025-01-01"}}} (midnight UTC)
+    ///   - Epoch ms:  {"create_time": {"$gte": {"$date": 1735689600000}}}
+    /// Using a plain string for an ObjectId or DateTime field will NOT match any documents.
     #[serde(default)]
     pub filter: Option<serde_json::Value>,
 
-    /// Projection to specify which fields to return
+    /// Projection to specify which fields to return (1 = include, 0 = exclude).
+    /// Example: {"name": 1, "email": 1, "_id": 0}
     #[serde(default)]
     pub projection: Option<serde_json::Value>,
 
-    /// Sort specification
+    /// Sort specification (1 = ascending, -1 = descending).
+    /// Example: {"create_time": -1, "name": 1}
     #[serde(default)]
     pub sort: Option<serde_json::Value>,
 
@@ -57,11 +91,18 @@ pub struct FindOneParams {
     /// Collection name
     pub collection: String,
 
-    /// Query filter as JSON object
+    /// Query filter as a JSON object. Supports all MongoDB query operators.
+    /// IMPORTANT: For BSON-typed fields use Extended JSON v2 wrappers, NOT plain strings:
+    ///   - ObjectId:  {"_id": {"$oid": "69297ddcb4c39276cb39b05b"}}
+    ///   - DateTime:  {"create_time": {"$gte": {"$date": "2025-01-01T00:00:00Z"}}}
+    ///   - Date only: {"create_time": {"$gte": {"$date": "2025-01-01"}}} (midnight UTC)
+    ///   - Epoch ms:  {"create_time": {"$gte": {"$date": 1735689600000}}}
+    /// Using a plain string for an ObjectId or DateTime field will NOT match any documents.
     #[serde(default)]
     pub filter: Option<serde_json::Value>,
 
-    /// Projection to specify which fields to return
+    /// Projection to specify which fields to return (1 = include, 0 = exclude).
+    /// Example: {"name": 1, "email": 1, "_id": 0}
     #[serde(default)]
     pub projection: Option<serde_json::Value>,
 }
@@ -75,7 +116,11 @@ pub struct AggregateParams {
     /// Collection name
     pub collection: String,
 
-    /// Aggregation pipeline stages
+    /// Aggregation pipeline stages as an array of stage objects.
+    /// IMPORTANT: For BSON-typed values inside pipeline stages use Extended JSON v2 wrappers:
+    ///   - ObjectId:  {"$match": {"_id": {"$oid": "69297ddcb4c39276cb39b05b"}}}
+    ///   - DateTime:  {"$match": {"create_time": {"$gte": {"$date": "2025-01-01T00:00:00Z"}}}}
+    ///   - Date only: {"$match": {"create_time": {"$gte": {"$date": "2025-01-01"}}}}
     pub pipeline: Vec<serde_json::Value>,
 }
 
@@ -88,7 +133,10 @@ pub struct CountParams {
     /// Collection name
     pub collection: String,
 
-    /// Query filter as JSON object
+    /// Query filter as a JSON object. Supports all MongoDB query operators.
+    /// IMPORTANT: For BSON-typed fields use Extended JSON v2 wrappers, NOT plain strings:
+    ///   - ObjectId:  {"_id": {"$oid": "69297ddcb4c39276cb39b05b"}}
+    ///   - DateTime:  {"create_time": {"$gte": {"$date": "2025-01-01T00:00:00Z"}}}
     #[serde(default)]
     pub filter: Option<serde_json::Value>,
 }
@@ -105,7 +153,10 @@ pub struct DistinctParams {
     /// Field name to get distinct values for
     pub field: String,
 
-    /// Query filter as JSON object
+    /// Query filter as a JSON object. Supports all MongoDB query operators.
+    /// IMPORTANT: For BSON-typed fields use Extended JSON v2 wrappers, NOT plain strings:
+    ///   - ObjectId:  {"_id": {"$oid": "69297ddcb4c39276cb39b05b"}}
+    ///   - DateTime:  {"create_time": {"$gte": {"$date": "2025-01-01T00:00:00Z"}}}
     #[serde(default)]
     pub filter: Option<serde_json::Value>,
 }
@@ -119,7 +170,13 @@ pub struct InsertOneParams {
     /// Collection name
     pub collection: String,
 
-    /// Document to insert
+    /// Document to insert as a JSON object.
+    /// IMPORTANT: For BSON-typed fields use Extended JSON v2 wrappers, NOT plain strings:
+    ///   - ObjectId:  {"group_id": {"$oid": "69297ddcb4c39276cb39b05b"}}
+    ///   - DateTime:  {"created_at": {"$date": "2025-01-01T00:00:00Z"}}
+    ///   - Date only: {"created_at": {"$date": "2025-01-01"}} (midnight UTC)
+    ///   - Epoch ms:  {"created_at": {"$date": 1735689600000}}
+    /// If you omit _id, MongoDB will generate one automatically.
     pub document: serde_json::Value,
 }
 
@@ -132,7 +189,11 @@ pub struct InsertManyParams {
     /// Collection name
     pub collection: String,
 
-    /// Array of documents to insert
+    /// Array of documents to insert.
+    /// IMPORTANT: For BSON-typed fields in each document use Extended JSON v2 wrappers:
+    ///   - ObjectId:  {"group_id": {"$oid": "69297ddcb4c39276cb39b05b"}}
+    ///   - DateTime:  {"created_at": {"$date": "2025-01-01T00:00:00Z"}}
+    ///   - Date only: {"created_at": {"$date": "2025-01-01"}} (midnight UTC)
     pub documents: Vec<serde_json::Value>,
 }
 
@@ -145,10 +206,16 @@ pub struct UpdateOneParams {
     /// Collection name
     pub collection: String,
 
-    /// Query filter to match document
+    /// Query filter to match document. Supports all MongoDB query operators.
+    /// IMPORTANT: For BSON-typed fields use Extended JSON v2 wrappers, NOT plain strings:
+    ///   - ObjectId:  {"_id": {"$oid": "69297ddcb4c39276cb39b05b"}}
+    ///   - DateTime:  {"create_time": {"$gte": {"$date": "2025-01-01T00:00:00Z"}}}
     pub filter: serde_json::Value,
 
-    /// Update operations to perform
+    /// Update operations to perform using MongoDB update operators.
+    /// IMPORTANT: For BSON-typed values use Extended JSON v2 wrappers:
+    ///   - {"$set": {"updated_at": {"$date": "2025-06-01T00:00:00Z"}}}
+    ///   - {"$set": {"ref_id": {"$oid": "69297ddcb4c39276cb39b05b"}}}
     pub update: serde_json::Value,
 }
 
@@ -161,10 +228,16 @@ pub struct UpdateManyParams {
     /// Collection name
     pub collection: String,
 
-    /// Query filter to match documents
+    /// Query filter to match documents. Supports all MongoDB query operators.
+    /// IMPORTANT: For BSON-typed fields use Extended JSON v2 wrappers, NOT plain strings:
+    ///   - ObjectId:  {"_id": {"$oid": "69297ddcb4c39276cb39b05b"}}
+    ///   - DateTime:  {"create_time": {"$gte": {"$date": "2025-01-01T00:00:00Z"}}}
     pub filter: serde_json::Value,
 
-    /// Update operations to perform
+    /// Update operations to perform using MongoDB update operators.
+    /// IMPORTANT: For BSON-typed values use Extended JSON v2 wrappers:
+    ///   - {"$set": {"updated_at": {"$date": "2025-06-01T00:00:00Z"}}}
+    ///   - {"$set": {"ref_id": {"$oid": "69297ddcb4c39276cb39b05b"}}}
     pub update: serde_json::Value,
 }
 
@@ -177,7 +250,11 @@ pub struct DeleteOneParams {
     /// Collection name
     pub collection: String,
 
-    /// Query filter to match document
+    /// Query filter to match the document to delete. Supports all MongoDB query operators.
+    /// IMPORTANT: For BSON-typed fields use Extended JSON v2 wrappers, NOT plain strings:
+    ///   - ObjectId:  {"_id": {"$oid": "69297ddcb4c39276cb39b05b"}}
+    ///   - DateTime:  {"create_time": {"$lt": {"$date": "2025-01-01T00:00:00Z"}}}
+    /// Using a plain string will NOT match ObjectId or DateTime fields.
     pub filter: serde_json::Value,
 }
 
@@ -190,7 +267,12 @@ pub struct DeleteManyParams {
     /// Collection name
     pub collection: String,
 
-    /// Query filter to match documents
+    /// Query filter to match documents to delete. Supports all MongoDB query operators.
+    /// IMPORTANT: For BSON-typed fields use Extended JSON v2 wrappers, NOT plain strings:
+    ///   - ObjectId:  {"_id": {"$oid": "69297ddcb4c39276cb39b05b"}}
+    ///   - Multiple:  {"_id": {"$in": [{"$oid": "69b3cd8d..."}, {"$oid": "69b3dcc9..."}]}}
+    ///   - DateTime:  {"create_time": {"$lt": {"$date": "2025-01-01T00:00:00Z"}}}
+    /// Using a plain string will NOT match ObjectId or DateTime fields.
     pub filter: serde_json::Value,
 }
 
@@ -234,7 +316,10 @@ pub struct ExplainParams {
     /// Collection name
     pub collection: String,
 
-    /// Query filter to explain
+    /// Query filter to explain. Supports all MongoDB query operators.
+    /// IMPORTANT: For BSON-typed fields use Extended JSON v2 wrappers, NOT plain strings:
+    ///   - ObjectId:  {"_id": {"$oid": "69297ddcb4c39276cb39b05b"}}
+    ///   - DateTime:  {"create_time": {"$gte": {"$date": "2025-01-01T00:00:00Z"}}}
     pub filter: serde_json::Value,
 
     /// Verbosity level: "queryPlanner", "executionStats", or "allPlansExecution"

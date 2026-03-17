@@ -1,17 +1,12 @@
 //! MCP server handler implementation for MongoDB Shell
 
-use std::sync::Arc;
 use bson::Document;
 use rmcp::{
-    ErrorData as McpError,
-    RoleServer,
-    ServerHandler,
-    handler::server::router::tool::ToolRouter,
-    handler::server::wrapper::Parameters,
-    model::*,
-    service::RequestContext,
-    tool, tool_handler, tool_router,
+    ErrorData as McpError, RoleServer, ServerHandler, handler::server::router::tool::ToolRouter,
+    handler::server::wrapper::Parameters, model::*, service::RequestContext, tool, tool_handler,
+    tool_router,
 };
+use std::sync::Arc;
 
 use crate::connection::ConnectionManager;
 use crate::executor::ExecutionContext;
@@ -19,8 +14,7 @@ use crate::mcp::security::{SecurityConfig, SecurityManager};
 use crate::mcp::tools::*;
 use crate::mcp::utils::*;
 use crate::parser::{
-    Command, QueryCommand, AdminCommand,
-    FindOptions, AggregateOptions, UpdateOptions
+    AdminCommand, AggregateOptions, Command, FindOptions, QueryCommand, UpdateOptions,
 };
 use crate::repl::SharedState;
 
@@ -70,31 +64,40 @@ impl MongoShellServer {
     ///
     /// # Returns
     /// MCP tool result containing matching documents
-    #[tool(description = "Find documents in a MongoDB collection with optional filtering, projection, sorting, and pagination")]
+    #[tool(
+        description = "Find documents in a MongoDB collection with optional filtering, projection, sorting, and pagination"
+    )]
     async fn mongo_find(
         &self,
         Parameters(params): Parameters<FindParams>,
     ) -> Result<CallToolResult, McpError> {
         // Security checks
-        self.security.check_read_permission()
+        self.security
+            .check_read_permission()
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-        self.security.check_database_access(&params.database)
+        self.security
+            .check_database_access(&params.database)
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-        self.security.check_collection_access(&params.database, &params.collection)
+        self.security
+            .check_collection_access(&params.database, &params.collection)
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-        self.security.validate_limit(Some(params.limit))
+        self.security
+            .validate_limit(Some(params.limit))
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
 
         // Audit log
-        self.security.audit_log(
-            "find",
-            &params.database,
-            &params.collection,
-            &format!("limit={}", params.limit),
-        ).await;
+        self.security
+            .audit_log(
+                "find",
+                &params.database,
+                &params.collection,
+                &format!("limit={}", params.limit),
+            )
+            .await;
 
         // Convert parameters
-        let filter = params.filter
+        let filter = params
+            .filter
             .as_ref()
             .map(json_to_bson_document)
             .transpose()
@@ -104,11 +107,15 @@ impl MongoShellServer {
         let options = FindOptions {
             limit: Some(params.limit),
             skip: params.skip.map(|s| s as u64),
-            sort: params.sort.as_ref()
+            sort: params
+                .sort
+                .as_ref()
                 .map(json_to_bson_document)
                 .transpose()
                 .map_err(|e| McpError::invalid_params(e.to_string(), None))?,
-            projection: params.projection.as_ref()
+            projection: params
+                .projection
+                .as_ref()
                 .map(json_to_bson_document)
                 .transpose()
                 .map_err(|e| McpError::invalid_params(e.to_string(), None))?,
@@ -122,8 +129,8 @@ impl MongoShellServer {
             options,
         });
 
-        let result = self.context.execute(command).await
-            .map_err(|e| {
+        let result =
+            self.context.execute(command).await.map_err(|e| {
                 McpError::internal_error(format!("Find operation failed: {}", e), None)
             })?;
 
@@ -143,18 +150,24 @@ impl MongoShellServer {
         Parameters(params): Parameters<FindOneParams>,
     ) -> Result<CallToolResult, McpError> {
         // Security checks
-        self.security.check_read_permission()
+        self.security
+            .check_read_permission()
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-        self.security.check_database_access(&params.database)
+        self.security
+            .check_database_access(&params.database)
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-        self.security.check_collection_access(&params.database, &params.collection)
+        self.security
+            .check_collection_access(&params.database, &params.collection)
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
 
         // Audit log
-        self.security.audit_log("findOne", &params.database, &params.collection, "").await;
+        self.security
+            .audit_log("findOne", &params.database, &params.collection, "")
+            .await;
 
         // Convert parameters
-        let filter = params.filter
+        let filter = params
+            .filter
             .as_ref()
             .map(json_to_bson_document)
             .transpose()
@@ -162,7 +175,9 @@ impl MongoShellServer {
             .unwrap_or_default();
 
         let options = FindOptions {
-            projection: params.projection.as_ref()
+            projection: params
+                .projection
+                .as_ref()
                 .map(json_to_bson_document)
                 .transpose()
                 .map_err(|e| McpError::invalid_params(e.to_string(), None))?,
@@ -177,10 +192,9 @@ impl MongoShellServer {
             options,
         });
 
-        let result = self.context.execute(command).await
-            .map_err(|e| {
-                McpError::internal_error(format!("FindOne operation failed: {}", e), None)
-            })?;
+        let result = self.context.execute(command).await.map_err(|e| {
+            McpError::internal_error(format!("FindOne operation failed: {}", e), None)
+        })?;
 
         Ok(execution_result_to_mcp_tool_result(result))
     }
@@ -198,31 +212,34 @@ impl MongoShellServer {
         Parameters(params): Parameters<AggregateParams>,
     ) -> Result<CallToolResult, McpError> {
         // Security checks
-        self.security.check_read_permission()
+        self.security
+            .check_read_permission()
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-        self.security.check_database_access(&params.database)
+        self.security
+            .check_database_access(&params.database)
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-        self.security.check_collection_access(&params.database, &params.collection)
+        self.security
+            .check_collection_access(&params.database, &params.collection)
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
 
         // Convert pipeline
-        let pipeline_docs: Result<Vec<Document>, String> = params.pipeline
-            .iter()
-            .map(json_to_bson_document)
-            .collect();
-        let pipeline = pipeline_docs
-            .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+        let pipeline_docs: Result<Vec<Document>, String> =
+            params.pipeline.iter().map(json_to_bson_document).collect();
+        let pipeline = pipeline_docs.map_err(|e| McpError::invalid_params(e.to_string(), None))?;
 
-        self.security.validate_pipeline_stages(&pipeline)
+        self.security
+            .validate_pipeline_stages(&pipeline)
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
 
         // Audit log
-        self.security.audit_log(
-            "aggregate",
-            &params.database,
-            &params.collection,
-            &format!("stages={}", pipeline.len()),
-        ).await;
+        self.security
+            .audit_log(
+                "aggregate",
+                &params.database,
+                &params.collection,
+                &format!("stages={}", pipeline.len()),
+            )
+            .await;
 
         // Execute aggregate command
         let command = Command::Query(QueryCommand::Aggregate {
@@ -231,10 +248,9 @@ impl MongoShellServer {
             options: AggregateOptions::default(),
         });
 
-        let result = self.context.execute(command).await
-            .map_err(|e| {
-                McpError::internal_error(format!("Aggregate operation failed: {}", e), None)
-            })?;
+        let result = self.context.execute(command).await.map_err(|e| {
+            McpError::internal_error(format!("Aggregate operation failed: {}", e), None)
+        })?;
 
         Ok(execution_result_to_mcp_tool_result(result))
     }
@@ -252,18 +268,24 @@ impl MongoShellServer {
         Parameters(params): Parameters<CountParams>,
     ) -> Result<CallToolResult, McpError> {
         // Security checks
-        self.security.check_read_permission()
+        self.security
+            .check_read_permission()
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-        self.security.check_database_access(&params.database)
+        self.security
+            .check_database_access(&params.database)
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-        self.security.check_collection_access(&params.database, &params.collection)
+        self.security
+            .check_collection_access(&params.database, &params.collection)
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
 
         // Audit log
-        self.security.audit_log("count", &params.database, &params.collection, "").await;
+        self.security
+            .audit_log("count", &params.database, &params.collection, "")
+            .await;
 
         // Convert filter
-        let filter = params.filter
+        let filter = params
+            .filter
             .as_ref()
             .map(json_to_bson_document)
             .transpose()
@@ -276,10 +298,9 @@ impl MongoShellServer {
             filter,
         });
 
-        let result = self.context.execute(command).await
-            .map_err(|e| {
-                McpError::internal_error(format!("Count operation failed: {}", e), None)
-            })?;
+        let result = self.context.execute(command).await.map_err(|e| {
+            McpError::internal_error(format!("Count operation failed: {}", e), None)
+        })?;
 
         Ok(execution_result_to_mcp_tool_result(result))
     }
@@ -297,23 +318,29 @@ impl MongoShellServer {
         Parameters(params): Parameters<DistinctParams>,
     ) -> Result<CallToolResult, McpError> {
         // Security checks
-        self.security.check_read_permission()
+        self.security
+            .check_read_permission()
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-        self.security.check_database_access(&params.database)
+        self.security
+            .check_database_access(&params.database)
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-        self.security.check_collection_access(&params.database, &params.collection)
+        self.security
+            .check_collection_access(&params.database, &params.collection)
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
 
         // Audit log
-        self.security.audit_log(
-            "distinct",
-            &params.database,
-            &params.collection,
-            &format!("field={}", params.field),
-        ).await;
+        self.security
+            .audit_log(
+                "distinct",
+                &params.database,
+                &params.collection,
+                &format!("field={}", params.field),
+            )
+            .await;
 
         // Convert filter
-        let filter = params.filter
+        let filter = params
+            .filter
             .as_ref()
             .map(json_to_bson_document)
             .transpose()
@@ -326,9 +353,7 @@ impl MongoShellServer {
                 bson::doc! { "$group": { "_id": format!("${}", params.field) } },
             ]
         } else {
-            vec![
-                bson::doc! { "$group": { "_id": format!("${}", params.field) } },
-            ]
+            vec![bson::doc! { "$group": { "_id": format!("${}", params.field) } }]
         };
 
         // Execute distinct via aggregation
@@ -338,10 +363,9 @@ impl MongoShellServer {
             options: AggregateOptions::default(),
         });
 
-        let result = self.context.execute(command).await
-            .map_err(|e| {
-                McpError::internal_error(format!("Distinct operation failed: {}", e), None)
-            })?;
+        let result = self.context.execute(command).await.map_err(|e| {
+            McpError::internal_error(format!("Distinct operation failed: {}", e), None)
+        })?;
 
         Ok(execution_result_to_mcp_tool_result(result))
     }
@@ -359,15 +383,20 @@ impl MongoShellServer {
         Parameters(params): Parameters<InsertOneParams>,
     ) -> Result<CallToolResult, McpError> {
         // Security checks
-        self.security.check_write_permission()
+        self.security
+            .check_write_permission()
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-        self.security.check_database_access(&params.database)
+        self.security
+            .check_database_access(&params.database)
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-        self.security.check_collection_access(&params.database, &params.collection)
+        self.security
+            .check_collection_access(&params.database, &params.collection)
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
 
         // Audit log
-        self.security.audit_log("insertOne", &params.database, &params.collection, "").await;
+        self.security
+            .audit_log("insertOne", &params.database, &params.collection, "")
+            .await;
 
         // Convert document
         let document = json_to_bson_document(&params.document)
@@ -379,10 +408,9 @@ impl MongoShellServer {
             document,
         });
 
-        let result = self.context.execute(command).await
-            .map_err(|e| {
-                McpError::internal_error(format!("InsertOne operation failed: {}", e), None)
-            })?;
+        let result = self.context.execute(command).await.map_err(|e| {
+            McpError::internal_error(format!("InsertOne operation failed: {}", e), None)
+        })?;
 
         Ok(execution_result_to_mcp_tool_result(result))
     }
@@ -400,28 +428,30 @@ impl MongoShellServer {
         Parameters(params): Parameters<InsertManyParams>,
     ) -> Result<CallToolResult, McpError> {
         // Security checks
-        self.security.check_write_permission()
+        self.security
+            .check_write_permission()
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-        self.security.check_database_access(&params.database)
+        self.security
+            .check_database_access(&params.database)
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-        self.security.check_collection_access(&params.database, &params.collection)
+        self.security
+            .check_collection_access(&params.database, &params.collection)
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
 
         // Audit log
-        self.security.audit_log(
-            "insertMany",
-            &params.database,
-            &params.collection,
-            &format!("count={}", params.documents.len()),
-        ).await;
+        self.security
+            .audit_log(
+                "insertMany",
+                &params.database,
+                &params.collection,
+                &format!("count={}", params.documents.len()),
+            )
+            .await;
 
         // Convert documents
-        let documents: Result<Vec<Document>, String> = params.documents
-            .iter()
-            .map(json_to_bson_document)
-            .collect();
-        let documents = documents
-            .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+        let documents: Result<Vec<Document>, String> =
+            params.documents.iter().map(json_to_bson_document).collect();
+        let documents = documents.map_err(|e| McpError::invalid_params(e.to_string(), None))?;
 
         // Execute insertMany command
         let command = Command::Query(QueryCommand::InsertMany {
@@ -429,10 +459,9 @@ impl MongoShellServer {
             documents,
         });
 
-        let result = self.context.execute(command).await
-            .map_err(|e| {
-                McpError::internal_error(format!("InsertMany operation failed: {}", e), None)
-            })?;
+        let result = self.context.execute(command).await.map_err(|e| {
+            McpError::internal_error(format!("InsertMany operation failed: {}", e), None)
+        })?;
 
         Ok(execution_result_to_mcp_tool_result(result))
     }
@@ -450,15 +479,20 @@ impl MongoShellServer {
         Parameters(params): Parameters<UpdateOneParams>,
     ) -> Result<CallToolResult, McpError> {
         // Security checks
-        self.security.check_write_permission()
+        self.security
+            .check_write_permission()
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-        self.security.check_database_access(&params.database)
+        self.security
+            .check_database_access(&params.database)
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-        self.security.check_collection_access(&params.database, &params.collection)
+        self.security
+            .check_collection_access(&params.database, &params.collection)
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
 
         // Audit log
-        self.security.audit_log("updateOne", &params.database, &params.collection, "").await;
+        self.security
+            .audit_log("updateOne", &params.database, &params.collection, "")
+            .await;
 
         // Convert filter and update
         let filter = json_to_bson_document(&params.filter)
@@ -474,10 +508,9 @@ impl MongoShellServer {
             options: UpdateOptions::default(),
         });
 
-        let result = self.context.execute(command).await
-            .map_err(|e| {
-                McpError::internal_error(format!("UpdateOne operation failed: {}", e), None)
-            })?;
+        let result = self.context.execute(command).await.map_err(|e| {
+            McpError::internal_error(format!("UpdateOne operation failed: {}", e), None)
+        })?;
 
         Ok(execution_result_to_mcp_tool_result(result))
     }
@@ -495,15 +528,20 @@ impl MongoShellServer {
         Parameters(params): Parameters<UpdateManyParams>,
     ) -> Result<CallToolResult, McpError> {
         // Security checks
-        self.security.check_write_permission()
+        self.security
+            .check_write_permission()
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-        self.security.check_database_access(&params.database)
+        self.security
+            .check_database_access(&params.database)
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-        self.security.check_collection_access(&params.database, &params.collection)
+        self.security
+            .check_collection_access(&params.database, &params.collection)
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
 
         // Audit log
-        self.security.audit_log("updateMany", &params.database, &params.collection, "").await;
+        self.security
+            .audit_log("updateMany", &params.database, &params.collection, "")
+            .await;
 
         // Convert filter and update
         let filter = json_to_bson_document(&params.filter)
@@ -519,10 +557,9 @@ impl MongoShellServer {
             options: UpdateOptions::default(),
         });
 
-        let result = self.context.execute(command).await
-            .map_err(|e| {
-                McpError::internal_error(format!("UpdateMany operation failed: {}", e), None)
-            })?;
+        let result = self.context.execute(command).await.map_err(|e| {
+            McpError::internal_error(format!("UpdateMany operation failed: {}", e), None)
+        })?;
 
         Ok(execution_result_to_mcp_tool_result(result))
     }
@@ -540,15 +577,20 @@ impl MongoShellServer {
         Parameters(params): Parameters<DeleteOneParams>,
     ) -> Result<CallToolResult, McpError> {
         // Security checks
-        self.security.check_delete_permission()
+        self.security
+            .check_delete_permission()
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-        self.security.check_database_access(&params.database)
+        self.security
+            .check_database_access(&params.database)
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-        self.security.check_collection_access(&params.database, &params.collection)
+        self.security
+            .check_collection_access(&params.database, &params.collection)
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
 
         // Audit log
-        self.security.audit_log("deleteOne", &params.database, &params.collection, "").await;
+        self.security
+            .audit_log("deleteOne", &params.database, &params.collection, "")
+            .await;
 
         // Convert filter
         let filter = json_to_bson_document(&params.filter)
@@ -560,10 +602,9 @@ impl MongoShellServer {
             filter,
         });
 
-        let result = self.context.execute(command).await
-            .map_err(|e| {
-                McpError::internal_error(format!("DeleteOne operation failed: {}", e), None)
-            })?;
+        let result = self.context.execute(command).await.map_err(|e| {
+            McpError::internal_error(format!("DeleteOne operation failed: {}", e), None)
+        })?;
 
         Ok(execution_result_to_mcp_tool_result(result))
     }
@@ -581,15 +622,20 @@ impl MongoShellServer {
         Parameters(params): Parameters<DeleteManyParams>,
     ) -> Result<CallToolResult, McpError> {
         // Security checks
-        self.security.check_delete_permission()
+        self.security
+            .check_delete_permission()
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-        self.security.check_database_access(&params.database)
+        self.security
+            .check_database_access(&params.database)
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-        self.security.check_collection_access(&params.database, &params.collection)
+        self.security
+            .check_collection_access(&params.database, &params.collection)
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
 
         // Audit log
-        self.security.audit_log("deleteMany", &params.database, &params.collection, "").await;
+        self.security
+            .audit_log("deleteMany", &params.database, &params.collection, "")
+            .await;
 
         // Convert filter
         let filter = json_to_bson_document(&params.filter)
@@ -601,10 +647,9 @@ impl MongoShellServer {
             filter,
         });
 
-        let result = self.context.execute(command).await
-            .map_err(|e| {
-                McpError::internal_error(format!("DeleteMany operation failed: {}", e), None)
-            })?;
+        let result = self.context.execute(command).await.map_err(|e| {
+            McpError::internal_error(format!("DeleteMany operation failed: {}", e), None)
+        })?;
 
         Ok(execution_result_to_mcp_tool_result(result))
     }
@@ -616,7 +661,8 @@ impl MongoShellServer {
     #[tool(description = "List all databases in the MongoDB instance")]
     async fn mongo_list_databases(&self) -> Result<CallToolResult, McpError> {
         // Security check
-        self.security.check_read_permission()
+        self.security
+            .check_read_permission()
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
 
         // Audit log
@@ -625,10 +671,9 @@ impl MongoShellServer {
         // Execute listDatabases command
         let command = Command::Admin(AdminCommand::ShowDatabases);
 
-        let result = self.context.execute(command).await
-            .map_err(|e| {
-                McpError::internal_error(format!("ListDatabases operation failed: {}", e), None)
-            })?;
+        let result = self.context.execute(command).await.map_err(|e| {
+            McpError::internal_error(format!("ListDatabases operation failed: {}", e), None)
+        })?;
 
         Ok(execution_result_to_mcp_tool_result(result))
     }
@@ -646,21 +691,24 @@ impl MongoShellServer {
         Parameters(params): Parameters<ListCollectionsParams>,
     ) -> Result<CallToolResult, McpError> {
         // Security checks
-        self.security.check_read_permission()
+        self.security
+            .check_read_permission()
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-        self.security.check_database_access(&params.database)
+        self.security
+            .check_database_access(&params.database)
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
 
         // Audit log
-        self.security.audit_log("listCollections", &params.database, "", "").await;
+        self.security
+            .audit_log("listCollections", &params.database, "", "")
+            .await;
 
         // Execute showCollections command
         let command = Command::Admin(AdminCommand::ShowCollections);
 
-        let result = self.context.execute(command).await
-            .map_err(|e| {
-                McpError::internal_error(format!("ListCollections operation failed: {}", e), None)
-            })?;
+        let result = self.context.execute(command).await.map_err(|e| {
+            McpError::internal_error(format!("ListCollections operation failed: {}", e), None)
+        })?;
 
         Ok(execution_result_to_mcp_tool_result(result))
     }
@@ -678,23 +726,27 @@ impl MongoShellServer {
         Parameters(params): Parameters<ListIndexesParams>,
     ) -> Result<CallToolResult, McpError> {
         // Security checks
-        self.security.check_read_permission()
+        self.security
+            .check_read_permission()
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-        self.security.check_database_access(&params.database)
+        self.security
+            .check_database_access(&params.database)
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-        self.security.check_collection_access(&params.database, &params.collection)
+        self.security
+            .check_collection_access(&params.database, &params.collection)
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
 
         // Audit log
-        self.security.audit_log("listIndexes", &params.database, &params.collection, "").await;
+        self.security
+            .audit_log("listIndexes", &params.database, &params.collection, "")
+            .await;
 
         // Execute listIndexes command - use admin command
         let command = Command::Admin(AdminCommand::ListIndexes(params.collection));
 
-        let result = self.context.execute(command).await
-            .map_err(|e| {
-                McpError::internal_error(format!("ListIndexes operation failed: {}", e), None)
-            })?;
+        let result = self.context.execute(command).await.map_err(|e| {
+            McpError::internal_error(format!("ListIndexes operation failed: {}", e), None)
+        })?;
 
         Ok(execution_result_to_mcp_tool_result(result))
     }
@@ -712,20 +764,25 @@ impl MongoShellServer {
         Parameters(params): Parameters<CollectionStatsParams>,
     ) -> Result<CallToolResult, McpError> {
         // Security checks
-        self.security.check_read_permission()
+        self.security
+            .check_read_permission()
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-        self.security.check_database_access(&params.database)
+        self.security
+            .check_database_access(&params.database)
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-        self.security.check_collection_access(&params.database, &params.collection)
+        self.security
+            .check_collection_access(&params.database, &params.collection)
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
 
         // Audit log
-        self.security.audit_log(
-            "collStats",
-            &params.database,
-            &params.collection,
-            &format!("scale={}", params.scale),
-        ).await;
+        self.security
+            .audit_log(
+                "collStats",
+                &params.database,
+                &params.collection,
+                &format!("scale={}", params.scale),
+            )
+            .await;
 
         // Execute collStats command
         let command = Command::Admin(AdminCommand::CollectionStats {
@@ -733,10 +790,9 @@ impl MongoShellServer {
             scale: Some(params.scale as i32),
         });
 
-        let result = self.context.execute(command).await
-            .map_err(|e| {
-                McpError::internal_error(format!("CollStats operation failed: {}", e), None)
-            })?;
+        let result = self.context.execute(command).await.map_err(|e| {
+            McpError::internal_error(format!("CollStats operation failed: {}", e), None)
+        })?;
 
         Ok(execution_result_to_mcp_tool_result(result))
     }
@@ -754,20 +810,25 @@ impl MongoShellServer {
         Parameters(params): Parameters<ExplainParams>,
     ) -> Result<CallToolResult, McpError> {
         // Security checks
-        self.security.check_read_permission()
+        self.security
+            .check_read_permission()
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-        self.security.check_database_access(&params.database)
+        self.security
+            .check_database_access(&params.database)
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-        self.security.check_collection_access(&params.database, &params.collection)
+        self.security
+            .check_collection_access(&params.database, &params.collection)
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
 
         // Audit log
-        self.security.audit_log(
-            "explain",
-            &params.database,
-            &params.collection,
-            &format!("verbosity={}", params.verbosity),
-        ).await;
+        self.security
+            .audit_log(
+                "explain",
+                &params.database,
+                &params.collection,
+                &format!("verbosity={}", params.verbosity),
+            )
+            .await;
 
         // Convert filter
         let filter = json_to_bson_document(&params.filter)
@@ -782,10 +843,9 @@ impl MongoShellServer {
 
         let command = Command::Pipe(Box::new(find_cmd), crate::parser::PipeCommand::Explain);
 
-        let result = self.context.execute(command).await
-            .map_err(|e| {
-                McpError::internal_error(format!("Explain operation failed: {}", e), None)
-            })?;
+        let result = self.context.execute(command).await.map_err(|e| {
+            McpError::internal_error(format!("Explain operation failed: {}", e), None)
+        })?;
 
         Ok(execution_result_to_mcp_tool_result(result))
     }
@@ -806,10 +866,33 @@ impl ServerHandler for MongoShellServer {
         ))
         .with_protocol_version(ProtocolVersion::V_2024_11_05)
         .with_instructions(
-            "This server provides MongoDB operations through MCP tools. \
-            Available tools include: find, findOne, aggregate, count, distinct, \
-            insertOne, insertMany, updateOne, updateMany, deleteOne, deleteMany, \
-            listDatabases, listCollections, listIndexes, collectionStats, and explain. \
+            "This server provides MongoDB operations through MCP tools.\n\
+            \n\
+            IMPORTANT - BSON Type Handling:\n\
+            Results use MongoDB Extended JSON v2 (Relaxed) format to preserve type information.\n\
+            - ObjectId fields appear as: {\"$oid\": \"69297ddcb4c39276cb39b05b\"}\n\
+            - DateTime fields appear as: {\"$date\": \"2025-11-28T10:47:07.965Z\"}\n\
+            - Decimal128 fields appear as: {\"$numberDecimal\": \"3.14\"}\n\
+            - Integer and floating-point numbers remain plain JSON numbers.\n\
+            \n\
+            When constructing filters, documents, or pipeline stages you MUST use the\n\
+            same Extended JSON v2 wrappers for type-specific values. Plain strings will\n\
+            NOT match ObjectId or DateTime fields.\n\
+            \n\
+            Filter examples:\n\
+            - Match by ObjectId:   {\"_id\": {\"$oid\": \"69297ddcb4c39276cb39b05b\"}}\n\
+            - Multiple ObjectIds:  {\"_id\": {\"$in\": [{\"$oid\": \"...\"}, {\"$oid\": \"...\"}]}}\n\
+            - DateTime comparison: {\"create_time\": {\"$gte\": {\"$date\": \"2025-01-01T00:00:00Z\"}}}\n\
+            - Date only (midnight UTC): {\"create_time\": {\"$gte\": {\"$date\": \"2025-01-01\"}}}\n\
+            - Epoch milliseconds: {\"create_time\": {\"$gte\": {\"$date\": 1735689600000}}}\n\
+            \n\
+            Insert/update examples:\n\
+            - DateTime field: {\"created_at\": {\"$date\": \"2025-01-01T00:00:00Z\"}}\n\
+            - ObjectId ref:   {\"group_id\": {\"$oid\": \"69297ddcb4c39276cb39b05b\"}}\n\
+            \n\
+            Available tools: find, findOne, aggregate, count, distinct, insertOne, insertMany,\n\
+            updateOne, updateMany, deleteOne, deleteMany, listDatabases, listCollections,\n\
+            listIndexes, collectionStats, explain.\n\
             All operations are subject to security policies configured on the server."
                 .to_string(),
         )
@@ -839,7 +922,7 @@ mod tests {
         let config = Config::default();
         let connection = ConnectionManager::new(
             "mongodb://localhost:27017".to_string(),
-            config.connection.clone()
+            config.connection.clone(),
         );
         let state = SharedState::new("test".to_string());
         let security = SecurityConfig::default();
