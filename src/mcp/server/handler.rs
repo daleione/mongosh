@@ -8,10 +8,10 @@ use rmcp::{
 };
 use std::sync::Arc;
 
+use crate::config::ConnectionConfig;
 use crate::connection::ConnectionManager;
 use crate::executor::ExecutionContext;
 use crate::mcp::security::{SecurityConfig, SecurityManager};
-use crate::mcp::tools::UseDatabaseParams;
 use crate::mcp::tools::*;
 use crate::mcp::utils::*;
 use crate::parser::{
@@ -37,18 +37,28 @@ pub struct MongoShellServer {
 
 #[tool_router]
 impl MongoShellServer {
-    /// Create a new MongoDB Shell MCP server
+    /// Create a new MongoDB Shell MCP server with full datasource configuration.
     ///
     /// # Arguments
-    /// * `connection` - MongoDB connection manager
-    /// * `state` - Shared REPL state
-    /// * `security_config` - Security configuration
-    pub fn new(
+    /// * `connection`          - Already-connected MongoDB connection manager
+    /// * `state`               - Shared REPL state (holds current DB name)
+    /// * `security_config`     - MCP security policy
+    /// * `connection_config`   - Full connection config (all named datasources)
+    /// * `initial_datasource`  - Name of the datasource used to build `connection`
+    pub fn with_config(
         connection: ConnectionManager,
         state: SharedState,
         security_config: SecurityConfig,
+        connection_config: ConnectionConfig,
+        initial_datasource: String,
     ) -> Self {
-        let context = ExecutionContext::new(connection, state);
+        let context = ExecutionContext::with_full_config(
+            connection,
+            state,
+            None,
+            connection_config,
+            initial_datasource,
+        );
         let security = Arc::new(SecurityManager::new(security_config));
 
         Self {
@@ -56,6 +66,25 @@ impl MongoShellServer {
             tool_router: Self::tool_router(),
             security,
         }
+    }
+
+    /// Convenience constructor that does NOT carry datasource metadata.
+    /// Used by tests and the interactive REPL.  Datasource-switching tools
+    /// will return an "no datasources configured" message when called on a
+    /// server created this way.
+    #[allow(dead_code)]
+    pub fn new(
+        connection: ConnectionManager,
+        state: SharedState,
+        security_config: SecurityConfig,
+    ) -> Self {
+        Self::with_config(
+            connection,
+            state,
+            security_config,
+            ConnectionConfig::default(),
+            String::new(),
+        )
     }
 
     /// Find documents in a collection
@@ -655,69 +684,117 @@ impl MongoShellServer {
         Ok(execution_result_to_mcp_tool_result(result))
     }
 
-    /// Switch the active database context for this session.
+    // -----------------------------------------------------------------------
+    // Datasource management tools
+    // -----------------------------------------------------------------------
+
+    /// List all named datasources defined in the config file.
     ///
-    /// Call this tool BEFORE any query/write/delete tool when you need to operate
-    /// on a database that is different from the current one. After switching, all
-    /// subsequent tools that accept a "database" parameter will still use whatever
-    /// database name you pass explicitly — but the session default is updated so
-    /// that context-aware tooling (e.g. listCollections) reflects the right DB.
+    /// A datasource is a named MongoDB connection (URI) configured under
+    /// `[connection.datasources]` in `~/.mongoshrc`.  Each datasource may
+    /// point to a completely different MongoDB cluster.
     ///
-    /// Typical workflow:
-    ///   1. mongo_list_databases  →  see what databases exist
-    ///   2. mongo_use_database    →  switch to the right one (e.g. "imagen")
-    ///   3. mongo_list_collections / mongo_find / …  →  operate on that DB
+    /// Call this tool first so you know which datasource name to pass to
+    /// `mongo_use_datasource`.
     #[tool(
-        description = "Switch the active database context. Call this first when you need to work \
-        with a specific database (e.g. 'imagen', 'paysync_test'). \
-        Use mongo_list_databases to discover available databases first."
+        description = "List all named datasources (connections) defined in the config file. \
+        Call this first to discover available datasources such as 'myapp_prod' or 'analytics_db', \
+        then use mongo_use_datasource to switch to the right one."
     )]
-    async fn mongo_use_database(
-        &self,
-        Parameters(params): Parameters<UseDatabaseParams>,
-    ) -> Result<CallToolResult, McpError> {
-        // Security check: verify the database is in the allowed list
+    async fn mongo_list_datasources(&self) -> Result<CallToolResult, McpError> {
         self.security
-            .check_database_access(&params.database)
+            .check_read_permission()
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
 
-        // Audit log
-        self.security
-            .audit_log("useDatabase", &params.database, "", "")
-            .await;
-
-        // Switch the session-level current database
-        self.context
-            .set_current_database(params.database.clone())
-            .await;
+        let datasources = self.context.list_datasources();
+        let current = self.context.get_current_datasource().await;
 
         let output = serde_json::json!({
-            "ok": 1,
-            "currentDatabase": params.database,
-            "message": format!("Switched to database '{}'", params.database)
+            "datasources": datasources,
+            "count": datasources.len(),
+            "currentDatasource": current,
         });
 
-        Ok(CallToolResult::success(vec![rmcp::model::Content::text(
+        Ok(CallToolResult::success(vec![Content::text(
             serde_json::to_string_pretty(&output).unwrap_or_else(|_| "{}".to_string()),
         )]))
     }
 
-    /// Return the name of the database that is currently active for this session.
+    /// Switch to a named datasource defined in the config file.
     ///
-    /// Use this to verify which database you are on before running queries,
-    /// especially after calling mongo_use_database.
+    /// This closes the current MongoDB connection and opens a fresh one to
+    /// the target datasource's URI.  The active database is automatically
+    /// set to whatever database the URI specifies (e.g. `/myapp_prod` → `myapp_prod`).
+    ///
+    /// Typical workflow:
+    ///   1. `mongo_list_datasources`  → discover available datasource names
+    ///   2. `mongo_use_datasource`    → switch to the target (e.g. "myapp_prod")
+    ///   3. `mongo_get_current_datasource` → confirm the switch succeeded
+    ///   4. `mongo_list_collections`  → inspect schema, then query
     #[tool(
-        description = "Return the currently active database name for this session. \
-        Useful to verify context before running queries."
+        description = "Switch to a named datasource from the config file (e.g. 'myapp_prod', \
+        'analytics_db'). This reconnects to the datasource's MongoDB cluster and updates \
+        the active database. Call mongo_list_datasources first to see available names."
     )]
-    async fn mongo_get_current_database(&self) -> Result<CallToolResult, McpError> {
-        let db = self.context.get_current_database().await;
+    async fn mongo_use_datasource(
+        &self,
+        Parameters(params): Parameters<UseDatasourceParams>,
+    ) -> Result<CallToolResult, McpError> {
+        // Security: treat the datasource's embedded DB as the access target.
+        // The actual DB name is not yet known (it comes from the URI), so we
+        // perform a basic read-permission check to ensure MCP is not disabled.
+        self.security
+            .check_read_permission()
+            .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+
+        self.security
+            .audit_log("useDatasource", &params.datasource, "", "")
+            .await;
+
+        let db_name = self
+            .context
+            .switch_datasource(&params.datasource)
+            .await
+            .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+
+        // Verify the new DB is within the allowed list.
+        self.security
+            .check_database_access(&db_name)
+            .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
 
         let output = serde_json::json!({
-            "currentDatabase": db
+            "ok": 1,
+            "datasource": params.datasource,
+            "currentDatabase": db_name,
+            "message": format!(
+                "Switched to datasource '{}', active database is '{}'",
+                params.datasource, db_name
+            ),
         });
 
-        Ok(CallToolResult::success(vec![rmcp::model::Content::text(
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&output).unwrap_or_else(|_| "{}".to_string()),
+        )]))
+    }
+
+    /// Return the name of the currently active datasource and database.
+    ///
+    /// Use this to verify which datasource and database are active before
+    /// running queries, especially after calling `mongo_use_datasource`.
+    #[tool(
+        description = "Return the currently active datasource name and database. \
+        Use this to confirm context after mongo_use_datasource."
+    )]
+    async fn mongo_get_current_datasource(&self) -> Result<CallToolResult, McpError> {
+        let datasource = self.context.get_current_datasource().await;
+        let database = self.context.get_current_database().await;
+
+        let output = serde_json::json!({
+            "currentDatasource": datasource,
+            "currentDatabase": database,
+        });
+
+        Ok(CallToolResult::success(vec![Content::text(
             serde_json::to_string_pretty(&output).unwrap_or_else(|_| "{}".to_string()),
         )]))
     }
@@ -936,21 +1013,32 @@ impl ServerHandler for MongoShellServer {
         .with_instructions(
             "This server provides MongoDB operations through MCP tools.\n\
             \n\
-            ── DATABASE CONTEXT ──────────────────────────────────────────────────────\n\
-            This server may be connected to a MongoDB instance that hosts MULTIPLE\n\
-            databases (e.g. 'imagen', 'paysync_test', 'analytics', …).\n\
+            ── DATASOURCE vs DATABASE ────────────────────────────────────────────────\n\
+            DATASOURCE  = a named connection entry in the config file, e.g. 'myapp_prod'\n\
+                         or 'analytics_db'. Each datasource has its own URI and may\n\
+                         point to a completely different MongoDB cluster.\n\
+            DATABASE    = a logical database INSIDE one MongoDB cluster/connection,\n\
+                         e.g. 'admin', 'local', 'myapp'.\n\
             \n\
-            MANDATORY workflow when the target database is not obvious:\n\
-            1. Call mongo_list_databases   → discover all available databases.\n\
-            2. Call mongo_use_database     → switch to the correct database\n\
-               (e.g. image-related queries → 'imagen',\n\
-                payment queries           → 'paysync_test').\n\
-            3. Call mongo_get_current_database  → verify you are on the right DB.\n\
-            4. Call mongo_list_collections → inspect the schema before querying.\n\
-            5. Run your query / mutation.\n\
+            ── MANDATORY WORKFLOW ────────────────────────────────────────────────────\n\
+            When the user mentions a product area or service name, ALWAYS check\n\
+            whether a matching datasource exists before querying:\n\
             \n\
-            Every query/write/delete tool also accepts an explicit \"database\" field.\n\
-            Always fill it in — do NOT leave it empty or assume a default.\n\
+            1. mongo_list_datasources      → see all named connections in the config\n\
+               (e.g. ['myapp_prod', 'analytics_db'])\n\
+            2. mongo_use_datasource        → switch to the right one\n\
+               (user queries → 'myapp_prod'; analytics queries → 'analytics_db')\n\
+            3. mongo_get_current_datasource → confirm datasource + active database\n\
+            4. mongo_list_collections       → inspect the schema\n\
+            5. run your query / mutation\n\
+            \n\
+            Every query/write/delete tool accepts an explicit \"database\" field.\n\
+            Always fill it in using the database returned in step 3.\n\
+            Do NOT leave it empty or assume a default.\n\
+            \n\
+            mongo_list_databases lists the MongoDB-internal databases of the\n\
+            CURRENT connection (useful for exploration within one datasource).\n\
+            It does NOT list datasources.\n\
             \n\
             ── BSON TYPE HANDLING ────────────────────────────────────────────────────\n\
             Results use MongoDB Extended JSON v2 (Relaxed) format to preserve types.\n\
@@ -974,12 +1062,12 @@ impl ServerHandler for MongoShellServer {
             - ObjectId ref:      {\"group_id\": {\"$oid\": \"69297ddcb4c39276cb39b05b\"}}\n\
             \n\
             ── AVAILABLE TOOLS ───────────────────────────────────────────────────────\n\
-            Context : useDatabase, getCurrentDatabase\n\
-            Read    : find, findOne, aggregate, count, distinct\n\
-            Write   : insertOne, insertMany, updateOne, updateMany\n\
-            Delete  : deleteOne, deleteMany\n\
-            Admin   : listDatabases, listCollections, listIndexes,\n\
-                      collectionStats, explain\n\
+            Datasource : listDatasources, useDatasource, getCurrentDatasource\n\
+            Read       : find, findOne, aggregate, count, distinct\n\
+            Write      : insertOne, insertMany, updateOne, updateMany\n\
+            Delete     : deleteOne, deleteMany\n\
+            Admin      : listDatabases, listCollections, listIndexes,\n\
+                         collectionStats, explain\n\
             \n\
             All operations are subject to security policies configured on the server."
                 .to_string(),

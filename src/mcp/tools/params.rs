@@ -327,14 +327,22 @@ pub struct ExplainParams {
     pub verbosity: String,
 }
 
-/// Parameters for switching the active database context
+/// Parameters for switching to a named datasource defined in the config file.
+///
+/// A "datasource" is a named connection entry in `~/.mongoshrc` (or your config file),
+/// for example:
+/// ```toml
+/// [connection.datasources]
+/// myapp_prod      = "mongodb://host1:27017/myapp_prod"
+/// analytics_db = "mongodb://host2:27017/analytics_db"
+/// ```
+/// Switching datasource tears down the current MongoDB connection and opens a
+/// fresh one to the new target, so the AI can query completely separate clusters.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct UseDatabaseParams {
-    /// Name of the database to switch to.
-    /// After calling this tool, subsequent operations that omit the "database" field
-    /// will use this database by default. You can call mongo_get_current_database
-    /// to verify the switch was successful.
-    pub database: String,
+pub struct UseDatasourceParams {
+    /// Name of the datasource as defined in the config file (e.g. "myapp_prod", "analytics_db").
+    /// Call mongo_list_datasources first to discover the available names.
+    pub datasource: String,
 }
 
 #[cfg(test)]

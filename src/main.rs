@@ -91,6 +91,18 @@ async fn run_mcp_server(cli: &CliInterface) -> Result<()> {
     use mcp::MongoShellServer;
     use rmcp::{ServiceExt, transport::stdio};
 
+    // Determine which named datasource is active (may be empty string when
+    // the user supplied a raw URI instead of -d <name>).
+    let initial_datasource = cli.args().datasource.clone().unwrap_or_else(|| {
+        // If no -d flag, try to find which datasource name matches the URI
+        // being used (best-effort: check the default_datasource field).
+        cli.config()
+            .connection
+            .default_datasource
+            .clone()
+            .unwrap_or_default()
+    });
+
     // Setup connection
     let uri = cli.get_connection_uri();
     let conn_manager = ConnectionManager::new(uri.clone(), cli.config().connection.clone());
@@ -100,22 +112,33 @@ async fn run_mcp_server(cli: &CliInterface) -> Result<()> {
     let shared_state = SharedState::with_config(database, &cli.config().display);
 
     // Get MCP security configuration from config file
-    let security_config = cli.config()
+    let security_config = cli
+        .config()
         .mcp
         .as_ref()
         .map(|mcp| mcp.security.clone())
         .unwrap_or_default();
 
-    // Create MCP server
-    let server = MongoShellServer::new(conn_manager, shared_state, security_config);
+    // Create MCP server with full connection config so datasource-switching works
+    let server = MongoShellServer::with_config(
+        conn_manager,
+        shared_state,
+        security_config,
+        cli.config().connection.clone(),
+        initial_datasource,
+    );
 
     // Start MCP server on stdio
     tracing::info!("Starting MCP server on stdio");
-    let service = server.serve(stdio()).await
+    let service = server
+        .serve(stdio())
+        .await
         .map_err(|e| error::MongoshError::Generic(format!("Failed to start MCP server: {}", e)))?;
 
     // Wait for server to complete
-    service.waiting().await
+    service
+        .waiting()
+        .await
         .map_err(|e| error::MongoshError::Generic(format!("MCP server error: {}", e)))?;
 
     Ok(())
