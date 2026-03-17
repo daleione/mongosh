@@ -1,6 +1,6 @@
 //! Integration tests for MCP server functionality
 
-use mongosh::config::Config;
+use mongosh::config::{Config, ConnectionConfig};
 use mongosh::connection::ConnectionManager;
 use mongosh::mcp::{MongoShellServer, SecurityConfig};
 use mongosh::repl::SharedState;
@@ -10,12 +10,16 @@ fn create_test_server() -> MongoShellServer {
     let config = Config::default();
     let connection = ConnectionManager::new(
         "mongodb://localhost:27017".to_string(),
-        config.connection.clone()
+        config.connection.clone(),
     );
     let state = SharedState::new("test".to_string());
-    let security = SecurityConfig::default();
-
-    MongoShellServer::new(connection, state, security)
+    MongoShellServer::with_config(
+        connection,
+        state,
+        SecurityConfig::default(),
+        ConnectionConfig::default(),
+        String::new(),
+    )
 }
 
 #[test]
@@ -25,7 +29,10 @@ fn test_server_creation() {
 
     assert!(info.capabilities.tools.is_some());
     assert_eq!(info.server_info.name, "mongosh-mcp");
-    assert_eq!(info.protocol_version, rmcp::model::ProtocolVersion::V_2024_11_05);
+    assert_eq!(
+        info.protocol_version,
+        rmcp::model::ProtocolVersion::V_2024_11_05
+    );
 }
 
 #[test]
@@ -73,7 +80,10 @@ async fn test_server_info_structure() {
     assert!(!info.server_info.version.is_empty());
 
     // Check protocol version
-    assert_eq!(info.protocol_version, rmcp::model::ProtocolVersion::V_2024_11_05);
+    assert_eq!(
+        info.protocol_version,
+        rmcp::model::ProtocolVersion::V_2024_11_05
+    );
 
     // Check instructions
     assert!(info.instructions.is_some());
