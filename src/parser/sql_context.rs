@@ -366,6 +366,9 @@ pub struct SqlSelect {
     /// Table name (optional for partial parses)
     pub table: Option<String>,
 
+    /// Whether SELECT DISTINCT was used
+    pub distinct: bool,
+
     /// WHERE clause filter
     pub where_clause: Option<SqlExpr>,
 
@@ -388,6 +391,7 @@ impl SqlSelect {
         Self {
             columns: Vec::new(),
             table: None,
+            distinct: false,
             where_clause: None,
             group_by: None,
             order_by: None,
@@ -398,7 +402,8 @@ impl SqlSelect {
 
     /// Check if this select needs aggregation pipeline
     pub fn needs_aggregate(&self) -> bool {
-        self.group_by.is_some()
+        self.distinct
+            || self.group_by.is_some()
             || self.columns.iter().any(|c| match c {
                 SqlColumn::Aggregate { .. } => true,
                 SqlColumn::Field { alias, .. } => alias.is_some(),
@@ -505,19 +510,19 @@ pub enum SqlExpr {
 
     /// Typed literal: DATE '2026-02-15', TIMESTAMP '2026-02-15 16:00:00'
     TypedLiteral {
-        type_name: String,  // "DATE", "TIMESTAMP", "TIME"
+        type_name: String, // "DATE", "TIMESTAMP", "TIME"
         value: String,
     },
 
     /// Current time functions: CURRENT_TIMESTAMP, CURRENT_DATE, NOW()
     CurrentTime {
-        kind: String,  // "CURRENT_TIMESTAMP", "CURRENT_DATE", "CURRENT_TIME", "NOW"
+        kind: String, // "CURRENT_TIMESTAMP", "CURRENT_DATE", "CURRENT_TIME", "NOW"
     },
 
     /// Interval: INTERVAL '7' DAY
     Interval {
         value: String,
-        unit: String,  // "DAY", "HOUR", "MINUTE", "SECOND"
+        unit: String, // "DAY", "HOUR", "MINUTE", "SECOND"
     },
 }
 
@@ -665,14 +670,20 @@ impl SqlExpr {
             },
             SqlExpr::FieldPath(path) => path.to_mongodb_path().unwrap_or_else(|| path.base_field()),
             SqlExpr::ArithmeticOp { left, op, right } => {
-                format!("{}{}{}", left.to_display_string(), op.to_symbol(), right.to_display_string())
+                format!(
+                    "{}{}{}",
+                    left.to_display_string(),
+                    op.to_symbol(),
+                    right.to_display_string()
+                )
             }
             SqlExpr::Function { name, args } => {
                 // Special case: COUNT(*) has empty args but should display as COUNT(*)
                 if args.is_empty() && name.to_uppercase() == "COUNT" {
                     format!("{}(*)", name)
                 } else {
-                    let args_str: Vec<String> = args.iter().map(|a| a.to_display_string()).collect();
+                    let args_str: Vec<String> =
+                        args.iter().map(|a| a.to_display_string()).collect();
                     format!("{}({})", name, args_str.join(","))
                 }
             }
@@ -685,7 +696,12 @@ impl SqlExpr {
                     SqlOperator::Ge => ">=",
                     SqlOperator::Le => "<=",
                 };
-                format!("{}{}{}", left.to_display_string(), op_str, right.to_display_string())
+                format!(
+                    "{}{}{}",
+                    left.to_display_string(),
+                    op_str,
+                    right.to_display_string()
+                )
             }
             SqlExpr::CurrentTime { kind } => kind.clone(),
             SqlExpr::TypedLiteral { type_name, value } => format!("{} '{}'", type_name, value),

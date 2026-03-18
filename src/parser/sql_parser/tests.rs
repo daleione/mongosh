@@ -642,18 +642,13 @@ mod tests {
         // Test CURRENT_DATE
         let result =
             SqlParser::parse_to_command("SELECT * FROM tasks WHERE create_time > CURRENT_DATE");
-        assert!(
-            result.is_ok(),
-            "Failed to parse CURRENT_DATE: {:?}",
-            result
-        );
+        assert!(result.is_ok(), "Failed to parse CURRENT_DATE: {:?}", result);
     }
 
     #[test]
     fn test_parse_with_now_function() {
         // Test NOW() function
-        let result =
-            SqlParser::parse_to_command("SELECT * FROM tasks WHERE create_time > NOW()");
+        let result = SqlParser::parse_to_command("SELECT * FROM tasks WHERE create_time > NOW()");
         assert!(result.is_ok(), "Failed to parse NOW(): {:?}", result);
     }
 
@@ -731,8 +726,7 @@ mod tests {
     #[test]
     fn test_arithmetic_with_addition() {
         // Test addition: price + tax
-        let result =
-            SqlParser::parse_to_command("SELECT * FROM orders WHERE price + tax > 50");
+        let result = SqlParser::parse_to_command("SELECT * FROM orders WHERE price + tax > 50");
         assert!(result.is_ok(), "Failed to parse addition: {:?}", result);
     }
 
@@ -741,11 +735,7 @@ mod tests {
         // Test subtraction: total - discount
         let result =
             SqlParser::parse_to_command("SELECT * FROM orders WHERE total - discount > 100");
-        assert!(
-            result.is_ok(),
-            "Failed to parse subtraction: {:?}",
-            result
-        );
+        assert!(result.is_ok(), "Failed to parse subtraction: {:?}", result);
     }
 
     #[test]
@@ -779,9 +769,8 @@ mod tests {
     #[test]
     fn test_arithmetic_operator_precedence() {
         // Test operator precedence: price + tax * quantity (multiply binds tighter)
-        let result = SqlParser::parse_to_command(
-            "SELECT * FROM orders WHERE price + tax * quantity > 100",
-        );
+        let result =
+            SqlParser::parse_to_command("SELECT * FROM orders WHERE price + tax * quantity > 100");
         assert!(
             result.is_ok(),
             "Failed to parse arithmetic with precedence: {:?}",
@@ -792,8 +781,7 @@ mod tests {
     #[test]
     fn test_arithmetic_with_literals() {
         // Test arithmetic with literals: price * 1.13
-        let result =
-            SqlParser::parse_to_command("SELECT * FROM products WHERE price * 1.13 > 50");
+        let result = SqlParser::parse_to_command("SELECT * FROM products WHERE price * 1.13 > 50");
         assert!(
             result.is_ok(),
             "Failed to parse arithmetic with literals: {:?}",
@@ -804,9 +792,8 @@ mod tests {
     #[test]
     fn test_round_function_with_arithmetic() {
         // Test ROUND function with arithmetic: ROUND(price * 1.13, 2)
-        let result = SqlParser::parse_to_command(
-            "SELECT * FROM products WHERE ROUND(price * 1.13, 2) > 50",
-        );
+        let result =
+            SqlParser::parse_to_command("SELECT * FROM products WHERE ROUND(price * 1.13, 2) > 50");
         assert!(
             result.is_ok(),
             "Failed to parse ROUND with arithmetic: {:?}",
@@ -867,10 +854,232 @@ mod tests {
         // Test aggregate with arithmetic on right side: COUNT(*) * 2
         let result =
             SqlParser::parse_to_command("SELECT COUNT(*) * 2 AS doubled_count FROM orders");
+        assert!(result.is_ok(), "Failed to parse COUNT(*) * 2: {:?}", result);
+    }
+
+    // ============== SELECT DISTINCT Tests ==============
+
+    #[test]
+    fn test_select_distinct_single_field() {
+        // SELECT DISTINCT category FROM products
+        // => aggregate pipeline: $group by category, $project to rename
+        let result = SqlParser::parse_to_command("SELECT DISTINCT category FROM products");
         assert!(
             result.is_ok(),
-            "Failed to parse COUNT(*) * 2: {:?}",
+            "Failed to parse SELECT DISTINCT single field: {:?}",
             result
         );
+
+        let cmd = result.unwrap();
+        if let Command::Query(QueryCommand::Aggregate {
+            collection,
+            pipeline,
+            ..
+        }) = cmd
+        {
+            assert_eq!(collection, "products");
+
+            // Should have $group and $project stages
+            assert!(
+                pipeline.len() >= 2,
+                "Pipeline should have at least $group and $project stages, got: {:?}",
+                pipeline
+            );
+
+            let has_group = pipeline.iter().any(|s| s.contains_key("$group"));
+            let has_project = pipeline.iter().any(|s| s.contains_key("$project"));
+            assert!(has_group, "Pipeline should contain $group stage");
+            assert!(has_project, "Pipeline should contain $project stage");
+        } else {
+            panic!("Expected Aggregate command for SELECT DISTINCT");
+        }
+    }
+
+    #[test]
+    fn test_select_distinct_multiple_fields() {
+        // SELECT DISTINCT category, status FROM products
+        // => $group by { category, status }, $project to flatten
+        let result = SqlParser::parse_to_command("SELECT DISTINCT category, status FROM products");
+        assert!(
+            result.is_ok(),
+            "Failed to parse SELECT DISTINCT multiple fields: {:?}",
+            result
+        );
+
+        let cmd = result.unwrap();
+        if let Command::Query(QueryCommand::Aggregate { pipeline, .. }) = cmd {
+            // $group stage should exist
+            let group_stage = pipeline.iter().find(|s| s.contains_key("$group"));
+            assert!(
+                group_stage.is_some(),
+                "Pipeline should contain $group stage"
+            );
+
+            // $group _id should include both fields
+            let group_doc = group_stage.unwrap().get_document("$group").unwrap();
+            let id_doc = group_doc.get_document("_id").unwrap();
+            assert!(
+                id_doc.contains_key("category"),
+                "_id should contain 'category'"
+            );
+            assert!(id_doc.contains_key("status"), "_id should contain 'status'");
+
+            // $project stage should map both fields back
+            let project_stage = pipeline.iter().find(|s| s.contains_key("$project"));
+            assert!(
+                project_stage.is_some(),
+                "Pipeline should contain $project stage"
+            );
+            let project_doc = project_stage.unwrap().get_document("$project").unwrap();
+            assert!(
+                project_doc.contains_key("category"),
+                "$project should contain 'category'"
+            );
+            assert!(
+                project_doc.contains_key("status"),
+                "$project should contain 'status'"
+            );
+            // _id should be excluded
+            assert_eq!(
+                project_doc.get_i32("_id").unwrap_or(1),
+                0,
+                "$project should exclude _id"
+            );
+        } else {
+            panic!("Expected Aggregate command for SELECT DISTINCT multiple fields");
+        }
+    }
+
+    #[test]
+    fn test_select_distinct_with_where() {
+        // SELECT DISTINCT category FROM products WHERE price > 100
+        // => $match first, then $group + $project
+        let result =
+            SqlParser::parse_to_command("SELECT DISTINCT category FROM products WHERE price > 100");
+        assert!(
+            result.is_ok(),
+            "Failed to parse SELECT DISTINCT with WHERE: {:?}",
+            result
+        );
+
+        let cmd = result.unwrap();
+        if let Command::Query(QueryCommand::Aggregate { pipeline, .. }) = cmd {
+            // First stage should be $match
+            assert!(
+                pipeline[0].contains_key("$match"),
+                "First stage should be $match"
+            );
+            // Should also have $group
+            let has_group = pipeline.iter().any(|s| s.contains_key("$group"));
+            assert!(has_group, "Pipeline should contain $group stage");
+        } else {
+            panic!("Expected Aggregate command");
+        }
+    }
+
+    #[test]
+    fn test_select_distinct_with_limit() {
+        // SELECT DISTINCT category FROM products LIMIT 5
+        let result = SqlParser::parse_to_command("SELECT DISTINCT category FROM products LIMIT 5");
+        assert!(
+            result.is_ok(),
+            "Failed to parse SELECT DISTINCT with LIMIT: {:?}",
+            result
+        );
+
+        let cmd = result.unwrap();
+        if let Command::Query(QueryCommand::Aggregate { pipeline, .. }) = cmd {
+            // Last stage should be $limit
+            let last = pipeline.last().expect("Pipeline should not be empty");
+            assert!(last.contains_key("$limit"), "Last stage should be $limit");
+            assert_eq!(last.get_i64("$limit").unwrap(), 5);
+        } else {
+            panic!("Expected Aggregate command");
+        }
+    }
+
+    #[test]
+    fn test_select_distinct_is_aggregate_command() {
+        // SELECT DISTINCT must always produce an Aggregate command, never Find
+        let result = SqlParser::parse_to_command("SELECT DISTINCT product_name FROM products");
+        assert!(
+            result.is_ok(),
+            "Failed to parse SELECT DISTINCT: {:?}",
+            result
+        );
+
+        let cmd = result.unwrap();
+        assert!(
+            matches!(cmd, Command::Query(QueryCommand::Aggregate { .. })),
+            "SELECT DISTINCT should always produce an Aggregate command"
+        );
+    }
+
+    #[test]
+    fn test_select_distinct_star_rejected() {
+        // SELECT DISTINCT * is not supported — we cannot meaningfully group by entire documents
+        let result = SqlParser::parse_to_command("SELECT DISTINCT * FROM products");
+        assert!(
+            result.is_err(),
+            "SELECT DISTINCT * should be rejected, but got: {:?}",
+            result
+        );
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("SELECT DISTINCT *"),
+            "Error should mention SELECT DISTINCT *, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_select_distinct_order_by_after_group() {
+        // SELECT DISTINCT category FROM products ORDER BY category
+        // $sort must come AFTER $group/$project so that ordering is not destroyed
+        let result =
+            SqlParser::parse_to_command("SELECT DISTINCT category FROM products ORDER BY category");
+        assert!(
+            result.is_ok(),
+            "Failed to parse SELECT DISTINCT + ORDER BY: {:?}",
+            result
+        );
+
+        let cmd = result.unwrap();
+        if let Command::Query(QueryCommand::Aggregate { pipeline, .. }) = cmd {
+            // Find the positions of $group and $sort
+            let group_pos = pipeline.iter().position(|s| s.contains_key("$group"));
+            let sort_pos = pipeline.iter().position(|s| s.contains_key("$sort"));
+
+            assert!(group_pos.is_some(), "Pipeline should contain $group");
+            assert!(sort_pos.is_some(), "Pipeline should contain $sort");
+            assert!(
+                sort_pos.unwrap() > group_pos.unwrap(),
+                "$sort (pos {}) must come AFTER $group (pos {}) for DISTINCT queries",
+                sort_pos.unwrap(),
+                group_pos.unwrap()
+            );
+        } else {
+            panic!("Expected Aggregate command");
+        }
+    }
+
+    #[test]
+    fn test_select_distinct_nested_field() {
+        // SELECT DISTINCT user.country FROM accounts
+        // Should group by the nested field path
+        let result = SqlParser::parse_to_command("SELECT DISTINCT user.country FROM accounts");
+        assert!(
+            result.is_ok(),
+            "Failed to parse SELECT DISTINCT with nested field: {:?}",
+            result
+        );
+
+        let cmd = result.unwrap();
+        if let Command::Query(QueryCommand::Aggregate { pipeline, .. }) = cmd {
+            let has_group = pipeline.iter().any(|s| s.contains_key("$group"));
+            assert!(has_group, "Pipeline should contain $group stage");
+        } else {
+            panic!("Expected Aggregate command for DISTINCT nested field");
+        }
     }
 }

@@ -183,12 +183,16 @@ impl SqlParser {
 
         self.current_clause = SqlClause::Select;
 
+        // Check for optional DISTINCT keyword after SELECT
+        let distinct = self.match_keyword(&TokenKind::Distinct);
+
         // Parse select list
         let columns = match self.parse_select_list() {
             ParseResult::Ok(cols) => cols,
             ParseResult::Partial(cols, exp) => {
                 self.expected = exp.clone();
                 let mut select = SqlSelect::new();
+                select.distinct = distinct;
                 select.columns = cols;
                 return ParseResult::Partial(select, exp);
             }
@@ -203,6 +207,7 @@ impl SqlParser {
                 ParseResult::Partial(tbl, exp) => {
                     self.expected = exp.clone();
                     let mut select = SqlSelect::new();
+                    select.distinct = distinct;
                     select.columns = columns;
                     select.table = if tbl.is_empty() { None } else { Some(tbl) };
                     return ParseResult::Partial(select, exp);
@@ -213,6 +218,7 @@ impl SqlParser {
             // Partial: "SELECT * |"
             self.expected = vec![Expected::Keyword("FROM")];
             let mut select = SqlSelect::new();
+            select.distinct = distinct;
             select.columns = columns;
             return ParseResult::Partial(select, self.expected.clone());
         } else {
@@ -227,6 +233,7 @@ impl SqlParser {
                 ParseResult::Partial(expr, exp) => {
                     self.expected = exp.clone();
                     let mut select = SqlSelect::new();
+                    select.distinct = distinct;
                     select.columns = columns;
                     select.table = table;
                     select.where_clause = Some(expr);
@@ -246,6 +253,7 @@ impl SqlParser {
                 ParseResult::Partial(cols, exp) => {
                     self.expected = exp.clone();
                     let mut select = SqlSelect::new();
+                    select.distinct = distinct;
                     select.columns = columns;
                     select.table = table;
                     select.where_clause = where_clause;
@@ -272,6 +280,7 @@ impl SqlParser {
                 ParseResult::Partial(orders, exp) => {
                     self.expected = exp.clone();
                     let mut select = SqlSelect::new();
+                    select.distinct = distinct;
                     select.columns = columns;
                     select.table = table;
                     select.where_clause = where_clause;
@@ -303,6 +312,7 @@ impl SqlParser {
                 ParseResult::Partial(n, exp) => {
                     self.expected = exp.clone();
                     let mut select = SqlSelect::new();
+                    select.distinct = distinct;
                     select.columns = columns;
                     select.table = table;
                     select.where_clause = where_clause;
@@ -325,6 +335,7 @@ impl SqlParser {
                 ParseResult::Partial(n, exp) => {
                     self.expected = exp.clone();
                     let mut select = SqlSelect::new();
+                    select.distinct = distinct;
                     select.columns = columns.clone();
                     select.table = table.clone();
                     select.where_clause = where_clause.clone();
@@ -344,6 +355,7 @@ impl SqlParser {
         ParseResult::Ok(SqlSelect {
             columns,
             table,
+            distinct,
             where_clause,
             group_by,
             order_by,
@@ -421,9 +433,7 @@ impl SqlParser {
         if self.is_at_eof() {
             self.expected = vec![Expected::Expression, Expected::ColumnName];
             return ParseResult::Partial(
-                super::sql_context::SqlExpr::Literal(super::sql_context::SqlLiteral::Boolean(
-                    true,
-                )),
+                super::sql_context::SqlExpr::Literal(super::sql_context::SqlLiteral::Boolean(true)),
                 self.expected.clone(),
             );
         }
@@ -446,9 +456,9 @@ impl SqlParser {
                 self.advance();
 
                 // Parse field path (supports nested fields and array access)
-                let path = match self.parse_field_path_continuation(
-                    super::sql_context::FieldPath::simple(name),
-                ) {
+                let path = match self
+                    .parse_field_path_continuation(super::sql_context::FieldPath::simple(name))
+                {
                     Ok(p) => p,
                     Err(err) => {
                         return ParseResult::Error(ParseError::new(
@@ -510,9 +520,9 @@ impl SqlParser {
                 self.advance();
 
                 // Parse field path (supports nested fields and array access)
-                let path = match self.parse_field_path_continuation(
-                    super::sql_context::FieldPath::simple(name),
-                ) {
+                let path = match self
+                    .parse_field_path_continuation(super::sql_context::FieldPath::simple(name))
+                {
                     Ok(p) => p,
                     Err(err) => {
                         return ParseResult::Error(ParseError::new(

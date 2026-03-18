@@ -7,7 +7,7 @@
 //! - Handling GROUP BY, ORDER BY, LIMIT, OFFSET
 //! - EXPLAIN query wrapping
 
-use mongodb::bson::{doc, Document};
+use mongodb::bson::{Document, doc};
 
 use super::super::command::{AggregateOptions, Command, FindOptions, QueryCommand};
 use super::super::sql_context::{SqlColumn, SqlExpr, SqlSelect};
@@ -17,10 +17,9 @@ use crate::error::Result;
 impl super::SqlParser {
     /// Convert SQL AST to MongoDB Command
     pub(super) fn ast_to_command(&self, ast: SqlSelect) -> Result<Command> {
-        let collection = ast
-            .table
-            .clone()
-            .ok_or_else(|| crate::error::ParseError::InvalidCommand("Missing table name".to_string()))?;
+        let collection = ast.table.clone().ok_or_else(|| {
+            crate::error::ParseError::InvalidCommand("Missing table name".to_string())
+        })?;
 
         // Check if we need aggregation pipeline
         let needs_agg = ast.needs_aggregate() || self.has_complex_field_paths(&ast);
@@ -172,6 +171,34 @@ impl super::SqlParser {
 
     /// Convert to aggregate command
     pub(super) fn to_aggregate(&self, ast: SqlSelect, collection: String) -> Result<Command> {
+        // Reduce SELECT DISTINCT to equivalent GROUP BY so all downstream logic is unified.
+        // e.g. SELECT DISTINCT category, status FROM products
+        //   => same as SELECT category, status FROM products GROUP BY category, status
+        let mut ast = ast;
+        if ast.distinct && ast.group_by.is_none() {
+            let group_fields: Vec<String> = ast
+                .columns
+                .iter()
+                .filter_map(|c| match c {
+                    SqlColumn::Field { path, .. } => {
+                        path.to_mongodb_path().or_else(|| Some(path.base_field()))
+                    }
+                    _ => None,
+                })
+                .collect();
+
+            if group_fields.is_empty() {
+                // SELECT DISTINCT * is not supported — we cannot group by the entire document
+                return Err(crate::error::ParseError::InvalidCommand(
+                    "SELECT DISTINCT * is not supported. Please specify column names explicitly."
+                        .to_string(),
+                )
+                .into());
+            }
+
+            ast.group_by = Some(group_fields);
+        }
+
         let mut pipeline = Vec::new();
 
         // Add $match stage for WHERE clause
@@ -180,19 +207,9 @@ impl super::SqlParser {
             pipeline.push(doc! { "$match": filter });
         }
 
-        // Add $sort stage for ORDER BY (MUST come before $project to sort on original fields)
-        if let Some(ref order_by) = ast.order_by {
-            let mut sort_doc = Document::new();
-            for order in order_by {
-                // Get MongoDB path from FieldPath
-                let path_str = order.path.to_mongodb_path().unwrap_or_else(|| {
-                    // For complex paths, use base field
-                    order.path.base_field()
-                });
-                sort_doc.insert(path_str, if order.asc { 1 } else { -1 });
-            }
-            pipeline.push(doc! { "$sort": sort_doc });
-        }
+        // Determine whether we have $group — if so, $sort must come AFTER $group/$project
+        // so the sort applies to the final result, not to pre-grouped documents.
+        let has_group = ast.group_by.is_some();
 
         // Check if we have any aggregate functions (either as SqlColumn::Aggregate or inside Expression)
         let has_aggregates = ast.columns.iter().any(|c| match c {
@@ -200,6 +217,22 @@ impl super::SqlParser {
             SqlColumn::Expression { expr, .. } => Self::expr_contains_aggregate(expr),
             _ => false,
         });
+
+        // Add $sort stage for ORDER BY BEFORE $project only when there is no $group.
+        // When there is a $group, $sort is added after $group/$project (see below).
+        if !has_group && !has_aggregates {
+            if let Some(ref order_by) = ast.order_by {
+                let mut sort_doc = Document::new();
+                for order in order_by {
+                    let path_str = order
+                        .path
+                        .to_mongodb_path()
+                        .unwrap_or_else(|| order.path.base_field());
+                    sort_doc.insert(path_str, if order.asc { 1 } else { -1 });
+                }
+                pipeline.push(doc! { "$sort": sort_doc });
+            }
+        }
 
         // Add $group stage
         if let Some(ref group_by) = ast.group_by {
@@ -309,9 +342,7 @@ impl super::SqlParser {
                     }
                     SqlColumn::Expression { expr, alias } => {
                         // Build expression using $group results
-                        let field_name = alias
-                            .clone()
-                            .unwrap_or_else(|| expr.to_display_string());
+                        let field_name = alias.clone().unwrap_or_else(|| expr.to_display_string());
                         if let Ok(bson_expr) = Self::build_post_group_expr(expr) {
                             project_doc.insert(field_name, bson_expr);
                         }
@@ -356,9 +387,8 @@ impl super::SqlParser {
                         // Convert expression to aggregation expression
                         if let Ok(bson_expr) = SqlExprConverter::expr_to_aggregate_value(expr) {
                             // Use alias if provided, otherwise use the expression string
-                            let field_name = alias
-                                .clone()
-                                .unwrap_or_else(|| expr.to_display_string());
+                            let field_name =
+                                alias.clone().unwrap_or_else(|| expr.to_display_string());
                             project_doc.insert(field_name, bson_expr);
                         }
                     }
@@ -374,7 +404,23 @@ impl super::SqlParser {
             pipeline.push(doc! { "$project": project_doc });
         }
 
-        // Add $skip and $limit AFTER $group/$project
+        // Add $sort AFTER $group/$project when grouping is involved,
+        // so the sort applies to the deduplicated/aggregated results.
+        if has_group || has_aggregates {
+            if let Some(ref order_by) = ast.order_by {
+                let mut sort_doc = Document::new();
+                for order in order_by {
+                    let path_str = order
+                        .path
+                        .to_mongodb_path()
+                        .unwrap_or_else(|| order.path.base_field());
+                    sort_doc.insert(path_str, if order.asc { 1 } else { -1 });
+                }
+                pipeline.push(doc! { "$sort": sort_doc });
+            }
+        }
+
+        // Add $skip and $limit AFTER $group/$project/$sort
         // This ensures LIMIT applies to final results, not documents before aggregation
         if let Some(offset) = ast.offset {
             pipeline.push(doc! { "$skip": offset as i64 });
@@ -405,10 +451,7 @@ impl super::SqlParser {
     }
 
     /// Add aggregate functions from expression to $group document
-    pub(super) fn add_aggregate_to_group(
-        expr: &SqlExpr,
-        group_doc: &mut Document,
-    ) -> Result<()> {
+    pub(super) fn add_aggregate_to_group(expr: &SqlExpr, group_doc: &mut Document) -> Result<()> {
         match expr {
             SqlExpr::Function { name, args } => {
                 let upper = name.to_uppercase();
@@ -425,9 +468,8 @@ impl super::SqlParser {
                             "COUNT" => doc! { "$sum": 1 },
                             "SUM" => {
                                 if let Some(SqlExpr::FieldPath(path)) = args.first() {
-                                    let field = path
-                                        .to_mongodb_path()
-                                        .unwrap_or_else(|| path.base_field());
+                                    let field =
+                                        path.to_mongodb_path().unwrap_or_else(|| path.base_field());
                                     doc! { "$sum": format!("${}", field) }
                                 } else {
                                     doc! { "$sum": 1 }
@@ -435,9 +477,8 @@ impl super::SqlParser {
                             }
                             "AVG" => {
                                 if let Some(SqlExpr::FieldPath(path)) = args.first() {
-                                    let field = path
-                                        .to_mongodb_path()
-                                        .unwrap_or_else(|| path.base_field());
+                                    let field =
+                                        path.to_mongodb_path().unwrap_or_else(|| path.base_field());
                                     doc! { "$avg": format!("${}", field) }
                                 } else {
                                     doc! { "$avg": 0 }
@@ -445,9 +486,8 @@ impl super::SqlParser {
                             }
                             "MIN" => {
                                 if let Some(SqlExpr::FieldPath(path)) = args.first() {
-                                    let field = path
-                                        .to_mongodb_path()
-                                        .unwrap_or_else(|| path.base_field());
+                                    let field =
+                                        path.to_mongodb_path().unwrap_or_else(|| path.base_field());
                                     doc! { "$min": format!("${}", field) }
                                 } else {
                                     doc! { "$min": 0 }
@@ -455,9 +495,8 @@ impl super::SqlParser {
                             }
                             "MAX" => {
                                 if let Some(SqlExpr::FieldPath(path)) = args.first() {
-                                    let field = path
-                                        .to_mongodb_path()
-                                        .unwrap_or_else(|| path.base_field());
+                                    let field =
+                                        path.to_mongodb_path().unwrap_or_else(|| path.base_field());
                                     doc! { "$max": format!("${}", field) }
                                 } else {
                                     doc! { "$max": 0 }
@@ -479,9 +518,7 @@ impl super::SqlParser {
     }
 
     /// Build expression for $project stage that references $group results
-    pub(super) fn build_post_group_expr(
-        expr: &SqlExpr,
-    ) -> Result<mongodb::bson::Bson> {
+    pub(super) fn build_post_group_expr(expr: &SqlExpr) -> Result<mongodb::bson::Bson> {
         match expr {
             SqlExpr::Function { name, args } => {
                 let upper = name.to_uppercase();
