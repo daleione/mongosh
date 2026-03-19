@@ -30,6 +30,29 @@ You control access via:
 5. If permitted, the operation executes and the result is written back to stdout for the client to read.
 6. When the assistant session ends, the client terminates the child process.
 
+### Direct Query Pattern (Preferred)
+
+All query, write, and delete tools accept an optional `datasource` parameter. When the user mentions a datasource (e.g., "shop_prod"), pass it directly:
+
+```json
+{
+  "datasource": "shop_prod",
+  "collection": "orders"
+}
+```
+
+The server switches the connection automatically—no separate `mongo_prepare_context` call needed.
+
+### When to Use `mongo_prepare_context`
+
+Use `mongo_prepare_context` **only** when:
+
+- The datasource is ambiguous and you need to browse available datasource names
+- You need to explore which collections exist before querying
+- You don't know which datasource to use
+
+Do **not** call `mongo_prepare_context` as a routine first step for every query.
+
 Because the transport is stdio, `mongosh --mcp` has no open network port and is not reachable from other processes. There is no way to connect to a running instance from a second client.
 
 ## Quick Start
@@ -53,15 +76,19 @@ For **Claude Desktop**, edit `claude_desktop_config.json`:
 
 The client passes `command` + `args` to the OS, spawns the process, and wires its stdin/stdout for MCP communication. The supported `args` are:
 
-| Argument            | Description                                     |
-| ------------------- | ----------------------------------------------- |
-| `URI`               | MongoDB connection URI (positional)             |
-| `-d <name>`         | Use a named datasource from `~/.mongoshrc`      |
-| `--database <name>` | Default database to use                         |
-| `-c <file>`         | Path to a config file (default: `~/.mongoshrc`) |
-| `--host`, `--port`  | Server address (alternative to URI)             |
-| `-u`, `-p`          | Username and password                           |
-| `--tls`             | Enable TLS                                      |
+| Argument                 | Description                                          |
+| ------------------------ | ---------------------------------------------------- |
+| `URI`                    | MongoDB connection URI (positional)                  |
+| `-d <name>`              | Use a named datasource from `~/.mongoshrc`           |
+| `--database <name>`      | Default database to use                              |
+| `-c <file>`              | Path to a config file (default: `~/.mongoshrc`)      |
+| `--host`, `--port`       | Server address (alternative to URI)                  |
+| `-u`, `-p`               | Username and password                                |
+| `--auth-database <name>` | Authentication database (default: `admin`)           |
+| `--tls`                  | Enable TLS/SSL                                       |
+| `--tls-cert-file <file>` | TLS client certificate file                          |
+| `--tls-ca-file <file>`   | TLS CA certificate file                              |
+| `--tls-insecure`         | Disable TLS certificate validation (not recommended) |
 
 ### 2. Restart your AI assistant
 
@@ -241,15 +268,24 @@ audit_enabled = true
 
 The MCP server exposes the following tools. Your MCP security policy and MongoDB user permissions determine which ones actually execute.
 
+All tools accept optional `datasource` and `database` parameters. If `datasource` is provided, the server switches to that connection automatically. If `database` is provided, it overrides the database embedded in the datasource URI. When omitted, operations use the currently active datasource/database.
+
+### Context tools
+
+| Tool                     | Description                                                                         |
+| ------------------------ | ----------------------------------------------------------------------------------- |
+| `mongo_prepare_context`  | Switch to a named datasource and return the active database and its collection list |
+| `mongo_list_datasources` | List all named datasources (connections) defined in the config file                 |
+
 ### Read operations (require `allow_read = true`)
 
-| Tool              | Description                                                            |
-| ----------------- | ---------------------------------------------------------------------- |
-| `mongo_find`      | Find documents with optional filter, projection, sort, skip, and limit |
-| `mongo_find_one`  | Find a single document                                                 |
-| `mongo_aggregate` | Execute an aggregation pipeline                                        |
-| `mongo_count`     | Count documents matching a filter                                      |
-| `mongo_distinct`  | Get distinct values for a field                                        |
+| Tool              | Description                                                                                 |
+| ----------------- | ------------------------------------------------------------------------------------------- |
+| `mongo_find`      | Find documents with optional filter, projection, sort, skip, and limit (default limit: 100) |
+| `mongo_find_one`  | Find a single document with optional filter and projection                                  |
+| `mongo_aggregate` | Execute an aggregation pipeline                                                             |
+| `mongo_count`     | Count documents matching an optional filter                                                 |
+| `mongo_distinct`  | Get distinct values for a field with optional filter                                        |
 
 ### Write operations (require `allow_write = true`)
 
@@ -267,15 +303,15 @@ The MCP server exposes the following tools. Your MCP security policy and MongoDB
 | `mongo_delete_one`  | Delete the first document matching a filter |
 | `mongo_delete_many` | Delete all documents matching a filter      |
 
-### Administrative operations (require `allow_read = true`)
+### Admin operations (require `allow_read = true`)
 
-| Tool                     | Description                                           |
-| ------------------------ | ----------------------------------------------------- |
-| `mongo_list_databases`   | List all databases                                    |
-| `mongo_list_collections` | List all collections in a database                    |
-| `mongo_list_indexes`     | List all indexes on a collection                      |
-| `mongo_collection_stats` | Get storage and count statistics for a collection     |
-| `mongo_explain`          | Inspect the query execution plan for a find operation |
+| Tool                     | Description                                                                                                                                   |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mongo_list_databases`   | List all databases                                                                                                                            |
+| `mongo_list_collections` | List all collections in a database                                                                                                            |
+| `mongo_list_indexes`     | List all indexes on a collection                                                                                                              |
+| `mongo_collection_stats` | Get storage and count statistics for a collection (supports `scale` parameter: 1=bytes, 1024=KB, 1048576=MB)                                  |
+| `mongo_explain`          | Inspect the query execution plan for a find operation (supports `verbosity`: "queryPlanner" (default), "executionStats", "allPlansExecution") |
 
 ## Wildcard Patterns in `forbidden_collections`
 
@@ -289,6 +325,28 @@ forbidden_collections = [
   "*.sensitive", # Any collection whose name ends with ".sensitive"
   "*_backup"     # Any collection whose name ends with "_backup"
 ]
+```
+
+## BSON Types
+
+When writing queries, filters, or documents, use MongoDB Extended JSON v2 (Relaxed) format for BSON types. Plain strings will **not** match ObjectId or DateTime fields.
+
+| BSON Type | Extended JSON v2 Format                  |
+| --------- | ---------------------------------------- |
+| ObjectId  | `{"$oid": "69297ddcb4c39276cb39b05b"}`   |
+| DateTime  | `{"$date": "2025-01-01T00:00:00Z"}`      |
+| Date only | `{"$date": "2025-01-01"}` (midnight UTC) |
+| Epoch ms  | `{"$date": 1735689600000}`               |
+
+Example filter using BSON types:
+
+```json
+{
+  "filter": {
+    "_id": { "$oid": "69297ddcb4c39276cb39b05b" },
+    "created_at": { "$gte": { "$date": "2025-01-01T00:00:00Z" } }
+  }
+}
 ```
 
 ## See Also
