@@ -193,7 +193,7 @@ impl CliInterface {
     pub fn new() -> Result<Self> {
         let args = CliArgs::parse();
         let config = Self::load_config(&args)?;
-        let connection_uri = Self::resolve_connection_uri(&args, &config);
+        let connection_uri = Self::resolve_connection_uri(&args, &config)?;
 
         Ok(Self {
             args,
@@ -247,26 +247,23 @@ impl CliInterface {
     ///
     /// # Returns
     /// * `String` - Connection URI
-    fn resolve_connection_uri(args: &CliArgs, config: &Config) -> String {
+    fn resolve_connection_uri(args: &CliArgs, config: &Config) -> Result<String> {
         // Priority 1: Check if datasource is specified via -d flag
         if let Some(ref datasource_name) = args.datasource {
             if let Some(uri) = config.connection.get_datasource(Some(datasource_name)) {
-                return uri;
+                return Ok(uri);
             } else {
-                eprintln!(
-                    "Warning: Datasource '{}' not found in config",
-                    datasource_name
-                );
-                eprintln!(
-                    "Available datasources: {}",
-                    config.connection.list_datasources().join(", ")
-                );
+                let available = config.connection.list_datasources().join(", ");
+                return Err(crate::error::MongoshError::Generic(format!(
+                    "Datasource '{}' not found in config. Available datasources: {}",
+                    datasource_name, available
+                )));
             }
         }
 
         // Priority 2: Explicit URI from command line
         if let Some(uri) = &args.uri {
-            return uri.clone();
+            return Ok(uri.clone());
         }
 
         // Priority 3: Check if we should build from individual args
@@ -279,16 +276,16 @@ impl CliInterface {
             || args.tls_cert_file.is_some()
             || args.tls_ca_file.is_some()
         {
-            return Self::build_connection_uri_from_args(args);
+            return Ok(Self::build_connection_uri_from_args(args));
         }
 
         // Priority 4: Use default datasource from config
         if let Some(uri) = config.connection.get_datasource(None) {
-            return uri;
+            return Ok(uri);
         }
 
         // Final fallback: build default URI
-        Self::build_connection_uri_from_args(args)
+        Ok(Self::build_connection_uri_from_args(args))
     }
 
     /// Get sanitized connection URI for display (hides credentials)
@@ -737,7 +734,7 @@ mod tests {
     }
 
     fn make_cli(args: CliArgs, config: Config) -> CliInterface {
-        let connection_uri = CliInterface::resolve_connection_uri(&args, &config);
+        let connection_uri = CliInterface::resolve_connection_uri(&args, &config).unwrap();
         CliInterface {
             args,
             config,
