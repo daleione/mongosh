@@ -16,6 +16,7 @@ A high-performance MongoDB shell written in Rust that bridges SQL and MongoDB - 
 - **🧠 Smart Completion** - Context-aware auto-completion for collections, fields, and commands
 - **💾 Named Queries** - Save and reuse complex queries with parameters
 - **📊 Rich SQL Features** - Array indexing, date functions, arithmetic operations, and more
+- **🤖 MCP Server** - Let AI assistants query MongoDB with 15 built-in tools
 
 ## 📦 Installation
 
@@ -112,6 +113,50 @@ mongosh --format table
 mongosh --format shell
 ```
 
+### 5. MCP Server (Model Context Protocol)
+
+Enable AI assistants (Claude, Cursor, etc.) to query MongoDB directly:
+
+```bash
+mongosh --mcp mongodb://localhost:27017 --database mydb
+```
+
+**Claude Desktop configuration** (`claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "mongodb": {
+      "command": "mongosh",
+      "args": ["--mcp", "mongodb://localhost:27017", "--database", "mydb"]
+    }
+  }
+}
+```
+
+**15 built-in tools** — full CRUD, aggregation, and admin operations:
+
+| Category | Tools |
+|----------|-------|
+| Context  | `mongo_prepare_context`, `mongo_list_datasources` |
+| Read     | `mongo_find`, `mongo_find_one`, `mongo_aggregate`, `mongo_count`, `mongo_distinct` |
+| Write    | `mongo_insert_one`, `mongo_insert_many`, `mongo_update_one`, `mongo_update_many` |
+| Delete   | `mongo_delete_one`, `mongo_delete_many` |
+| Admin    | `mongo_list_databases`, `mongo_list_collections`, `mongo_list_indexes`, `mongo_collection_stats`, `mongo_explain` |
+
+**Security** — configure in `~/.mongoshrc`:
+
+```toml
+[mcp.security]
+allow_read = true
+allow_write = false
+allow_delete = false
+max_documents_per_query = 1000
+forbidden_collections = ["system.*", "admin.*"]
+```
+
+See [MCP Documentation](./docs/model-contex-protocol.md) for details.
+
 ## 📚 Documentation
 
 Comprehensive guides for all features:
@@ -123,6 +168,7 @@ Comprehensive guides for all features:
 - [Named Queries](./docs/named-queries.md) - Save and reuse queries
 - [Shell Completion](./docs/shell-completion.md) - Setup auto-completion
 - [API Reference](./docs/api-reference.md) - MongoDB method support status
+- [MCP Server](./docs/model-contex-protocol.md) - AI assistant integration via MCP
 
 ## 🆚 vs Official mongosh
 
@@ -136,6 +182,7 @@ Comprehensive guides for all features:
 | Named Queries      | ❌                 | ✅ With parameters             |
 | Array Indexing     | MongoDB only       | SQL + MongoDB                  |
 | Auto-completion    | Basic              | Advanced (datasources, fields) |
+| MCP Server         | ❌                 | ✅ 15 tools with security      |
 | JavaScript Runtime | ✅ Full            | ❌ Not a JS shell              |
 
 ## 🔧 Configuration
