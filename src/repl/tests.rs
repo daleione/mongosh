@@ -16,7 +16,7 @@ fn test_shared_state_connection() {
 
 #[test]
 fn test_shared_state_database_change() {
-    let mut state = SharedState::new("test".to_string());
+    let state = SharedState::new("test".to_string());
     state.set_database("newdb".to_string());
     assert_eq!(state.get_database(), "newdb");
 }
