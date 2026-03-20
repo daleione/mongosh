@@ -253,9 +253,14 @@ impl CliInterface {
             if let Some(uri) = config.connection.get_datasource(Some(datasource_name)) {
                 return Ok(uri);
             } else {
-                let available = config.connection.list_datasources().join(", ");
+                let datasources = config.connection.list_datasources();
+                let available = datasources
+                    .iter()
+                    .map(|s| format!("  - {}", s))
+                    .collect::<Vec<_>>()
+                    .join("\n");
                 return Err(crate::error::MongoshError::Generic(format!(
-                    "Datasource '{}' not found in config. Available datasources: {}",
+                    "Datasource '{}' not found in config.\nAvailable datasources:\n{}",
                     datasource_name, available
                 )));
             }
