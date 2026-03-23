@@ -16,6 +16,22 @@ use super::confirmation::confirm_admin_operation;
 use super::context::ExecutionContext;
 use super::result::{ExecutionResult, ExecutionStats, ResultData};
 
+/// Helper macro to wrap an async operation with cancellation support.
+/// If the cancel token fires before the operation completes, returns a Cancelled error.
+macro_rules! cancellable {
+    ($self:expr, $fut:expr) => {{
+        let cancel_token = $self.context.get_cancel_token();
+        tokio::select! {
+            result = $fut => result,
+            _ = cancel_token.cancelled() => {
+                Err(MongoshError::Execution(ExecutionError::Cancelled(
+                    "Operation cancelled by user (Ctrl+C)".to_string()
+                )))
+            }
+        }
+    }};
+}
+
 /// Executor for administrative commands
 pub struct AdminExecutor {
     /// Execution context
@@ -52,40 +68,44 @@ impl AdminExecutor {
             });
         }
 
-        match cmd {
-            AdminCommand::ShowDatabases => self.show_databases().await,
-            AdminCommand::ShowCollections => self.show_collections().await,
-            AdminCommand::UseDatabase(name) => self.use_database(name).await,
-            AdminCommand::ListIndexes(collection) => self.list_indexes(collection).await,
-            AdminCommand::CreateIndex {
-                collection,
-                keys,
-                options,
-            } => self.create_index(collection, keys, options).await,
-            AdminCommand::CreateIndexes {
-                collection,
-                indexes,
-            } => self.create_indexes(collection, indexes).await,
-            AdminCommand::DropIndex { collection, index } => {
-                self.drop_index(collection, index).await
+        // Wrap command execution with cancellation support so Ctrl+C
+        // can interrupt operations that block on the server (e.g., auth failures).
+        cancellable!(self, async {
+            match cmd {
+                AdminCommand::ShowDatabases => self.show_databases().await,
+                AdminCommand::ShowCollections => self.show_collections().await,
+                AdminCommand::UseDatabase(name) => self.use_database(name).await,
+                AdminCommand::ListIndexes(collection) => self.list_indexes(collection).await,
+                AdminCommand::CreateIndex {
+                    collection,
+                    keys,
+                    options,
+                } => self.create_index(collection, keys, options).await,
+                AdminCommand::CreateIndexes {
+                    collection,
+                    indexes,
+                } => self.create_indexes(collection, indexes).await,
+                AdminCommand::DropIndex { collection, index } => {
+                    self.drop_index(collection, index).await
+                }
+                AdminCommand::DropIndexes {
+                    collection,
+                    indexes,
+                } => self.drop_indexes(collection, indexes).await,
+                AdminCommand::DropCollection(collection) => self.drop_collection(collection).await,
+                AdminCommand::RenameCollection {
+                    collection,
+                    target,
+                    drop_target,
+                } => self.rename_collection(collection, target, drop_target).await,
+                AdminCommand::CollectionStats { collection, scale } => {
+                    self.collection_stats(collection, scale).await
+                }
+                _ => Err(MongoshError::NotImplemented(
+                    "Admin command not yet implemented".to_string(),
+                )),
             }
-            AdminCommand::DropIndexes {
-                collection,
-                indexes,
-            } => self.drop_indexes(collection, indexes).await,
-            AdminCommand::DropCollection(collection) => self.drop_collection(collection).await,
-            AdminCommand::RenameCollection {
-                collection,
-                target,
-                drop_target,
-            } => self.rename_collection(collection, target, drop_target).await,
-            AdminCommand::CollectionStats { collection, scale } => {
-                self.collection_stats(collection, scale).await
-            }
-            _ => Err(MongoshError::NotImplemented(
-                "Admin command not yet implemented".to_string(),
-            )),
-        }
+        })
     }
 
     /// Show all databases
