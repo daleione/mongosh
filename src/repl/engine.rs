@@ -6,11 +6,12 @@ use reedline::{
 
 use std::sync::Arc;
 
-use crate::config::HistoryConfig;
+use crate::config::{AiConfig, HistoryConfig};
 use crate::error::{MongoshError, Result};
 use crate::executor::ExecutionContext;
 use crate::parser::{Command, Parser};
 
+use super::ai_completion::AiCompletionService;
 use super::completer::MongoCompleter;
 use super::highlighter::{SyntaxHighlighter, SyntaxMode};
 use super::hinter::MongoHinter;
@@ -34,13 +35,14 @@ pub struct ReplEngine {
 }
 
 impl ReplEngine {
-    /// Create a new REPL engine with shared state
+    /// Create a new REPL engine with shared state and optional AI completion.
     ///
     /// # Arguments
     /// * `shared_state` - Shared state with execution context
     /// * `history_config` - History configuration
     /// * `highlighting_enabled` - Enable syntax highlighting
     /// * `execution_context` - Optional execution context for completion
+    /// * `ai_config` - Optional AI completion configuration
     ///
     /// # Returns
     /// * `Result<Self>` - New REPL engine or error
@@ -49,6 +51,7 @@ impl ReplEngine {
         history_config: HistoryConfig,
         highlighting_enabled: bool,
         execution_context: Option<Arc<ExecutionContext>>,
+        ai_config: Option<AiConfig>,
     ) -> Result<Self> {
         // Setup history
         let history = if history_config.persist {
@@ -105,7 +108,7 @@ impl ReplEngine {
             ReedlineEvent::MenuPrevious,
         );
 
-        // Ctrl+F to accept hint (complete suggestion from history)
+        // Ctrl+F to accept the full hint (AI or history)
         // If no hint, move cursor forward (default behavior)
         keybindings.add_binding(
             KeyModifiers::CONTROL,
@@ -116,6 +119,15 @@ impl ReplEngine {
             ]),
         );
 
+        // Alt+F to accept the next word of the hint (word-wise acceptance)
+        // This is especially useful for long AI completions where the user
+        // wants to accept only part of the suggestion.
+        keybindings.add_binding(
+            KeyModifiers::ALT,
+            KeyCode::Char('f'),
+            ReedlineEvent::HistoryHintWordComplete,
+        );
+
         let edit_mode = Box::new(Emacs::new(keybindings));
 
         // Create highlighter with auto-detect mode
@@ -124,8 +136,37 @@ impl ReplEngine {
             highlighting_enabled,
         ));
 
-        // Create hinter
-        let hinter = Box::new(MongoHinter::new());
+        // Extract history_context_lines from ai_config BEFORE it's consumed.
+        let history_context_lines = ai_config
+            .as_ref()
+            .filter(|c| c.is_effectively_enabled())
+            .map(|c| c.history_context_lines)
+            .unwrap_or(0);
+
+        // Resolve the current datasource name for AI context file lookup.
+        let datasource_name = execution_context
+            .as_ref()
+            .map(|ctx| {
+                tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(ctx.get_current_datasource())
+                })
+            })
+            .unwrap_or_default();
+
+        // Create AI completion service if configured and effectively enabled.
+        let ai_service = ai_config
+            .filter(|c| c.is_effectively_enabled())
+            .map(|config| {
+                tracing::info!("AI completion enabled (model: {})", config.model);
+                Arc::new(AiCompletionService::new(
+                    config,
+                    shared_state.clone(),
+                    datasource_name,
+                ))
+            });
+
+        // Create hinter — with AI service if available
+        let hinter = Box::new(MongoHinter::new(ai_service, history_context_lines));
 
         // Create validator
         let validator = Box::new(MongoValidator::new());
@@ -168,6 +209,27 @@ impl ReplEngine {
             }
             Err(err) => Err(MongoshError::Generic(format!("Read error: {}", err))),
         }
+    }
+
+    /// Read a line of input with the buffer pre-filled with `initial` text.
+    ///
+    /// The user sees the text already in the input line and can edit it
+    /// freely before pressing Enter. Ctrl-C / Ctrl-D cancels as usual.
+    ///
+    /// # Arguments
+    /// * `initial` - Text to pre-populate in the editor buffer
+    ///
+    /// # Returns
+    /// * `Result<Option<String>>` - Edited line or None on cancel
+    pub fn read_line_with_initial(&mut self, initial: &str) -> Result<Option<String>> {
+        // Pre-fill the buffer before entering read_line.
+        // run_edit_commands inserts text at the current cursor position;
+        // since the buffer was cleared by the previous submit this starts
+        // from an empty state.
+        self.editor
+            .run_edit_commands(&[EditCommand::InsertString(initial.to_string())]);
+
+        self.read_line()
     }
 
     /// Process user input and parse into command

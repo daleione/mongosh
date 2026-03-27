@@ -16,6 +16,10 @@ use crate::config::{Config, OutputFormat};
 use crate::error::{ExecutionError, Result};
 use crate::parser::{Command, ConfigCommand, ExportFormat, PipeCommand, QueryMode};
 
+use crate::repl::ai_context::ContextReader;
+#[cfg(feature = "ai-completion")]
+use crate::repl::ai_context::{ContextGenerator, Sampler};
+
 use super::admin::AdminExecutor;
 use super::context::ExecutionContext;
 use super::export::{CsvWriter, ExportCoordinator, FormatWriter, JsonLWriter, ProgressTracker};
@@ -69,6 +73,14 @@ impl CommandRouter {
             Command::Config(config_cmd) => self.execute_config(config_cmd).await,
             Command::Pipe(base_cmd, pipe_cmd) => self.execute_pipe(*base_cmd, pipe_cmd).await,
             Command::Help(topic) => self.execute_help(topic).await,
+            Command::AiQuery(_) => Ok(ExecutionResult {
+                success: true,
+                data: ResultData::Message(
+                    "AI query generation is handled by the REPL loop.".to_string(),
+                ),
+                stats: ExecutionStats::default(),
+                error: None,
+            }),
             Command::Exit => Ok(ExecutionResult {
                 success: true,
                 data: ResultData::Message("Exiting...".to_string()),
@@ -103,11 +115,14 @@ impl CommandRouter {
                     // Execute query in streaming mode for export
                     let result = if let Command::Query(query_cmd) = base_cmd {
                         let executor = QueryExecutor::new(self.context.clone()).await?;
-                        executor.execute(query_cmd, QueryMode::Streaming { batch_size: 1000 }).await?
+                        executor
+                            .execute(query_cmd, QueryMode::Streaming { batch_size: 1000 })
+                            .await?
                     } else {
                         return Err(ExecutionError::InvalidOperation(
-                            "Export can only be used with query commands".to_string()
-                        ).into());
+                            "Export can only be used with query commands".to_string(),
+                        )
+                        .into());
                     };
 
                     // Extract streaming query from result
@@ -115,8 +130,9 @@ impl CommandRouter {
                         ResultData::Stream(stream) => stream,
                         _ => {
                             return Err(ExecutionError::InvalidOperation(
-                                "Query did not return streaming data for export".to_string()
-                            ).into());
+                                "Query did not return streaming data for export".to_string(),
+                            )
+                            .into());
                         }
                     };
 
@@ -359,6 +375,10 @@ Available Commands:
             ConfigCommand::DeleteNamedQuery(name) => {
                 return self.delete_named_query(&name).await;
             }
+            ConfigCommand::AiGenerate { collection, force } => {
+                return self.execute_ai_generate(collection, force).await;
+            }
+            ConfigCommand::AiStatus => return self.execute_ai_status().await,
         };
 
         Ok(ExecutionResult {
@@ -535,6 +555,197 @@ Available Commands:
     }
 
     /// Delete a named query
+    /// Execute :ai-gen command — generate AI context files
+    #[cfg(not(feature = "ai-completion"))]
+    async fn execute_ai_generate(
+        &self,
+        _collection: Option<String>,
+        _force: bool,
+    ) -> Result<ExecutionResult> {
+        Ok(ExecutionResult::success(
+            ResultData::Message(
+                "AI context generation requires the 'ai-completion' feature.\n\
+                 Rebuild with: cargo build --features ai-completion"
+                    .to_string(),
+            ),
+            ExecutionStats::default(),
+        ))
+    }
+
+    #[cfg(feature = "ai-completion")]
+    async fn execute_ai_generate(
+        &self,
+        collection: Option<String>,
+        force: bool,
+    ) -> Result<ExecutionResult> {
+        // Check if AI config has an API key
+        let ai_config = {
+            let config_path = self
+                .context
+                .config_path
+                .as_ref()
+                .cloned()
+                .unwrap_or_else(|| Config::default_config_path());
+
+            if config_path.exists() {
+                let content = fs::read_to_string(&config_path).map_err(|e| {
+                    crate::error::MongoshError::Generic(format!("Failed to read config: {}", e))
+                })?;
+                let config: Config = toml::from_str(&content).unwrap_or_default();
+                config.ai
+            } else {
+                crate::config::AiConfig::default()
+            }
+        };
+
+        let api_key = ai_config.resolve_api_key();
+        if api_key.is_empty() {
+            return Ok(ExecutionResult::success(
+                ResultData::Message(
+                    "Error: No API key configured.\n\
+                     Set DEEPSEEK_API_KEY environment variable or add api_key to [ai] config section."
+                        .to_string(),
+                ),
+                ExecutionStats::default(),
+            ));
+        }
+
+        let datasource = self.context.get_current_datasource().await;
+        let db_name = self.context.get_current_database().await;
+
+        // Check if context already exists (skip if --force)
+        let reader = ContextReader::new(None);
+        if !force && collection.is_none() && reader.has_context(&datasource, &db_name) {
+            return Ok(ExecutionResult::success(
+                ResultData::Message(format!(
+                    "AI context already exists for '{}/{}'. Use :ai-gen --force to regenerate.",
+                    datasource, db_name,
+                )),
+                ExecutionStats::default(),
+            ));
+        }
+
+        let generator = ContextGenerator::new(ai_config.clone(), None);
+
+        match collection {
+            Some(ref coll_name) => {
+                // Generate for a single collection
+                eprintln!("Sampling collection '{}'...", coll_name);
+                let sample = Sampler::sample_collection(&self.context, coll_name, 20).await?;
+                eprintln!("Generating context via Chat API...");
+                let path = generator
+                    .generate_single(&datasource, &db_name, &sample)
+                    .await?;
+                Ok(ExecutionResult::success(
+                    ResultData::Message(format!(
+                        "AI context generated for collection '{}'.\nFile: {}",
+                        coll_name,
+                        path.display(),
+                    )),
+                    ExecutionStats::default(),
+                ))
+            }
+            None => {
+                // Generate for all collections
+                eprintln!("Sampling database '{}'...", db_name);
+                let sample = Sampler::sample_database(&self.context, &datasource, 20).await?;
+                let coll_count = sample.collections.len();
+                eprintln!(
+                    "Found {} collections. Generating context via Chat API...",
+                    coll_count
+                );
+                let (dir, success) = generator.generate(&sample).await?;
+                Ok(ExecutionResult::success(
+                    ResultData::Message(format!(
+                        "AI context generated: {}/{} collections.\nDirectory: {}",
+                        success,
+                        coll_count,
+                        dir.display(),
+                    )),
+                    ExecutionStats::default(),
+                ))
+            }
+        }
+    }
+
+    /// Execute :ai-status command — show AI context status
+    async fn execute_ai_status(&self) -> Result<ExecutionResult> {
+        let datasource = self.context.get_current_datasource().await;
+        let db_name = self.context.get_current_database().await;
+
+        let reader = ContextReader::new(None);
+        if !reader.has_context(&datasource, &db_name) {
+            return Ok(ExecutionResult::success(
+                ResultData::Message(format!(
+                    "No AI context for '{}/{}'. Run :ai-gen to generate.",
+                    datasource, db_name,
+                )),
+                ExecutionStats::default(),
+            ));
+        }
+
+        // Read meta file to show status
+        let context_dir = dirs::home_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join(".mongosh")
+            .join("context");
+        let dir_name = if datasource.is_empty() {
+            db_name.clone()
+        } else {
+            format!("{}_{}", datasource, db_name)
+        };
+        let meta_path = context_dir.join(&dir_name).join("_meta.toml");
+
+        let meta_content =
+            fs::read_to_string(&meta_path).unwrap_or_else(|_| "(unable to read meta)".to_string());
+
+        // List schema files
+        let schemas_dir = context_dir.join(&dir_name).join("schemas");
+        let schema_files: Vec<String> = fs::read_dir(&schemas_dir)
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .filter_map(|e| {
+                        let name = e.file_name().to_string_lossy().to_string();
+                        if name.ends_with(".md") {
+                            Some(format!("  - {}", name.trim_end_matches(".md")))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let mut msg = format!(
+            "AI Context Status for '{}/{}':\n\
+             Directory: {}\n\n",
+            datasource,
+            db_name,
+            context_dir.join(&dir_name).display(),
+        );
+
+        // Show relevant meta info
+        for line in meta_content.lines().take(10) {
+            if !line.starts_with('#') && !line.is_empty() {
+                msg.push_str(&format!("  {}\n", line));
+            }
+        }
+
+        if !schema_files.is_empty() {
+            msg.push_str(&format!(
+                "\nCollections with schema ({}):\n",
+                schema_files.len()
+            ));
+            msg.push_str(&schema_files.join("\n"));
+        }
+
+        Ok(ExecutionResult::success(
+            ResultData::Message(msg),
+            ExecutionStats::default(),
+        ))
+    }
+
     async fn delete_named_query(&self, name: &str) -> Result<ExecutionResult> {
         let mut query = self.load_named_query().await?;
 

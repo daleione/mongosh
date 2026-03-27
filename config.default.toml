@@ -138,6 +138,66 @@ timestamps = true
 
 
 # ============================================
+# AI Completion Configuration
+# ============================================
+[ai]
+
+# Enable AI-powered inline completion (based on DeepSeek FIM API)
+# When enabled, the shell displays AI-generated suggestions as you type
+# (shown in cyan italic text after the cursor).
+# Press Ctrl+F to accept the full suggestion, or Alt+F to accept word-by-word.
+# Options: true, false
+enabled = false
+
+# DeepSeek API Key
+# Can also be set via the DEEPSEEK_API_KEY environment variable (takes precedence).
+# Get your key at: https://platform.deepseek.com/api_keys
+api_key = ""
+
+# API base URL
+base_url = "https://api.deepseek.com/beta"
+
+# Model ID
+model = "deepseek-chat"
+
+# Maximum number of tokens to generate per completion
+# Lower values reduce latency; higher values allow longer suggestions.
+# Range: 8-256
+max_tokens = 48
+
+# Sampling temperature (0.0 = most deterministic, 1.0 = most random)
+# For code completion, lower values (0.1-0.3) produce more predictable results.
+# Range: 0.0-1.0
+temperature = 0.2
+
+# Debounce delay in milliseconds
+# After you stop typing, the shell waits this long before sending an API request.
+# Lower values feel more responsive but generate more API calls.
+# Range: 50-2000
+debounce_ms = 300
+
+# Cache TTL in seconds
+# How long AI completion results are kept in the local cache.
+# Range: 10-300
+cache_ttl_secs = 60
+
+# Maximum number of cached completion entries
+# Range: 32-1024
+max_cache_entries = 256
+
+# Number of recent history commands included in the AI prompt
+# More history helps the model understand your current session intent,
+# but increases token consumption.
+# Range: 0-30
+history_context_lines = 10
+
+# Minimum input length to trigger AI completion
+# Inputs shorter than this are handled by history hints only.
+# Range: 1-20
+min_trigger_length = 5
+
+
+# ============================================
 # MCP (Model Context Protocol) Configuration
 # ============================================
 [mcp]

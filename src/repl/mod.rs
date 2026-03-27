@@ -17,6 +17,9 @@
 //! are re‑exported for convenience but are mostly internal details of the
 //! REPL implementation.
 
+pub mod ai_completion;
+pub mod ai_context;
+pub mod ai_query;
 mod completer;
 pub mod completion;
 mod cursor_state;

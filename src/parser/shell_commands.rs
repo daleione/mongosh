@@ -27,6 +27,9 @@ impl ShellCommandParser {
             || input.starts_with("color ")
             || input == "query"
             || input.starts_with("query ")
+            || input.starts_with("ai ")
+            || input.starts_with(":ai-gen")
+            || input.starts_with(":ai-status")
             || matches!(input, "exit" | "quit" | "it")
     }
 
@@ -74,6 +77,23 @@ impl ShellCommandParser {
             return Self::parse_query(trimmed);
         }
 
+        // AI query generation command
+        if trimmed.starts_with("ai ") {
+            let description = trimmed.strip_prefix("ai ").unwrap().trim().to_string();
+            if description.is_empty() {
+                return Err(ParseError::InvalidCommand(
+                    "ai command requires a natural language description".to_string(),
+                )
+                .into());
+            }
+            return Ok(Command::AiQuery(description));
+        }
+
+        // AI context commands
+        if trimmed.starts_with(":ai-gen") || trimmed.starts_with(":ai-status") {
+            return Self::parse_ai_context(trimmed);
+        }
+
         Err(ParseError::InvalidCommand(format!("Unknown shell command: {}", input)).into())
     }
 
@@ -104,11 +124,9 @@ impl ShellCommandParser {
                 AdminCommand::ShowLogs(Some(log_type))
             }
             _ => {
-                return Err(ParseError::InvalidCommand(format!(
-                    "Unknown show command '{}'",
-                    rest
-                ))
-                .into());
+                return Err(
+                    ParseError::InvalidCommand(format!("Unknown show command '{}'", rest)).into(),
+                );
             }
         };
 
@@ -277,6 +295,39 @@ impl ShellCommandParser {
         }
 
         args
+    }
+
+    /// Parse AI context generation commands
+    ///
+    /// Supported formats:
+    ///   :ai-gen              — generate context for all collections
+    ///   :ai-gen <collection> — generate context for a specific collection
+    ///   :ai-gen --force      — force regeneration
+    ///   :ai-status           — show current context status
+    fn parse_ai_context(input: &str) -> Result<Command> {
+        if input == ":ai-status" || input.starts_with(":ai-status ") {
+            return Ok(Command::Config(ConfigCommand::AiStatus));
+        }
+
+        // :ai-gen [--force] [collection]
+        let args_str = input.strip_prefix(":ai-gen").unwrap_or("").trim();
+        let parts: Vec<&str> = args_str.split_whitespace().collect();
+
+        let mut force = false;
+        let mut collection = None;
+
+        for part in parts {
+            if part == "--force" {
+                force = true;
+            } else if collection.is_none() {
+                collection = Some(part.to_string());
+            }
+        }
+
+        Ok(Command::Config(ConfigCommand::AiGenerate {
+            collection,
+            force,
+        }))
     }
 
     /// Validate database name

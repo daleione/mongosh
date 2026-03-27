@@ -53,6 +53,9 @@ pub enum Command {
     /// Help command with optional topic
     Help(Option<String>),
 
+    /// AI query generation from natural language description
+    AiQuery(String),
+
     /// Exit/quit command
     Exit,
 }
@@ -265,10 +268,13 @@ impl ExplainVerbosity {
             Self::EXECUTION_STATS => Ok(ExplainVerbosity::ExecutionStats),
             Self::ALL_PLANS_EXECUTION => Ok(ExplainVerbosity::AllPlansExecution),
             Self::COMPAT_TRUE => Ok(ExplainVerbosity::AllPlansExecution), // backwards compatibility
-            Self::COMPAT_FALSE => Ok(ExplainVerbosity::QueryPlanner), // backwards compatibility
+            Self::COMPAT_FALSE => Ok(ExplainVerbosity::QueryPlanner),     // backwards compatibility
             _ => Err(ParseError::InvalidCommand(format!(
                 "Invalid explain verbosity: '{}'. Valid options are: '{}', '{}', '{}' (or boolean true/false for compatibility)",
-                s, Self::QUERY_PLANNER, Self::EXECUTION_STATS, Self::ALL_PLANS_EXECUTION
+                s,
+                Self::QUERY_PLANNER,
+                Self::EXECUTION_STATS,
+                Self::ALL_PLANS_EXECUTION
             ))),
         }
     }
@@ -300,9 +306,10 @@ impl ExplainVerbosity {
         }
 
         if args.len() > 1 {
-            return Err(ParseError::InvalidCommand(
-                format!("explain() expects at most 1 argument, got {}", args.len())
-            ));
+            return Err(ParseError::InvalidCommand(format!(
+                "explain() expects at most 1 argument, got {}",
+                args.len()
+            )));
         }
 
         match args.first().unwrap() {
@@ -451,6 +458,17 @@ pub enum ConfigCommand {
 
     /// Delete a named query
     DeleteNamedQuery(String),
+
+    /// Generate AI context for the current database
+    AiGenerate {
+        /// Optional: generate only for this collection
+        collection: Option<String>,
+        /// Force regeneration even if context exists
+        force: bool,
+    },
+
+    /// Show AI context status
+    AiStatus,
 }
 
 /// Options for find operations

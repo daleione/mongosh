@@ -214,11 +214,22 @@ fn create_repl_engine(
     shared_state: SharedState,
     exec_context: ExecutionContext,
 ) -> Result<ReplEngine> {
+    // Pass AI config if the [ai] section is present and effectively enabled.
+    let ai_config = {
+        let cfg = &cli.config().ai;
+        if cfg.is_effectively_enabled() {
+            Some(cfg.clone())
+        } else {
+            None
+        }
+    };
+
     ReplEngine::new(
         shared_state,
         cli.config().history.clone(),
         cli.config().display.syntax_highlighting,
         Some(Arc::new(exec_context)),
+        ai_config,
     )
 }
 
@@ -250,6 +261,109 @@ async fn run_repl_loop(
 
         if matches!(command, parser::Command::Exit) {
             break;
+        }
+
+        // Handle AI query generation: plan → step loop → execute
+        if let parser::Command::AiQuery(description) = command {
+            let ai_config = cli.config().ai.clone();
+            if !ai_config.is_effectively_enabled() {
+                eprintln!(
+                    "AI is not configured. Set ai.enabled = true and provide an API key \
+                     (DEEPSEEK_API_KEY env var or ai.api_key in config)."
+                );
+                continue;
+            }
+
+            let datasource = exec_context.get_current_datasource().await;
+            let generator = repl::ai_query::AiQueryGenerator::new(ai_config, datasource);
+            let database = shared_state.get_database();
+
+            // ── Phase 1: Plan ───────────────────────────────────────
+            println!("🤖 Analyzing...");
+
+            let plan = match generator.plan(&description, &database).await {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("❌ {}", e);
+                    continue;
+                }
+            };
+
+            let total = plan.steps.len();
+            if total > 1 {
+                println!("📋 {} steps required\n", total);
+            }
+
+            // ── Phase 2: Step-by-step execution ─────────────────────
+            let mut previous_results: Vec<repl::ai_query::StepResult> = Vec::new();
+
+            for step in &plan.steps {
+                // 2a. Show step description
+                if total > 1 {
+                    println!(
+                        "Step {}/{}: {}\n",
+                        step.step_number, total, step.description
+                    );
+                }
+
+                // 2b. Generate query for this step (with previous results)
+                let query = match generator
+                    .generate_step(&plan, step, &previous_results, &database)
+                    .await
+                {
+                    Ok(q) => q,
+                    Err(e) => {
+                        eprintln!("❌ {}", e);
+                        break;
+                    }
+                };
+
+                // 2c. Pre-fill REPL input, let user edit / confirm
+                let edited = match repl.read_line_with_initial(&query) {
+                    Ok(Some(line)) if !line.trim().is_empty() => line,
+                    _ => {
+                        println!("⏹ Cancelled");
+                        break;
+                    }
+                };
+
+                // 2d. Parse the (possibly edited) query
+                let cmd = match repl.process_input(&edited) {
+                    Ok(cmd) if !matches!(cmd, parser::Command::Exit) => cmd,
+                    Ok(_) => break,
+                    Err(e) => {
+                        eprintln!("Parse error: {}", e);
+                        break;
+                    }
+                };
+
+                // 2e. Execute and display
+                let mut step_context = exec_context.clone();
+                step_context.reset_cancel_token();
+
+                match step_context.execute(cmd).await {
+                    Ok(result) => {
+                        display_result(cli, shared_state, &result);
+
+                        // 2f. Collect result summary for next step's prompt
+                        previous_results.push(repl::ai_query::summarize_result(
+                            step.step_number,
+                            &edited,
+                            &result,
+                        ));
+                    }
+                    Err(e) => {
+                        eprintln!("{}", e);
+                        break;
+                    }
+                }
+
+                if total > 1 && step.step_number < total {
+                    println!(); // blank line between steps
+                }
+            }
+
+            continue;
         }
 
         // Setup Ctrl+C handler for this command execution

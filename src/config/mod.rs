@@ -44,6 +44,10 @@ pub struct Config {
     /// Named query
     #[serde(default)]
     pub named_query: HashMap<String, String>,
+
+    /// AI completion configuration
+    #[serde(default)]
+    pub ai: AiConfig,
 }
 
 impl Default for Config {
@@ -55,6 +59,7 @@ impl Default for Config {
             logging: LoggingConfig::default(),
             mcp: None,
             named_query: HashMap::new(),
+            ai: AiConfig::default(),
         }
     }
 }
@@ -242,6 +247,26 @@ impl Config {
         Self::validate_range(self.display.page_size, 1, 1000, "Page size")?;
         Self::validate_range(self.display.json_indent, 0, 8, "JSON indent")?;
         Self::validate_range(self.history.max_size, 0, 10000, "Max history size")?;
+
+        // Validate AI config
+        if self.ai.enabled {
+            Self::validate_range(self.ai.max_tokens as usize, 8, 256, "AI max_tokens")?;
+            Self::validate_range(self.ai.debounce_ms as usize, 50, 2000, "AI debounce_ms")?;
+            Self::validate_range(
+                self.ai.cache_ttl_secs as usize,
+                10,
+                300,
+                "AI cache_ttl_secs",
+            )?;
+            Self::validate_range(self.ai.max_cache_entries, 32, 1024, "AI max_cache_entries")?;
+            Self::validate_range(
+                self.ai.history_context_lines,
+                0,
+                30,
+                "AI history_context_lines",
+            )?;
+            Self::validate_range(self.ai.min_trigger_length, 1, 20, "AI min_trigger_length")?;
+        }
 
         Ok(())
     }
@@ -673,6 +698,117 @@ impl LogLevel {
             LogLevel::Trace => tracing::Level::TRACE,
         }
     }
+}
+
+/// AI completion configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiConfig {
+    /// Enable AI completion (default: false)
+    #[serde(default = "default_ai_enabled")]
+    pub enabled: bool,
+
+    /// DeepSeek API Key (can also be set via DEEPSEEK_API_KEY env var)
+    #[serde(default)]
+    pub api_key: String,
+
+    /// API base URL
+    #[serde(default = "default_ai_base_url")]
+    pub base_url: String,
+
+    /// Model ID
+    #[serde(default = "default_ai_model")]
+    pub model: String,
+
+    /// Max tokens to generate (8-256)
+    #[serde(default = "default_ai_max_tokens")]
+    pub max_tokens: u32,
+
+    /// Sampling temperature (0.0-1.0)
+    #[serde(default = "default_ai_temperature")]
+    pub temperature: f32,
+
+    /// Debounce delay in milliseconds (50-2000)
+    #[serde(default = "default_ai_debounce_ms")]
+    pub debounce_ms: u64,
+
+    /// Cache TTL in seconds (10-300)
+    #[serde(default = "default_ai_cache_ttl")]
+    pub cache_ttl_secs: u64,
+
+    /// Max cache entries (32-1024)
+    #[serde(default = "default_ai_max_cache_entries")]
+    pub max_cache_entries: usize,
+
+    /// Number of history lines to include in FIM prompt (0-30)
+    #[serde(default = "default_ai_history_lines")]
+    pub history_context_lines: usize,
+
+    /// Minimum input length to trigger AI completion (1-20)
+    #[serde(default = "default_ai_min_trigger_length")]
+    pub min_trigger_length: usize,
+}
+
+impl Default for AiConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_ai_enabled(),
+            api_key: String::new(),
+            base_url: default_ai_base_url(),
+            model: default_ai_model(),
+            max_tokens: default_ai_max_tokens(),
+            temperature: default_ai_temperature(),
+            debounce_ms: default_ai_debounce_ms(),
+            cache_ttl_secs: default_ai_cache_ttl(),
+            max_cache_entries: default_ai_max_cache_entries(),
+            history_context_lines: default_ai_history_lines(),
+            min_trigger_length: default_ai_min_trigger_length(),
+        }
+    }
+}
+
+impl AiConfig {
+    /// Resolve the API key from environment variable or config
+    /// Environment variable DEEPSEEK_API_KEY takes precedence
+    pub fn resolve_api_key(&self) -> String {
+        std::env::var("DEEPSEEK_API_KEY").unwrap_or_else(|_| self.api_key.clone())
+    }
+
+    /// Check if AI completion is effectively enabled
+    /// (enabled flag is true AND an API key is available)
+    pub fn is_effectively_enabled(&self) -> bool {
+        self.enabled && !self.resolve_api_key().is_empty()
+    }
+}
+
+fn default_ai_enabled() -> bool {
+    false
+}
+fn default_ai_base_url() -> String {
+    "https://api.deepseek.com/beta".to_string()
+}
+fn default_ai_model() -> String {
+    "deepseek-chat".to_string()
+}
+fn default_ai_max_tokens() -> u32 {
+    48
+}
+fn default_ai_temperature() -> f32 {
+    0.2
+}
+fn default_ai_debounce_ms() -> u64 {
+    300
+}
+fn default_ai_cache_ttl() -> u64 {
+    60
+}
+fn default_ai_max_cache_entries() -> usize {
+    256
+}
+fn default_ai_history_lines() -> usize {
+    10
+}
+fn default_ai_min_trigger_length() -> usize {
+    5
 }
 
 /// MCP (Model Context Protocol) configuration
