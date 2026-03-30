@@ -73,16 +73,25 @@ pub struct AiQueryGenerator {
     config: AiConfig,
     context_reader: ContextReader,
     datasource: String,
+    #[cfg(feature = "ai-completion")]
+    client: reqwest::Client,
 }
 
 impl AiQueryGenerator {
     /// Create a new generator with the given AI configuration.
     pub fn new(config: AiConfig, datasource: String) -> Self {
         let context_reader = ContextReader::new(None);
+        #[cfg(feature = "ai-completion")]
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .expect("Failed to create HTTP client");
         Self {
             config,
             context_reader,
             datasource,
+            #[cfg(feature = "ai-completion")]
+            client,
         }
     }
 
@@ -252,14 +261,9 @@ impl AiQueryGenerator {
         api_key: &str,
         body: &serde_json::Value,
     ) -> Result<String, String> {
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .build()
-            .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
-
         let chat_url = derive_chat_url(&self.config.base_url);
 
-        let resp = client
+        let resp = self.client
             .post(&chat_url)
             .header("Authorization", format!("Bearer {}", api_key))
             .header("Content-Type", "application/json")
@@ -522,14 +526,17 @@ fn summarize_docs(docs: &[mongodb::bson::Document]) -> (String, usize) {
 /// Derive the chat completion URL from the configured base URL.
 #[cfg_attr(not(feature = "ai-completion"), allow(dead_code))]
 fn derive_chat_url(base_url: &str) -> String {
-    if base_url.ends_with("/chat/completions") {
-        return base_url.to_string();
+    let url = base_url.trim_end_matches('/');
+    if url.ends_with("/chat/completions") {
+        return url.to_string();
     }
-    let base = base_url
-        .trim_end_matches('/')
-        .trim_end_matches("/beta")
-        .trim_end_matches("/completions");
-    format!("{}/chat/completions", base)
+    // Strip known suffixes one at a time so we reach the API root,
+    // then append the canonical chat completions path.
+    let url = url
+        .strip_suffix("/completions")
+        .or_else(|| url.strip_suffix("/beta"))
+        .unwrap_or(url);
+    format!("{}/chat/completions", url)
 }
 
 /// Extract the actual MongoDB query from the AI response (strip markdown
@@ -565,12 +572,15 @@ fn truncate_lines(text: &str, max_lines: usize) -> String {
     result
 }
 
-/// Truncate a string to at most `max_chars` characters.
+/// Truncate a string to at most `max_chars` characters (UTF-8 safe).
 fn truncate_chars(text: &str, max_chars: usize) -> String {
     if text.len() <= max_chars {
         text.to_string()
     } else {
-        let mut s = text[..max_chars].to_string();
+        // Find the nearest char boundary at or before max_chars to avoid
+        // panicking on multi-byte UTF-8 sequences.
+        let boundary = text.floor_char_boundary(max_chars);
+        let mut s = text[..boundary].to_string();
         s.push_str("\n... (truncated)");
         s
     }
