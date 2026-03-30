@@ -20,6 +20,7 @@
 //! mongosh mongodb://localhost:27017
 //! ```
 
+use indicatif::{ProgressBar, ProgressStyle};
 use std::sync::Arc;
 use tracing::Level;
 
@@ -279,15 +280,17 @@ async fn run_repl_loop(
             let database = shared_state.get_database();
 
             // ── Phase 1: Plan ───────────────────────────────────────
-            println!("🤖 Analyzing...");
+            let spinner = make_spinner("🤖 Analyzing...");
 
             let plan = match generator.plan(&description, &database).await {
                 Ok(p) => p,
                 Err(e) => {
+                    spinner.finish_and_clear();
                     eprintln!("❌ {}", e);
                     continue;
                 }
             };
+            spinner.finish_and_clear();
 
             let total = plan.steps.len();
             if total > 1 {
@@ -307,12 +310,17 @@ async fn run_repl_loop(
                 }
 
                 // 2b. Generate query for this step (with previous results)
+                let step_spinner = make_spinner("🤖 Generating query...");
                 let query = match generator
                     .generate_step(&plan, step, &previous_results, &database)
                     .await
                 {
-                    Ok(q) => q,
+                    Ok(q) => {
+                        step_spinner.finish_and_clear();
+                        q
+                    }
                     Err(e) => {
+                        step_spinner.finish_and_clear();
                         eprintln!("❌ {}", e);
                         break;
                     }
@@ -435,6 +443,24 @@ fn display_result(
         Ok(output) => println!("{}", output),
         Err(e) => eprintln!("Format error: {}", e),
     }
+}
+
+/// Create an animated spinner with the given message.
+///
+/// The spinner ticks automatically in a background thread via `indicatif`'s
+/// steady-tick feature and must be stopped by calling `finish_and_clear()`
+/// once the operation it represents has completed.
+fn make_spinner(msg: &str) -> ProgressBar {
+    let pb = ProgressBar::new_spinner();
+    pb.set_style(
+        ProgressStyle::default_spinner()
+            .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
+            .template("{spinner:.cyan} {msg}")
+            .unwrap(),
+    );
+    pb.set_message(msg.to_string());
+    pb.enable_steady_tick(std::time::Duration::from_millis(80));
+    pb
 }
 
 /// Initialize logging system based on verbosity level
