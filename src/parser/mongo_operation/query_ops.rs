@@ -72,16 +72,76 @@ impl QueryOpsParser {
         }))
     }
 
-    /// Parse findOne operation: db.collection.findOne(filter, projection)
+    /// Parse findOne operation: db.collection.findOne(filter, projectionOrOptions)
+    ///
+    /// The second argument can be either:
+    /// - A plain projection document: `{ field: 1, other: 0 }`
+    /// - An options object with keys like `sort`, `projection`, `skip`, `hint`, etc.
+    ///   e.g. `{ sort: { purchase_date: -1 }, projection: { name: 1 } }`
     pub fn parse_find_one(collection: &str, args: &[Expr]) -> Result<Command> {
         let filter = ArgParser::get_doc_arg(args, 0)?;
-        let projection = ArgParser::get_projection(args, 1)?;
+
+        // Determine if the second argument is an options object or a plain projection.
+        // We treat it as an options object when it contains any recognised option key.
+        const OPTION_KEYS: &[&str] = &[
+            "sort",
+            "projection",
+            "skip",
+            "limit",
+            "hint",
+            "collation",
+            "maxTimeMS",
+            "readConcern",
+            "batchSize",
+        ];
+
+        let (projection, sort, skip, hint, collation, max_time_ms) =
+            if let Some(Expr::Object(obj)) = args.get(1) {
+                let has_option_key = obj
+                    .properties
+                    .iter()
+                    .any(|p| OPTION_KEYS.contains(&p.key.as_string().as_str()));
+
+                if has_option_key {
+                    // Parse as a full options object
+                    use crate::parser::mongo_converter::ExpressionConverter;
+                    let doc = ExpressionConverter::object_to_bson(obj)?;
+
+                    let projection = doc.get_document("projection").ok().cloned();
+                    let sort = doc.get_document("sort").ok().cloned();
+                    let skip = doc
+                        .get_i64("skip")
+                        .ok()
+                        .map(|v| v as u64)
+                        .or_else(|| doc.get_i32("skip").ok().map(|v| v as u64));
+                    let hint = doc.get_document("hint").ok().cloned();
+                    let collation = doc.get_document("collation").ok().cloned();
+                    let max_time_ms = doc
+                        .get_i64("maxTimeMS")
+                        .ok()
+                        .map(|v| v as u64)
+                        .or_else(|| doc.get_i32("maxTimeMS").ok().map(|v| v as u64));
+
+                    (projection, sort, skip, hint, collation, max_time_ms)
+                } else {
+                    // Plain projection document
+                    let projection = ArgParser::get_projection(args, 1)?;
+                    (projection, None, None, None, None, None)
+                }
+            } else {
+                (None, None, None, None, None, None)
+            };
 
         Ok(Command::Query(QueryCommand::Find {
             collection: collection.to_string(),
             filter,
             options: FindOptions {
                 projection,
+                sort,
+                skip,
+                hint,
+                collation,
+                max_time_ms,
                 limit: Some(1),
                 ..Default::default()
             },
@@ -277,9 +337,10 @@ impl QueryOpsParser {
         }
 
         if args.len() > 1 {
-            return Err(ParseError::InvalidCommand(
-                format!("findAndModify() expects 1 argument, got {}", args.len()),
-            )
+            return Err(ParseError::InvalidCommand(format!(
+                "findAndModify() expects 1 argument, got {}",
+                args.len()
+            ))
             .into());
         }
 
@@ -296,9 +357,7 @@ impl QueryOpsParser {
         let sort = options_doc.get_document("sort").ok().cloned();
 
         // Extract remove flag (defaults to false)
-        let remove = options_doc
-            .get_bool("remove")
-            .unwrap_or(false);
+        let remove = options_doc.get_bool("remove").unwrap_or(false);
 
         // Extract update (optional, but required if remove is false)
         let update = options_doc.get_document("update").ok().cloned();
@@ -306,7 +365,8 @@ impl QueryOpsParser {
         // Must specify either remove or update
         if !remove && update.is_none() {
             return Err(ParseError::InvalidCommand(
-                "findAndModify() requires either 'remove: true' or an 'update' document".to_string(),
+                "findAndModify() requires either 'remove: true' or an 'update' document"
+                    .to_string(),
             )
             .into());
         }
@@ -319,31 +379,30 @@ impl QueryOpsParser {
         }
 
         // Extract new flag (defaults to false)
-        let new = options_doc
-            .get_bool("new")
-            .unwrap_or(false);
+        let new = options_doc.get_bool("new").unwrap_or(false);
 
         // Extract fields/projection (optional)
         let fields = options_doc.get_document("fields").ok().cloned();
 
         // Extract upsert (defaults to false)
-        let upsert = options_doc
-            .get_bool("upsert")
-            .unwrap_or(false);
+        let upsert = options_doc.get_bool("upsert").unwrap_or(false);
 
         // Extract arrayFilters (optional)
-        let array_filters = options_doc
-            .get_array("arrayFilters")
-            .ok()
-            .and_then(|arr| {
-                let docs: std::result::Result<Vec<Document>, ParseError> = arr
-                    .iter()
-                    .map(|v| v.as_document().ok_or_else(|| {
-                        ParseError::InvalidCommand("arrayFilters must be an array of documents".to_string())
-                    }).map(|d| d.clone()))
-                    .collect();
-                docs.ok()
-            });
+        let array_filters = options_doc.get_array("arrayFilters").ok().and_then(|arr| {
+            let docs: std::result::Result<Vec<Document>, ParseError> = arr
+                .iter()
+                .map(|v| {
+                    v.as_document()
+                        .ok_or_else(|| {
+                            ParseError::InvalidCommand(
+                                "arrayFilters must be an array of documents".to_string(),
+                            )
+                        })
+                        .map(|d| d.clone())
+                })
+                .collect();
+            docs.ok()
+        });
 
         // Extract maxTimeMS (optional)
         let max_time_ms = options_doc
@@ -375,6 +434,72 @@ impl QueryOpsParser {
 mod tests {
     use super::*;
     use crate::parser::mongo_operation::DbOperationParser;
+
+    #[test]
+    fn test_parse_find_one_with_sort_options() {
+        // Regression test: second arg containing `sort` key must be treated as options object,
+        // not a projection document.
+        let result = DbOperationParser::parse(
+            "db.subscription.findOne({}, { sort: { purchase_date: -1 } })",
+        );
+        assert!(result.is_ok(), "parse failed: {:?}", result.err());
+        if let Ok(Command::Query(QueryCommand::Find { options, .. })) = result {
+            assert!(
+                options.sort.is_some(),
+                "sort should be parsed from options object"
+            );
+            let sort_doc = options.sort.unwrap();
+            let purchase_date_val = sort_doc.get("purchase_date").unwrap();
+            let val = match purchase_date_val {
+                mongodb::bson::Bson::Int32(v) => *v as f64,
+                mongodb::bson::Bson::Int64(v) => *v as f64,
+                mongodb::bson::Bson::Double(v) => *v,
+                other => panic!("unexpected BSON type for purchase_date: {:?}", other),
+            };
+            assert_eq!(val, -1.0);
+            // projection should NOT be set to the raw `{ sort: ... }` doc
+            assert!(
+                options.projection.is_none(),
+                "projection should be None when second arg is an options object without 'projection' key"
+            );
+            assert_eq!(options.limit, Some(1));
+        } else {
+            panic!("Expected Find command");
+        }
+    }
+
+    #[test]
+    fn test_parse_find_one_with_sort_and_projection_options() {
+        let result = DbOperationParser::parse(
+            "db.subscription.findOne({}, { sort: { purchase_date: -1 }, projection: { name: 1 } })",
+        );
+        assert!(result.is_ok(), "parse failed: {:?}", result.err());
+        if let Ok(Command::Query(QueryCommand::Find { options, .. })) = result {
+            assert!(options.sort.is_some(), "sort should be parsed");
+            assert!(options.projection.is_some(), "projection should be parsed");
+        } else {
+            panic!("Expected Find command");
+        }
+    }
+
+    #[test]
+    fn test_parse_find_one_with_plain_projection() {
+        // When the second arg has no option keys it should still be treated as projection
+        let result = DbOperationParser::parse("db.users.findOne({ age: 25 }, { name: 1, _id: 0 })");
+        assert!(result.is_ok(), "parse failed: {:?}", result.err());
+        if let Ok(Command::Query(QueryCommand::Find { options, .. })) = result {
+            assert!(
+                options.projection.is_some(),
+                "plain projection should be set"
+            );
+            assert!(
+                options.sort.is_none(),
+                "sort should be None for plain projection"
+            );
+        } else {
+            panic!("Expected Find command");
+        }
+    }
 
     #[test]
     fn test_parse_find_empty() {
@@ -410,14 +535,15 @@ mod tests {
 
     #[test]
     fn test_parse_insert_many() {
-        let result = DbOperationParser::parse("db.users.insertMany([{ name: 'Bob' }, { name: 'Charlie' }])");
+        let result =
+            DbOperationParser::parse("db.users.insertMany([{ name: 'Bob' }, { name: 'Charlie' }])");
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_parse_update_one() {
         let result = DbOperationParser::parse(
-            "db.users.updateOne({ name: 'Alice' }, { $set: { age: 31 } })"
+            "db.users.updateOne({ name: 'Alice' }, { $set: { age: 31 } })",
         );
         assert!(result.is_ok());
         if let Ok(Command::Query(query)) = result {
@@ -433,7 +559,8 @@ mod tests {
 
     #[test]
     fn test_parse_aggregate() {
-        let result = DbOperationParser::parse("db.orders.aggregate([{ $match: { status: 'pending' } }])");
+        let result =
+            DbOperationParser::parse("db.orders.aggregate([{ $match: { status: 'pending' } }])");
         assert!(result.is_ok());
     }
 
@@ -466,9 +593,7 @@ mod tests {
 
     #[test]
     fn test_parse_distinct_with_filter() {
-        let result = DbOperationParser::parse(
-            "db.users.distinct('city', { age: { $gte: 18 } })"
-        );
+        let result = DbOperationParser::parse("db.users.distinct('city', { age: { $gte: 18 } })");
         assert!(result.is_ok());
         if let Ok(Command::Query(QueryCommand::Distinct { field, filter, .. })) = result {
             assert_eq!(field, "city");
@@ -479,7 +604,7 @@ mod tests {
     #[test]
     fn test_parse_replace_one() {
         let result = DbOperationParser::parse(
-            "db.users.replaceOne({ name: 'Alice' }, { name: 'Alice', age: 30 })"
+            "db.users.replaceOne({ name: 'Alice' }, { name: 'Alice', age: 30 })",
         );
         assert!(result.is_ok());
         if let Ok(Command::Query(query)) = result {
@@ -496,7 +621,7 @@ mod tests {
     #[test]
     fn test_parse_find_one_and_update() {
         let result = DbOperationParser::parse(
-            "db.users.findOneAndUpdate({ name: 'Alice' }, { $set: { age: 31 } })"
+            "db.users.findOneAndUpdate({ name: 'Alice' }, { $set: { age: 31 } })",
         );
         assert!(result.is_ok());
         if let Ok(Command::Query(query)) = result {
@@ -507,7 +632,7 @@ mod tests {
     #[test]
     fn test_parse_find_one_and_replace() {
         let result = DbOperationParser::parse(
-            "db.users.findOneAndReplace({ name: 'Alice' }, { name: 'Alice', age: 30 })"
+            "db.users.findOneAndReplace({ name: 'Alice' }, { name: 'Alice', age: 30 })",
         );
         assert!(result.is_ok());
         if let Ok(Command::Query(query)) = result {
@@ -518,7 +643,7 @@ mod tests {
     #[test]
     fn test_parse_find_and_modify_update() {
         let result = DbOperationParser::parse(
-            "db.users.findAndModify({ query: { name: 'Alice' }, update: { $set: { age: 31 } } })"
+            "db.users.findAndModify({ query: { name: 'Alice' }, update: { $set: { age: 31 } } })",
         );
         assert!(result.is_ok());
         if let Ok(Command::Query(query)) = result {
@@ -529,7 +654,7 @@ mod tests {
     #[test]
     fn test_parse_find_and_modify_remove() {
         let result = DbOperationParser::parse(
-            "db.users.findAndModify({ query: { name: 'Bob' }, remove: true })"
+            "db.users.findAndModify({ query: { name: 'Bob' }, remove: true })",
         );
         assert!(result.is_ok());
         if let Ok(Command::Query(QueryCommand::FindAndModify { remove, .. })) = result {
@@ -540,7 +665,7 @@ mod tests {
     #[test]
     fn test_parse_find_and_modify_with_options() {
         let result = DbOperationParser::parse(
-            "db.users.findAndModify({ query: { name: 'Alice' }, update: { $inc: { score: 1 } }, new: true, upsert: true })"
+            "db.users.findAndModify({ query: { name: 'Alice' }, update: { $inc: { score: 1 } }, new: true, upsert: true })",
         );
         assert!(result.is_ok());
         if let Ok(Command::Query(QueryCommand::FindAndModify { new, upsert, .. })) = result {
