@@ -23,6 +23,8 @@ use crate::repl::SharedState;
 #[derive(Clone)]
 pub struct MongoShellServer {
     context: ExecutionContext,
+    // Read by `#[tool_handler]`-generated dispatch; rustc can't see through the macro.
+    #[allow(dead_code)]
     tool_router: ToolRouter<MongoShellServer>,
     security: Arc<SecurityManager>,
 }

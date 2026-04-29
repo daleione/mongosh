@@ -36,7 +36,49 @@ impl MongoParser {
 
     /// Parse an expression
     fn parse_expression(&mut self) -> Result<Expr> {
-        self.parse_unary()
+        self.parse_additive()
+    }
+
+    /// Parse additive expression: a + b, a - b
+    fn parse_additive(&mut self) -> Result<Expr> {
+        let start = self.current_pos();
+        let mut left = self.parse_multiplicative()?;
+
+        loop {
+            let op = if self.match_token(&MongoTokenKind::Plus) {
+                BinaryOperator::Add
+            } else if self.match_token(&MongoTokenKind::Minus) {
+                BinaryOperator::Subtract
+            } else {
+                break;
+            };
+            let right = self.parse_multiplicative()?;
+            let end = self.previous_pos();
+            left = Expr::Binary(Box::new(BinaryExpr::new(op, left, right, start..end)));
+        }
+
+        Ok(left)
+    }
+
+    /// Parse multiplicative expression: a * b, a % b
+    fn parse_multiplicative(&mut self) -> Result<Expr> {
+        let start = self.current_pos();
+        let mut left = self.parse_unary()?;
+
+        loop {
+            let op = if self.match_token(&MongoTokenKind::Star) {
+                BinaryOperator::Multiply
+            } else if self.match_token(&MongoTokenKind::Percent) {
+                BinaryOperator::Modulo
+            } else {
+                break;
+            };
+            let right = self.parse_unary()?;
+            let end = self.previous_pos();
+            left = Expr::Binary(Box::new(BinaryExpr::new(op, left, right, start..end)));
+        }
+
+        Ok(left)
     }
 
     /// Parse unary expression: -x, +x, !x

@@ -34,6 +34,8 @@ pub enum Expr {
     New(Box<NewExpr>),
     /// Unary expression: -x, +x, !x
     Unary(Box<UnaryExpr>),
+    /// Binary expression: a + b, a * b, ...
+    Binary(Box<BinaryExpr>),
     /// Regular expression literal: /pattern/flags
     Regex(String, String),
 }
@@ -186,6 +188,39 @@ pub enum UnaryOperator {
     Plus,
     /// Logical NOT: !x
     Not,
+}
+
+/// Binary expression: a + b, a * b, ...
+#[derive(Debug, Clone, PartialEq)]
+pub struct BinaryExpr {
+    pub operator: BinaryOperator,
+    pub left: Box<Expr>,
+    pub right: Box<Expr>,
+    pub span: Span,
+}
+
+impl BinaryExpr {
+    pub fn new(operator: BinaryOperator, left: Expr, right: Expr, span: Span) -> Self {
+        Self {
+            operator,
+            left: Box::new(left),
+            right: Box::new(right),
+            span,
+        }
+    }
+}
+
+/// Binary arithmetic operators
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BinaryOperator {
+    /// Addition: a + b
+    Add,
+    /// Subtraction: a - b
+    Subtract,
+    /// Multiplication: a * b
+    Multiply,
+    /// Modulo: a % b
+    Modulo,
 }
 
 #[cfg(test)]

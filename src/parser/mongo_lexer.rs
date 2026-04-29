@@ -43,6 +43,10 @@ pub enum MongoTokenKind {
     Minus,
     /// Plus (unary or binary)
     Plus,
+    /// Star (multiplication)
+    Star,
+    /// Percent (modulo)
+    Percent,
     /// Exclamation (logical NOT)
     Bang,
     /// String literal
@@ -163,6 +167,14 @@ impl MongoLexer {
             '+' => {
                 self.advance();
                 MongoToken::new(MongoTokenKind::Plus, start..self.pos)
+            }
+            '*' => {
+                self.advance();
+                MongoToken::new(MongoTokenKind::Star, start..self.pos)
+            }
+            '%' => {
+                self.advance();
+                MongoToken::new(MongoTokenKind::Percent, start..self.pos)
             }
             '!' => {
                 self.advance();

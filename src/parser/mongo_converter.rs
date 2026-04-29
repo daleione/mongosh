@@ -27,13 +27,7 @@ impl ExpressionConverter {
             Expr::String(s) => Ok(Bson::String(s.clone())),
 
             // Number literal: 42, 3.14
-            Expr::Number(n) => {
-                if n.fract() == 0.0 && *n >= i64::MIN as f64 && *n <= i64::MAX as f64 {
-                    Ok(Bson::Int64(*n as i64))
-                } else {
-                    Ok(Bson::Double(*n))
-                }
-            }
+            Expr::Number(n) => Ok(Self::number_to_bson(*n)),
 
             // Boolean literal: true, false
             Expr::Boolean(b) => Ok(Bson::Boolean(*b)),
@@ -46,6 +40,8 @@ impl ExpressionConverter {
 
             // Unary expression: -5, !true
             Expr::Unary(unary) => Self::unary_to_bson(unary),
+
+            Expr::Binary(_) => Ok(Self::number_to_bson(Self::expr_to_number(expr)?)),
 
             // New expression: new Date(), new ObjectId()
             Expr::New(new_expr) => Self::new_expression_to_bson(new_expr),
@@ -111,15 +107,8 @@ impl ExpressionConverter {
     fn unary_to_bson(unary: &UnaryExpr) -> Result<Bson> {
         match unary.operator {
             UnaryOperator::Minus => {
-                // Handle -number
                 if let Expr::Number(n) = unary.argument.as_ref() {
-                    let value = -n;
-                    if value.fract() == 0.0 && value >= i64::MIN as f64 && value <= i64::MAX as f64
-                    {
-                        Ok(Bson::Int64(value as i64))
-                    } else {
-                        Ok(Bson::Double(value))
-                    }
+                    Ok(Self::number_to_bson(-n))
                 } else {
                     Err(ParseError::InvalidQuery(
                         "Unary negation only supported for numeric literals".to_string(),
@@ -128,13 +117,8 @@ impl ExpressionConverter {
                 }
             }
             UnaryOperator::Plus => {
-                // Handle +number
                 if let Expr::Number(n) = unary.argument.as_ref() {
-                    if n.fract() == 0.0 && *n >= i64::MIN as f64 && *n <= i64::MAX as f64 {
-                        Ok(Bson::Int64(*n as i64))
-                    } else {
-                        Ok(Bson::Double(*n))
-                    }
+                    Ok(Self::number_to_bson(*n))
                 } else {
                     Err(ParseError::InvalidQuery(
                         "Unary plus only supported for numeric literals".to_string(),
@@ -154,6 +138,70 @@ impl ExpressionConverter {
                 }
             }
         }
+    }
+
+    /// Recursively evaluate an expression as an f64 numeric value.
+    /// Supports number literals, unary +/-, binary arithmetic, and `Date.now()`.
+    fn expr_to_number(expr: &Expr) -> Result<f64> {
+        match expr {
+            Expr::Number(n) => Ok(*n),
+            Expr::Unary(u) => match u.operator {
+                UnaryOperator::Minus => Ok(-Self::expr_to_number(&u.argument)?),
+                UnaryOperator::Plus => Self::expr_to_number(&u.argument),
+                UnaryOperator::Not => Err(ParseError::InvalidQuery(
+                    "Logical NOT not allowed in arithmetic expression".to_string(),
+                )
+                .into()),
+            },
+            Expr::Binary(b) => {
+                let l = Self::expr_to_number(&b.left)?;
+                let r = Self::expr_to_number(&b.right)?;
+                Ok(match b.operator {
+                    BinaryOperator::Add => l + r,
+                    BinaryOperator::Subtract => l - r,
+                    BinaryOperator::Multiply => l * r,
+                    BinaryOperator::Modulo => l % r,
+                })
+            }
+            Expr::Call(call) => {
+                if Self::is_date_now(call) {
+                    Ok(mongodb::bson::DateTime::now().timestamp_millis() as f64)
+                } else {
+                    Err(ParseError::InvalidQuery(
+                        "Only numeric expressions and Date.now() are allowed in arithmetic"
+                            .to_string(),
+                    )
+                    .into())
+                }
+            }
+            _ => Err(ParseError::InvalidQuery(
+                "Arithmetic operands must be numeric literals".to_string(),
+            )
+            .into()),
+        }
+    }
+
+    /// Wrap an f64 as the most appropriate BSON numeric type.
+    fn number_to_bson(value: f64) -> Bson {
+        if value.fract() == 0.0 && value >= i64::MIN as f64 && value <= i64::MAX as f64 {
+            Bson::Int64(value as i64)
+        } else {
+            Bson::Double(value)
+        }
+    }
+
+    /// Detect `Date.now()` member call.
+    fn is_date_now(call: &CallExpr) -> bool {
+        if !call.arguments.is_empty() {
+            return false;
+        }
+        if let Expr::Member(member) = call.callee.as_ref()
+            && let (Expr::Ident(obj), MemberProperty::Ident(prop)) =
+                (member.object.as_ref(), &member.property)
+        {
+            return obj == "Date" && prop == "now";
+        }
+        false
     }
 
     /// Convert new expression: new Date(), new ObjectId()
@@ -198,6 +246,10 @@ impl ExpressionConverter {
 
     /// Convert call expression: ObjectId("..."), ISODate("...")
     fn call_expression_to_bson(call: &CallExpr) -> Result<Bson> {
+        if Self::is_date_now(call) {
+            return Ok(Bson::Int64(mongodb::bson::DateTime::now().timestamp_millis()));
+        }
+
         // Get function name
         let fn_name = if let Expr::Ident(name) = call.callee.as_ref() {
             name.as_str()
@@ -255,23 +307,14 @@ impl ExpressionConverter {
 
     /// Parse Date argument
     fn parse_date_argument(expr: &Expr) -> Result<Bson> {
-        match expr {
-            Expr::String(s) => {
-                // Parse ISO date string
-                let datetime = mongodb::bson::DateTime::parse_rfc3339_str(s)
-                    .map_err(|e| ParseError::InvalidQuery(format!("Invalid date string: {}", e)))?;
-                Ok(Bson::DateTime(datetime))
-            }
-            Expr::Number(n) => {
-                // Timestamp in milliseconds
-                let millis = *n as i64;
-                Ok(Bson::DateTime(mongodb::bson::DateTime::from_millis(millis)))
-            }
-            _ => Err(ParseError::InvalidQuery(
-                "Date argument must be string or number".to_string(),
-            )
-            .into()),
+        if let Expr::String(s) = expr {
+            let datetime = mongodb::bson::DateTime::parse_rfc3339_str(s)
+                .map_err(|e| ParseError::InvalidQuery(format!("Invalid date string: {}", e)))?;
+            return Ok(Bson::DateTime(datetime));
         }
+        // Numeric expression — evaluate to milliseconds since epoch.
+        let millis = Self::expr_to_number(expr)? as i64;
+        Ok(Bson::DateTime(mongodb::bson::DateTime::from_millis(millis)))
     }
 
     /// Parse ObjectId argument
@@ -503,6 +546,54 @@ mod tests {
             assert_eq!(re.options, "i");
         } else {
             panic!("Expected RegularExpression");
+        }
+    }
+
+    #[test]
+    fn test_arithmetic_addition() {
+        let bson = parse_and_convert("1 + 2");
+        assert_eq!(bson.as_i64().unwrap(), 3);
+    }
+
+    #[test]
+    fn test_arithmetic_precedence() {
+        let bson = parse_and_convert("2 + 3 * 4");
+        assert_eq!(bson.as_i64().unwrap(), 14);
+    }
+
+    #[test]
+    fn test_arithmetic_chained_multiplication() {
+        let bson = parse_and_convert("2 * 24 * 60 * 60 * 1000");
+        assert_eq!(bson.as_i64().unwrap(), 172_800_000);
+    }
+
+    #[test]
+    fn test_date_now_call() {
+        let bson = parse_and_convert("Date.now()");
+        let v = bson.as_i64().unwrap();
+        assert!(v > 0);
+    }
+
+    #[test]
+    fn test_new_date_with_arithmetic() {
+        // Regression: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000)
+        let bson = parse_and_convert("new Date(Date.now() + 2 * 24 * 60 * 60 * 1000)");
+        assert!(matches!(bson, Bson::DateTime(_)));
+    }
+
+    #[test]
+    fn test_filter_with_date_arithmetic() {
+        // Regression: full user query
+        let bson = parse_and_convert(
+            "{ status: 1, expires_date: { $lt: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000), $gte: new Date() } }",
+        );
+        if let Bson::Document(doc) = bson {
+            assert_eq!(doc.get_i64("status").unwrap(), 1);
+            let inner = doc.get_document("expires_date").unwrap();
+            assert!(matches!(inner.get("$lt").unwrap(), Bson::DateTime(_)));
+            assert!(matches!(inner.get("$gte").unwrap(), Bson::DateTime(_)));
+        } else {
+            panic!("Expected document");
         }
     }
 
