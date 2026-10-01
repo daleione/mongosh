@@ -7,6 +7,165 @@
 
 use std::ops::Range;
 
+/// Field path representation supporting nested fields and array access
+#[derive(Debug, Clone, PartialEq)]
+pub enum FieldPath {
+    /// Simple field: `name`
+    Simple(String),
+
+    /// Nested field: `address.city`
+    Nested { base: Box<FieldPath>, field: String },
+
+    /// Array index access: `tags[0]` or `tags[-1]`
+    ArrayIndex {
+        base: Box<FieldPath>,
+        index: ArrayIndex,
+    },
+
+    /// Array slice: `tags[0:5]` or `tags[:10:2]`
+    ArraySlice {
+        base: Box<FieldPath>,
+        slice: ArraySlice,
+    },
+}
+
+impl FieldPath {
+    /// Create a simple field path
+    pub fn simple(name: String) -> Self {
+        FieldPath::Simple(name)
+    }
+
+    /// Create a nested field path
+    pub fn nested(base: FieldPath, field: String) -> Self {
+        FieldPath::Nested {
+            base: Box::new(base),
+            field,
+        }
+    }
+
+    /// Create an array index path
+    pub fn index(base: FieldPath, index: ArrayIndex) -> Self {
+        FieldPath::ArrayIndex {
+            base: Box::new(base),
+            index,
+        }
+    }
+
+    /// Create an array slice path
+    pub fn slice(base: FieldPath, slice: ArraySlice) -> Self {
+        FieldPath::ArraySlice {
+            base: Box::new(base),
+            slice,
+        }
+    }
+
+    /// Convert to MongoDB dot notation path (for simple cases)
+    pub fn to_mongodb_path(&self) -> Option<String> {
+        match self {
+            FieldPath::Simple(name) => Some(name.clone()),
+            FieldPath::Nested { base, field } => {
+                base.to_mongodb_path().map(|b| format!("{}.{}", b, field))
+            }
+            // Array access requires aggregation pipeline
+            FieldPath::ArrayIndex { .. } | FieldPath::ArraySlice { .. } => None,
+        }
+    }
+
+    /// Check if this path requires aggregation pipeline
+    pub fn requires_aggregation(&self) -> bool {
+        match self {
+            FieldPath::Simple(_) => false,
+            FieldPath::Nested { base, .. } => base.requires_aggregation(),
+            FieldPath::ArrayIndex { .. } | FieldPath::ArraySlice { .. } => true,
+        }
+    }
+
+    /// Get the base field name (for simple optimization)
+    pub fn base_field(&self) -> String {
+        match self {
+            FieldPath::Simple(name) => name.clone(),
+            FieldPath::Nested { base, .. }
+            | FieldPath::ArrayIndex { base, .. }
+            | FieldPath::ArraySlice { base, .. } => base.base_field(),
+        }
+    }
+}
+
+/// Array index (positive or negative)
+#[derive(Debug, Clone, PartialEq)]
+pub enum ArrayIndex {
+    /// Positive index: `arr[0]`, `arr[5]`
+    Positive(i64),
+
+    /// Negative index: `arr[-1]`, `arr[-2]`
+    Negative(i64),
+}
+
+impl ArrayIndex {
+    /// Create a positive index
+    pub fn positive(index: i64) -> Self {
+        ArrayIndex::Positive(index)
+    }
+
+    /// Create a negative index
+    pub fn negative(index: i64) -> Self {
+        ArrayIndex::Negative(index.abs())
+    }
+
+    /// Resolve to MongoDB array index
+    pub fn resolve(&self, array_len: Option<usize>) -> Option<usize> {
+        match (self, array_len) {
+            (ArrayIndex::Positive(idx), _) if *idx >= 0 => Some(*idx as usize),
+            (ArrayIndex::Negative(idx), Some(len)) if *idx <= len as i64 => {
+                Some(len - (*idx as usize))
+            }
+            _ => None,
+        }
+    }
+}
+
+/// Array slice specification
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArraySlice {
+    /// Start index (inclusive, optional)
+    pub start: Option<SliceIndex>,
+
+    /// End index (exclusive, optional)
+    pub end: Option<SliceIndex>,
+
+    /// Step size (default 1)
+    pub step: Option<i64>,
+}
+
+impl ArraySlice {
+    /// Create a new slice
+    pub fn new(start: Option<SliceIndex>, end: Option<SliceIndex>, step: Option<i64>) -> Self {
+        Self { start, end, step }
+    }
+
+    /// Create a full slice `[:]`
+    pub fn full() -> Self {
+        Self::new(None, None, None)
+    }
+
+    /// Create a slice to end `[:n]`
+    pub fn to(end: SliceIndex) -> Self {
+        Self::new(None, Some(end), None)
+    }
+
+    /// Create a slice from start `[n:]`
+    pub fn from(start: SliceIndex) -> Self {
+        Self::new(Some(start), None, None)
+    }
+}
+
+/// Slice index (can be positive or negative)
+#[derive(Debug, Clone, PartialEq)]
+pub enum SliceIndex {
+    Positive(i64),
+    Negative(i64),
+}
+
 /// SQL parsing context - tracks where we are in the parse tree
 #[derive(Debug, Clone, PartialEq)]
 pub struct SqlContext {
@@ -261,12 +420,15 @@ pub enum SqlColumn {
     Star,
 
     /// SELECT column_name [AS alias]
-    Field { name: String, alias: Option<String> },
+    Field {
+        path: FieldPath,
+        alias: Option<String>,
+    },
 
     /// SELECT COUNT(*), SUM(col), COUNT(DISTINCT col), etc.
     Aggregate {
         func: String,
-        field: Option<String>,
+        field: Option<FieldPath>,
         alias: Option<String>,
         distinct: bool,
     },
@@ -274,12 +436,12 @@ pub enum SqlColumn {
 
 impl SqlColumn {
     /// Create a simple field column
-    pub fn field(name: String) -> Self {
-        SqlColumn::Field { name, alias: None }
+    pub fn field(path: FieldPath) -> Self {
+        SqlColumn::Field { path, alias: None }
     }
 
     /// Create an aggregate column
-    pub fn aggregate(func: String, field: Option<String>) -> Self {
+    pub fn aggregate(func: String, field: Option<FieldPath>) -> Self {
         SqlColumn::Aggregate {
             func,
             field,
@@ -295,8 +457,8 @@ pub enum SqlExpr {
     /// Literal value
     Literal(SqlLiteral),
 
-    /// Column reference
-    Column(String),
+    /// Field path reference (supports nested fields and array access)
+    FieldPath(FieldPath),
 
     /// Binary operation (comparison)
     BinaryOp {
@@ -403,8 +565,8 @@ impl SqlLogicalOperator {
 /// ORDER BY clause
 #[derive(Debug, Clone, PartialEq)]
 pub struct SqlOrderBy {
-    /// Column name
-    pub column: String,
+    /// Field path
+    pub path: FieldPath,
 
     /// Ascending (true) or descending (false)
     pub asc: bool,
@@ -412,8 +574,55 @@ pub struct SqlOrderBy {
 
 impl SqlOrderBy {
     /// Create a new ORDER BY clause
-    pub fn new(column: String, asc: bool) -> Self {
-        Self { column, asc }
+    pub fn new(path: FieldPath, asc: bool) -> Self {
+        Self { path, asc }
+    }
+}
+
+/// Array access error types
+#[derive(Debug, Clone, PartialEq)]
+pub enum ArrayAccessError {
+    /// Empty index brackets
+    EmptyIndex,
+
+    /// Invalid index type (not a number)
+    InvalidIndexType(String),
+
+    /// Missing closing bracket
+    MissingCloseBracket,
+
+    /// Invalid slice syntax
+    InvalidSliceSyntax(String),
+
+    /// Zero step size in slice
+    ZeroStepSize,
+
+    /// Unsupported feature
+    UnsupportedFeature(String),
+}
+
+impl ArrayAccessError {
+    /// Convert to user-friendly error message
+    pub fn to_user_message(&self) -> String {
+        match self {
+            ArrayAccessError::EmptyIndex => {
+                "Empty array index. Use arr[0] for first element or arr[-1] for last element."
+                    .to_string()
+            }
+            ArrayAccessError::InvalidIndexType(val) => {
+                format!("Invalid array index '{}'. Index must be a number.", val)
+            }
+            ArrayAccessError::MissingCloseBracket => {
+                "Missing closing bracket ']' for array access.".to_string()
+            }
+            ArrayAccessError::InvalidSliceSyntax(msg) => {
+                format!("Invalid array slice syntax: {}", msg)
+            }
+            ArrayAccessError::ZeroStepSize => "Array slice step cannot be zero.".to_string(),
+            ArrayAccessError::UnsupportedFeature(feature) => {
+                format!("Unsupported feature: {}", feature)
+            }
+        }
     }
 }
 

@@ -16,8 +16,9 @@ use mongodb::bson::{Document, doc};
 
 use super::command::{AggregateOptions, Command, FindOptions, QueryCommand};
 use super::sql_context::{
-    Expected, ParseError, ParseResult, SqlClause, SqlColumn, SqlContext, SqlExpr, SqlLiteral,
-    SqlLogicalOperator, SqlOperator, SqlOrderBy, SqlSelect,
+    ArrayAccessError, ArrayIndex, ArraySlice, Expected, FieldPath, ParseError, ParseResult,
+    SliceIndex, SqlClause, SqlColumn, SqlContext, SqlExpr, SqlLiteral, SqlLogicalOperator,
+    SqlOperator, SqlOrderBy, SqlSelect,
 };
 use super::sql_expr::SqlExprConverter;
 use super::sql_lexer::{SqlLexer, Token, TokenKind};
@@ -343,8 +344,16 @@ impl SqlParser {
                     let name = name.clone();
                     self.advance();
 
-                    // Parse nested field path
-                    let name = self.parse_nested_field_name(name);
+                    // Parse field path (supports nested fields and array access)
+                    let path = match self.parse_field_path_continuation(FieldPath::simple(name)) {
+                        Ok(p) => p,
+                        Err(err) => {
+                            return ParseResult::Error(ParseError::new(
+                                err.to_user_message(),
+                                self.current_position()..self.current_position(),
+                            ));
+                        }
+                    };
 
                     // Check for AS alias
                     let alias = if self.match_keyword(&TokenKind::As) {
@@ -362,7 +371,7 @@ impl SqlParser {
                             _ if self.is_at_eof() => {
                                 self.expected = vec![Expected::ColumnName];
                                 return ParseResult::Partial(
-                                    SqlColumn::Field { name, alias: None },
+                                    SqlColumn::Field { path, alias: None },
                                     self.expected.clone(),
                                 );
                             }
@@ -372,7 +381,7 @@ impl SqlParser {
                         None
                     };
 
-                    return ParseResult::Ok(SqlColumn::Field { name, alias });
+                    return ParseResult::Ok(SqlColumn::Field { path, alias });
                 }
                 _ => {}
             }
@@ -382,7 +391,7 @@ impl SqlParser {
             self.expected = vec![Expected::ColumnName, Expected::AggregateFunction];
             return ParseResult::Partial(
                 SqlColumn::Field {
-                    name: String::new(),
+                    path: FieldPath::simple(String::new()),
                     alias: None,
                 },
                 self.expected.clone(),
@@ -448,7 +457,19 @@ impl SqlParser {
         } else if let Some(TokenKind::Ident(name)) = self.peek_kind() {
             let name = name.clone();
             self.advance();
-            Some(name)
+
+            // Parse field path (supports nested fields and array access)
+            let path = match self.parse_field_path_continuation(FieldPath::simple(name)) {
+                Ok(p) => p,
+                Err(err) => {
+                    return ParseResult::Error(ParseError::new(
+                        err.to_user_message(),
+                        self.current_position()..self.current_position(),
+                    ));
+                }
+            };
+
+            Some(path)
         } else if self.is_at_eof() {
             self.expected = vec![Expected::Star, Expected::ColumnName];
             return ParseResult::Partial(
@@ -524,6 +545,205 @@ impl SqlParser {
             alias,
             distinct,
         })
+    }
+
+    /// Parse field path continuation (dots, brackets)
+    fn parse_field_path_continuation(
+        &mut self,
+        mut path: FieldPath,
+    ) -> std::result::Result<FieldPath, ArrayAccessError> {
+        loop {
+            match self.peek_kind() {
+                Some(TokenKind::Dot) => {
+                    self.advance();
+                    // Parse nested field
+                    if let Some(TokenKind::Ident(field_name)) = self.peek_kind() {
+                        let field_name = field_name.clone();
+                        self.advance();
+                        path = FieldPath::nested(path, field_name);
+                    } else {
+                        // Incomplete nested field, return what we have
+                        break;
+                    }
+                }
+                Some(TokenKind::LBracket) => {
+                    self.advance();
+                    path = self.parse_array_access(path)?;
+                }
+                _ => break,
+            }
+        }
+        Ok(path)
+    }
+
+    /// Parse array access (index or slice)
+    fn parse_array_access(
+        &mut self,
+        base: FieldPath,
+    ) -> std::result::Result<FieldPath, ArrayAccessError> {
+        // Check for empty brackets
+        if self.match_token(&TokenKind::RBracket) {
+            return Err(ArrayAccessError::EmptyIndex);
+        }
+
+        // Parse first number (could be index or slice start)
+        let first_value = self.parse_array_index_or_start()?;
+
+        // Check what comes next
+        match self.peek_kind() {
+            Some(TokenKind::RBracket) => {
+                // Simple index: arr[5]
+                self.advance();
+                Ok(FieldPath::index(base, first_value))
+            }
+            Some(TokenKind::Colon) => {
+                // Slice: arr[start:end] or arr[start:end:step]
+                self.advance();
+                let slice = self.parse_array_slice(Some(first_value))?;
+                Ok(FieldPath::slice(base, slice))
+            }
+            _ => {
+                if !self.match_token(&TokenKind::RBracket) {
+                    Err(ArrayAccessError::MissingCloseBracket)
+                } else {
+                    Ok(FieldPath::index(base, first_value))
+                }
+            }
+        }
+    }
+
+    /// Parse array index or slice start
+    fn parse_array_index_or_start(&mut self) -> std::result::Result<ArrayIndex, ArrayAccessError> {
+        match self.peek_kind() {
+            Some(TokenKind::Number(num_str)) => {
+                let num_str = num_str.clone();
+                self.advance();
+
+                if let Ok(idx) = num_str.parse::<i64>() {
+                    if idx >= 0 {
+                        Ok(ArrayIndex::positive(idx))
+                    } else {
+                        Ok(ArrayIndex::negative(idx))
+                    }
+                } else {
+                    Err(ArrayAccessError::InvalidIndexType(num_str))
+                }
+            }
+            Some(TokenKind::Minus) => {
+                // Handle negative index with explicit minus sign
+                self.advance();
+                if let Some(TokenKind::Number(num_str)) = self.peek_kind() {
+                    let num_str = num_str.clone();
+                    self.advance();
+                    if let Ok(idx) = num_str.parse::<i64>() {
+                        Ok(ArrayIndex::negative(idx))
+                    } else {
+                        Err(ArrayAccessError::InvalidIndexType(format!("-{}", num_str)))
+                    }
+                } else {
+                    Err(ArrayAccessError::InvalidIndexType("-".to_string()))
+                }
+            }
+            _ => Err(ArrayAccessError::InvalidIndexType("".to_string())),
+        }
+    }
+
+    /// Parse array slice after initial colon
+    fn parse_array_slice(
+        &mut self,
+        start: Option<ArrayIndex>,
+    ) -> std::result::Result<ArraySlice, ArrayAccessError> {
+        let start_idx = start.map(|idx| match idx {
+            ArrayIndex::Positive(n) => SliceIndex::Positive(n),
+            ArrayIndex::Negative(n) => SliceIndex::Negative(n),
+        });
+
+        // Check for immediate closing bracket (start:)
+        if self.match_token(&TokenKind::RBracket) {
+            return Ok(ArraySlice::new(start_idx, None, None));
+        }
+
+        // Parse end index if present
+        let end_idx = if matches!(self.peek_kind(), Some(TokenKind::Colon)) {
+            // Another colon means no end specified (:end:step or ::step)
+            None
+        } else {
+            // Parse end index
+            self.parse_slice_index().ok()
+        };
+
+        // Check for step
+        let step = if self.match_token(&TokenKind::Colon) {
+            // Parse step
+            if self.match_token(&TokenKind::RBracket) {
+                // No step specified, use default
+                None
+            } else {
+                match self.peek_kind() {
+                    Some(TokenKind::Number(num_str)) => {
+                        let num_str = num_str.clone();
+                        self.advance();
+                        if let Ok(step_val) = num_str.parse::<i64>() {
+                            if step_val == 0 {
+                                return Err(ArrayAccessError::ZeroStepSize);
+                            }
+                            Some(step_val)
+                        } else {
+                            return Err(ArrayAccessError::InvalidSliceSyntax(format!(
+                                "Invalid step value: {}",
+                                num_str
+                            )));
+                        }
+                    }
+                    _ => None,
+                }
+            }
+        } else {
+            None
+        };
+
+        // Expect closing bracket
+        if !self.match_token(&TokenKind::RBracket) {
+            return Err(ArrayAccessError::MissingCloseBracket);
+        }
+
+        Ok(ArraySlice::new(start_idx, end_idx, step))
+    }
+
+    /// Parse a slice index (positive or negative)
+    fn parse_slice_index(&mut self) -> std::result::Result<SliceIndex, ArrayAccessError> {
+        match self.peek_kind() {
+            Some(TokenKind::Number(num_str)) => {
+                let num_str = num_str.clone();
+                self.advance();
+
+                if let Ok(idx) = num_str.parse::<i64>() {
+                    if idx >= 0 {
+                        Ok(SliceIndex::Positive(idx))
+                    } else {
+                        Ok(SliceIndex::Negative(idx.abs()))
+                    }
+                } else {
+                    Err(ArrayAccessError::InvalidIndexType(num_str))
+                }
+            }
+            Some(TokenKind::Minus) => {
+                // Handle negative slice index
+                self.advance();
+                if let Some(TokenKind::Number(num_str)) = self.peek_kind() {
+                    let num_str = num_str.clone();
+                    self.advance();
+                    if let Ok(idx) = num_str.parse::<i64>() {
+                        Ok(SliceIndex::Negative(idx))
+                    } else {
+                        Err(ArrayAccessError::InvalidIndexType(format!("-{}", num_str)))
+                    }
+                } else {
+                    Err(ArrayAccessError::InvalidIndexType("-".to_string()))
+                }
+            }
+            _ => Err(ArrayAccessError::InvalidIndexType("".to_string())),
+        }
     }
 
     /// Parse FROM clause
@@ -618,10 +838,18 @@ impl SqlParser {
             let name = name.clone();
             self.advance();
 
-            // Parse nested field path
-            let name = self.parse_nested_field_name(name);
+            // Parse field path (supports nested fields and array access)
+            let path = match self.parse_field_path_continuation(FieldPath::simple(name)) {
+                Ok(p) => p,
+                Err(err) => {
+                    return ParseResult::Error(ParseError::new(
+                        err.to_user_message(),
+                        self.current_position()..self.current_position(),
+                    ));
+                }
+            };
 
-            SqlExpr::Column(name)
+            SqlExpr::FieldPath(path)
         } else if self.is_at_eof() {
             self.expected = vec![Expected::ColumnName];
             return ParseResult::Partial(
@@ -799,7 +1027,28 @@ impl SqlParser {
             if let Some(TokenKind::Ident(name)) = self.peek_kind() {
                 let name = name.clone();
                 self.advance();
-                columns.push(name);
+
+                // Parse field path (supports nested fields and array access)
+                let path = match self.parse_field_path_continuation(FieldPath::simple(name)) {
+                    Ok(p) => p,
+                    Err(err) => {
+                        return ParseResult::Error(ParseError::new(
+                            err.to_user_message(),
+                            self.current_position()..self.current_position(),
+                        ));
+                    }
+                };
+
+                // For GROUP BY, we need to convert path to string for now
+                // TODO: Update GROUP BY to use FieldPath directly
+                if let Some(path_str) = path.to_mongodb_path() {
+                    columns.push(path_str);
+                } else {
+                    return ParseResult::Error(ParseError::new(
+                        "Array access in GROUP BY requires aggregation pipeline".to_string(),
+                        self.current_position()..self.current_position(),
+                    ));
+                }
             } else if self.is_at_eof() {
                 self.expected = vec![Expected::ColumnName];
                 return ParseResult::Partial(columns, self.expected.clone());
@@ -838,8 +1087,19 @@ impl SqlParser {
 
         loop {
             if let Some(TokenKind::Ident(name)) = self.peek_kind() {
-                let column = name.clone();
+                let name = name.clone();
                 self.advance();
+
+                // Parse field path (supports nested fields and array access)
+                let path = match self.parse_field_path_continuation(FieldPath::simple(name)) {
+                    Ok(p) => p,
+                    Err(err) => {
+                        return ParseResult::Error(ParseError::new(
+                            err.to_user_message(),
+                            self.current_position()..self.current_position(),
+                        ));
+                    }
+                };
 
                 // Check for ASC/DESC
                 let asc = if self.match_keyword(&TokenKind::Desc) {
@@ -849,7 +1109,7 @@ impl SqlParser {
                     true
                 };
 
-                orders.push(SqlOrderBy::new(column, asc));
+                orders.push(SqlOrderBy::new(path, asc));
             } else if self.is_at_eof() {
                 self.expected = vec![Expected::ColumnName];
                 return ParseResult::Partial(orders, self.expected.clone());
@@ -923,10 +1183,74 @@ impl SqlParser {
             crate::error::ParseError::InvalidCommand("Missing table name".to_string())
         })?;
 
-        if ast.needs_aggregate() {
+        // Check if we need aggregation pipeline
+        let needs_agg = ast.needs_aggregate() || self.has_complex_field_paths(&ast);
+
+        if needs_agg {
             self.to_aggregate(ast, collection)
         } else {
             self.to_find(ast, collection)
+        }
+    }
+
+    /// Check if SELECT has complex field paths requiring aggregation
+    fn has_complex_field_paths(&self, ast: &SqlSelect) -> bool {
+        // Check columns
+        for col in &ast.columns {
+            match col {
+                SqlColumn::Field { path, .. } => {
+                    if path.requires_aggregation() {
+                        return true;
+                    }
+                }
+                SqlColumn::Aggregate { field, .. } => {
+                    if let Some(path) = field {
+                        if path.requires_aggregation() {
+                            return true;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Check WHERE clause
+        if let Some(ref expr) = ast.where_clause {
+            if self.expr_has_complex_paths(expr) {
+                return true;
+            }
+        }
+
+        // Check ORDER BY
+        if let Some(ref order_by) = ast.order_by {
+            for order in order_by {
+                if order.path.requires_aggregation() {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Check if expression contains complex field paths
+    fn expr_has_complex_paths(&self, expr: &SqlExpr) -> bool {
+        match expr {
+            SqlExpr::FieldPath(path) => path.requires_aggregation(),
+            SqlExpr::BinaryOp { left, right, .. } => {
+                self.expr_has_complex_paths(left) || self.expr_has_complex_paths(right)
+            }
+            SqlExpr::LogicalOp { left, right, .. } => {
+                self.expr_has_complex_paths(left) || self.expr_has_complex_paths(right)
+            }
+            SqlExpr::In { expr, values } => {
+                self.expr_has_complex_paths(expr)
+                    || values.iter().any(|v| self.expr_has_complex_paths(v))
+            }
+            SqlExpr::Like { expr, .. } | SqlExpr::IsNull { expr, .. } => {
+                self.expr_has_complex_paths(expr)
+            }
+            _ => false,
         }
     }
 
@@ -946,7 +1270,12 @@ impl SqlParser {
         let sort = if let Some(order_by) = ast.order_by {
             let mut sort_doc = Document::new();
             for order in order_by {
-                sort_doc.insert(order.column, if order.asc { 1 } else { -1 });
+                // Get MongoDB path from FieldPath
+                let path_str = order.path.to_mongodb_path().unwrap_or_else(|| {
+                    // For complex paths, use base field
+                    order.path.base_field()
+                });
+                sort_doc.insert(path_str, if order.asc { 1 } else { -1 });
             }
             Some(sort_doc)
         } else {
@@ -974,6 +1303,30 @@ impl SqlParser {
         if let Some(expr) = ast.where_clause {
             let filter = SqlExprConverter::expr_to_filter(&expr)?;
             pipeline.push(doc! { "$match": filter });
+        }
+
+        // Add $sort stage for ORDER BY (MUST come before $project to sort on original fields)
+        if let Some(ref order_by) = ast.order_by {
+            let mut sort_doc = Document::new();
+            for order in order_by {
+                // Get MongoDB path from FieldPath
+                let path_str = order.path.to_mongodb_path().unwrap_or_else(|| {
+                    // For complex paths, use base field
+                    order.path.base_field()
+                });
+                sort_doc.insert(path_str, if order.asc { 1 } else { -1 });
+            }
+            pipeline.push(doc! { "$sort": sort_doc });
+        }
+
+        // Add $skip stage for OFFSET (before $limit and $project)
+        if let Some(offset) = ast.offset {
+            pipeline.push(doc! { "$skip": offset as i64 });
+        }
+
+        // Add $limit stage (before $project to limit documents early)
+        if let Some(limit) = ast.limit {
+            pipeline.push(doc! { "$limit": limit as i64 });
         }
 
         // Check if we have any aggregate functions
@@ -1041,8 +1394,13 @@ impl SqlParser {
                 } = col
                 {
                     let output_name = alias.clone().unwrap_or_else(|| func.to_lowercase());
-                    let aggregate_expr =
-                        SqlExprConverter::build_aggregate_expr(func, field, *distinct)?;
+                    // Convert FieldPath to string for aggregate expr
+                    let field_str = field.as_ref().and_then(|p| p.to_mongodb_path());
+                    let aggregate_expr = SqlExprConverter::build_aggregate_expr(
+                        func,
+                        field_str.as_deref(),
+                        *distinct,
+                    )?;
                     group_doc.insert(output_name, aggregate_expr);
                 }
             }
@@ -1082,17 +1440,27 @@ impl SqlParser {
             let mut has_id = false;
 
             for col in &ast.columns {
-                if let SqlColumn::Field { name, alias } = col {
-                    if name == "_id" {
-                        has_id = true;
-                    }
+                if let SqlColumn::Field { path, alias } = col {
+                    // Check if this is the _id field
+                    if let Some(path_str) = path.to_mongodb_path() {
+                        if path_str == "_id" {
+                            has_id = true;
+                        }
 
-                    if let Some(alias_name) = alias {
-                        // Rename field using alias
-                        project_doc.insert(alias_name.clone(), format!("${}", name));
+                        if let Some(alias_name) = alias {
+                            // Rename field using alias
+                            project_doc.insert(alias_name.clone(), format!("${}", path_str));
+                        } else {
+                            // Keep field with original name
+                            project_doc.insert(path_str.clone(), 1);
+                        }
                     } else {
-                        // Keep field with original name
-                        project_doc.insert(name.clone(), 1);
+                        // Complex path requires aggregation expression
+                        let base_field = path.base_field();
+                        let field_name = alias.as_ref().unwrap_or(&base_field);
+                        if let Ok(bson_expr) = SqlExprConverter::field_path_to_bson(path) {
+                            project_doc.insert(field_name.clone(), bson_expr);
+                        }
                     }
                 }
             }
@@ -1105,47 +1473,11 @@ impl SqlParser {
             pipeline.push(doc! { "$project": project_doc });
         }
 
-        // Add $sort stage for ORDER BY
-        if let Some(order_by) = ast.order_by {
-            let mut sort_doc = Document::new();
-            for order in order_by {
-                sort_doc.insert(order.column, if order.asc { 1 } else { -1 });
-            }
-            pipeline.push(doc! { "$sort": sort_doc });
-        }
-
-        // Add $skip stage for OFFSET
-        if let Some(offset) = ast.offset {
-            pipeline.push(doc! { "$skip": offset as i64 });
-        }
-
-        // Add $limit stage
-        if let Some(limit) = ast.limit {
-            pipeline.push(doc! { "$limit": limit as i64 });
-        }
-
         Ok(Command::Query(QueryCommand::Aggregate {
             collection,
             pipeline,
             options: AggregateOptions::default(),
         }))
-    }
-
-    // Helper methods for parsing
-
-    /// Parse nested field name with dot notation (e.g., "input.images")
-    /// Takes a starting field name and extends it with any following dot-separated fields
-    fn parse_nested_field_name(&mut self, mut name: String) -> String {
-        while self.match_token(&TokenKind::Dot) {
-            if let Some(TokenKind::Ident(field)) = self.peek_kind() {
-                name.push('.');
-                name.push_str(field);
-                self.advance();
-            } else {
-                break;
-            }
-        }
-        name
     }
 
     // Helper methods for token manipulation
@@ -1524,6 +1856,97 @@ mod tests {
             );
         } else {
             panic!("Expected Aggregate command for query with alias");
+        }
+    }
+
+    #[test]
+    fn test_array_positive_index() {
+        // Test positive array index: tags[0]
+        let result = SqlParser::parse_to_command("SELECT tags[0] FROM posts");
+        assert!(result.is_ok(), "Failed to parse array index: {:?}", result);
+
+        let cmd = result.unwrap();
+        if let Command::Query(QueryCommand::Aggregate { pipeline, .. }) = cmd {
+            assert!(!pipeline.is_empty(), "Pipeline should not be empty");
+            // Should use aggregation pipeline for array access
+            let has_project = pipeline.iter().any(|stage| stage.contains_key("$project"));
+            assert!(has_project, "Pipeline should contain $project stage");
+        } else {
+            panic!("Expected Aggregate command for array index access");
+        }
+    }
+
+    #[test]
+    fn test_array_negative_index() {
+        // Test negative array index: tags[-1]
+        let result = SqlParser::parse_to_command("SELECT tags[-1] FROM posts");
+        assert!(
+            result.is_ok(),
+            "Failed to parse negative array index: {:?}",
+            result
+        );
+
+        let cmd = result.unwrap();
+        if let Command::Query(QueryCommand::Aggregate { .. }) = cmd {
+            // Should use aggregation pipeline
+        } else {
+            panic!("Expected Aggregate command for negative array index");
+        }
+    }
+
+    #[test]
+    fn test_nested_array_index() {
+        // Test nested field with array index: user.roles[0]
+        let result = SqlParser::parse_to_command("SELECT user.roles[0] FROM accounts");
+        assert!(
+            result.is_ok(),
+            "Failed to parse nested array index: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_array_slice() {
+        // Test array slice: tags[0:5]
+        let result = SqlParser::parse_to_command("SELECT tags[0:5] FROM posts");
+        assert!(result.is_ok(), "Failed to parse array slice: {:?}", result);
+
+        let cmd = result.unwrap();
+        if let Command::Query(QueryCommand::Aggregate { .. }) = cmd {
+            // Should use aggregation pipeline
+        } else {
+            panic!("Expected Aggregate command for array slice");
+        }
+    }
+
+    #[test]
+    fn test_where_with_array_index() {
+        // Test WHERE clause with array index
+        let result = SqlParser::parse_to_command("SELECT * FROM posts WHERE tags[0] = 'rust'");
+        // This should require aggregation pipeline
+        assert!(
+            result.is_ok() || result.is_err(),
+            "Should handle array index in WHERE"
+        );
+    }
+
+    #[test]
+    fn test_order_by_with_array_index() {
+        // Test ORDER BY with array index
+        let result = SqlParser::parse_to_command("SELECT * FROM posts ORDER BY tags[0]");
+        assert!(
+            result.is_ok(),
+            "Failed to parse ORDER BY with array index: {:?}",
+            result
+        );
+
+        let cmd = result.unwrap();
+        if let Command::Query(QueryCommand::Aggregate { pipeline, .. }) = cmd {
+            // Should have $sort stage
+            let has_sort = pipeline.iter().any(|stage| stage.contains_key("$sort"));
+            assert!(has_sort, "Pipeline should contain $sort stage");
+        } else {
+            panic!("Expected Aggregate command for ORDER BY with array index");
         }
     }
 }

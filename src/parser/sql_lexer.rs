@@ -74,6 +74,10 @@ pub enum TokenKind {
     Le,
     LParen,
     RParen,
+    LBracket,
+    RBracket,
+    Colon,
+    Minus,
     Semicolon,
 
     // Special tokens
@@ -161,6 +165,18 @@ impl SqlLexer {
                 self.advance();
                 Token::new(TokenKind::RParen, start..self.pos)
             }
+            '[' => {
+                self.advance();
+                Token::new(TokenKind::LBracket, start..self.pos)
+            }
+            ']' => {
+                self.advance();
+                Token::new(TokenKind::RBracket, start..self.pos)
+            }
+            ':' => {
+                self.advance();
+                Token::new(TokenKind::Colon, start..self.pos)
+            }
             ';' => {
                 self.advance();
                 Token::new(TokenKind::Semicolon, start..self.pos)
@@ -200,6 +216,10 @@ impl SqlLexer {
                 } else {
                     Token::new(TokenKind::Lt, start..self.pos)
                 }
+            }
+            '-' => {
+                self.advance();
+                Token::new(TokenKind::Minus, start..self.pos)
             }
 
             // String literals

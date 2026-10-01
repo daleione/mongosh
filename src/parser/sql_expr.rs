@@ -5,7 +5,10 @@
 
 use mongodb::bson::{Document, doc};
 
-use super::sql_context::{SqlColumn, SqlExpr, SqlLiteral, SqlLogicalOperator, SqlOperator};
+use super::sql_context::{
+    ArrayIndex, ArraySlice, FieldPath, SliceIndex, SqlColumn, SqlExpr, SqlLiteral,
+    SqlLogicalOperator, SqlOperator,
+};
 use crate::error::{ParseError, Result};
 
 /// SQL expression converter
@@ -28,13 +31,21 @@ impl SqlExprConverter {
                     // If we have * mixed with other columns, just return None (all fields)
                     return Ok(None);
                 }
-                SqlColumn::Field { name, alias } => {
-                    let field_name = alias.as_ref().unwrap_or(name);
-                    projection.insert(field_name.clone(), 1);
+                SqlColumn::Field { path, alias } => {
+                    // Get the MongoDB path representation
+                    if let Some(path_str) = path.to_mongodb_path() {
+                        let field_name = alias.as_ref().unwrap_or(&path_str);
+                        projection.insert(field_name.clone(), 1);
 
-                    // Check if _id is explicitly requested
-                    if name == "_id" {
-                        has_id = true;
+                        // Check if _id is explicitly requested
+                        if path_str == "_id" {
+                            has_id = true;
+                        }
+                    } else {
+                        // Complex path requires aggregation - handle in pipeline
+                        if let Some(alias_name) = alias {
+                            projection.insert(alias_name.clone(), 1);
+                        }
                     }
                 }
                 SqlColumn::Aggregate { alias, .. } => {
@@ -65,9 +76,16 @@ impl SqlExprConverter {
                 Err(ParseError::InvalidCommand("Cannot use literal as filter".to_string()).into())
             }
 
-            SqlExpr::Column(name) => {
-                // Column reference alone - check if truthy
-                Ok(doc! { name: { "$exists": true } })
+            SqlExpr::FieldPath(path) => {
+                // Field path reference - check if exists
+                if let Some(path_str) = path.to_mongodb_path() {
+                    Ok(doc! { path_str: { "$exists": true } })
+                } else {
+                    Err(ParseError::InvalidCommand(
+                        "Complex field paths in WHERE require aggregation pipeline".to_string(),
+                    )
+                    .into())
+                }
             }
 
             SqlExpr::BinaryOp { left, op, right } => Self::binary_op_to_filter(left, op, right),
@@ -90,12 +108,21 @@ impl SqlExprConverter {
 
     /// Convert binary operation to filter
     fn binary_op_to_filter(left: &SqlExpr, op: &SqlOperator, right: &SqlExpr) -> Result<Document> {
-        // Left side should be a column name
+        // Left side should be a field path
         let column = match left {
-            SqlExpr::Column(name) => name.clone(),
+            SqlExpr::FieldPath(path) => {
+                if let Some(path_str) = path.to_mongodb_path() {
+                    path_str
+                } else {
+                    return Err(ParseError::InvalidCommand(
+                        "Complex field paths in WHERE require aggregation pipeline".to_string(),
+                    )
+                    .into());
+                }
+            }
             _ => {
                 return Err(ParseError::InvalidCommand(
-                    "Left side of comparison must be a column name".to_string(),
+                    "Left side of comparison must be a field path".to_string(),
                 )
                 .into());
             }
@@ -143,10 +170,19 @@ impl SqlExprConverter {
     /// Convert IN expression to filter
     fn in_to_filter(expr: &SqlExpr, values: &[SqlExpr]) -> Result<Document> {
         let column = match expr {
-            SqlExpr::Column(name) => name.clone(),
+            SqlExpr::FieldPath(path) => {
+                if let Some(path_str) = path.to_mongodb_path() {
+                    path_str
+                } else {
+                    return Err(ParseError::InvalidCommand(
+                        "Complex field paths in IN require aggregation pipeline".to_string(),
+                    )
+                    .into());
+                }
+            }
             _ => {
                 return Err(ParseError::InvalidCommand(
-                    "IN expression must have column on left side".to_string(),
+                    "IN expression must have field path on left side".to_string(),
                 )
                 .into());
             }
@@ -159,12 +195,22 @@ impl SqlExprConverter {
     }
 
     /// Convert LIKE expression to filter (using regex)
+    /// Convert LIKE expression to filter
     fn like_to_filter(expr: &SqlExpr, pattern: &str) -> Result<Document> {
         let column = match expr {
-            SqlExpr::Column(name) => name.clone(),
+            SqlExpr::FieldPath(path) => {
+                if let Some(path_str) = path.to_mongodb_path() {
+                    path_str
+                } else {
+                    return Err(ParseError::InvalidCommand(
+                        "Complex field paths in LIKE require aggregation pipeline".to_string(),
+                    )
+                    .into());
+                }
+            }
             _ => {
                 return Err(ParseError::InvalidCommand(
-                    "LIKE expression must have column on left side".to_string(),
+                    "LIKE expression must have field path on left side".to_string(),
                 )
                 .into());
             }
@@ -209,10 +255,19 @@ impl SqlExprConverter {
     /// Convert IS NULL expression to filter
     fn is_null_to_filter(expr: &SqlExpr, negated: bool) -> Result<Document> {
         let column = match expr {
-            SqlExpr::Column(name) => name.clone(),
+            SqlExpr::FieldPath(path) => {
+                if let Some(path_str) = path.to_mongodb_path() {
+                    path_str
+                } else {
+                    return Err(ParseError::InvalidCommand(
+                        "Complex field paths in IS NULL require aggregation pipeline".to_string(),
+                    )
+                    .into());
+                }
+            }
             _ => {
                 return Err(ParseError::InvalidCommand(
-                    "IS NULL expression must have column on left side".to_string(),
+                    "IS NULL expression must have field path on left side".to_string(),
                 )
                 .into());
             }
@@ -229,9 +284,14 @@ impl SqlExprConverter {
     fn expr_to_bson_value(expr: &SqlExpr) -> Result<mongodb::bson::Bson> {
         match expr {
             SqlExpr::Literal(lit) => Ok(Self::literal_to_bson(lit)),
-            SqlExpr::Column(name) => {
-                // Column reference as value - use field path syntax
-                Ok(mongodb::bson::Bson::String(format!("${}", name)))
+            SqlExpr::FieldPath(path) => {
+                // Field path reference as value - use MongoDB path syntax
+                if let Some(path_str) = path.to_mongodb_path() {
+                    Ok(mongodb::bson::Bson::String(format!("${}", path_str)))
+                } else {
+                    // Complex path requires aggregation expression
+                    Self::field_path_to_bson(path)
+                }
             }
             SqlExpr::Function { name, args } => Self::function_to_bson(name, args),
             _ => Err(ParseError::InvalidCommand(
@@ -297,46 +357,47 @@ impl SqlExprConverter {
     /// Build a MongoDB aggregate expression for a SQL aggregate function
     pub fn build_aggregate_expr(
         func: &str,
-        field: &Option<String>,
+        field: Option<&str>,
         distinct: bool,
     ) -> Result<Document> {
         let func_upper = func.to_uppercase();
 
         let agg_expr = match func_upper.as_str() {
             "COUNT" => {
-                if distinct {
-                    // COUNT(DISTINCT field) - use $addToSet to collect unique values
-                    let field_name = field.as_ref().ok_or_else(|| {
-                        ParseError::InvalidCommand("COUNT(DISTINCT) requires a field".to_string())
-                    })?;
-                    doc! { "$addToSet": format!("${}", field_name) }
-                } else if field.is_none() {
-                    doc! { "$sum": 1 }
+                if let Some(field_name) = field {
+                    if distinct {
+                        // COUNT(DISTINCT field) -> collect unique values into set
+                        doc! { "$addToSet": format!("${}", field_name) }
+                    } else {
+                        // COUNT(field) -> count non-null values
+                        doc! { "$sum": doc! { "$cond": [{ "$ifNull": [format!("${}", field_name), false] }, 1, 0] } }
+                    }
                 } else {
-                    doc! { "$sum": { "$cond": [{ "$ifNull": [format!("${}", field.as_ref().unwrap()), false] }, 1, 0] } }
+                    // COUNT(*) -> count all documents
+                    doc! { "$sum": 1 }
                 }
             }
             "SUM" => {
-                let field_name = field.as_ref().ok_or_else(|| {
-                    ParseError::InvalidCommand("SUM requires a field".to_string())
+                let field_name = field.ok_or_else(|| {
+                    ParseError::InvalidCommand("SUM requires a field name".to_string())
                 })?;
                 doc! { "$sum": format!("${}", field_name) }
             }
             "AVG" => {
-                let field_name = field.as_ref().ok_or_else(|| {
-                    ParseError::InvalidCommand("AVG requires a field".to_string())
+                let field_name = field.ok_or_else(|| {
+                    ParseError::InvalidCommand("AVG requires a field name".to_string())
                 })?;
                 doc! { "$avg": format!("${}", field_name) }
             }
             "MIN" => {
-                let field_name = field.as_ref().ok_or_else(|| {
-                    ParseError::InvalidCommand("MIN requires a field".to_string())
+                let field_name = field.ok_or_else(|| {
+                    ParseError::InvalidCommand("MIN requires a field name".to_string())
                 })?;
                 doc! { "$min": format!("${}", field_name) }
             }
             "MAX" => {
-                let field_name = field.as_ref().ok_or_else(|| {
-                    ParseError::InvalidCommand("MAX requires a field".to_string())
+                let field_name = field.ok_or_else(|| {
+                    ParseError::InvalidCommand("MAX requires a field name".to_string())
                 })?;
                 doc! { "$max": format!("${}", field_name) }
             }
@@ -379,12 +440,103 @@ impl SqlExprConverter {
             } = col
             {
                 let output_name = alias.clone().unwrap_or_else(|| func.to_lowercase());
-                let agg_expr = Self::build_aggregate_expr(func, field, *distinct)?;
-                group_doc.insert(output_name, agg_expr);
+                let field_str = field.as_ref().and_then(|p| p.to_mongodb_path());
+                let aggregate_expr =
+                    SqlExprConverter::build_aggregate_expr(func, field_str.as_deref(), *distinct)?;
+                group_doc.insert(output_name, aggregate_expr);
             }
         }
 
         Ok(group_doc)
+    }
+
+    /// Convert FieldPath to BSON for aggregation expressions
+    pub fn field_path_to_bson(path: &FieldPath) -> Result<mongodb::bson::Bson> {
+        match path {
+            FieldPath::Simple(name) => Ok(mongodb::bson::Bson::String(format!("${}", name))),
+            FieldPath::Nested { base, field } => {
+                if let Some(base_str) = base.to_mongodb_path() {
+                    Ok(mongodb::bson::Bson::String(format!(
+                        "${}.{}",
+                        base_str, field
+                    )))
+                } else {
+                    // Complex nested path requires aggregation expression
+                    Err(ParseError::InvalidCommand(
+                        "Complex nested paths not yet fully supported".to_string(),
+                    )
+                    .into())
+                }
+            }
+            FieldPath::ArrayIndex { base, index } => {
+                // Use $arrayElemAt aggregation operator
+                let base_path = if let Some(p) = base.to_mongodb_path() {
+                    format!("${}", p)
+                } else {
+                    return Err(ParseError::InvalidCommand(
+                        "Complex array base paths not yet supported".to_string(),
+                    )
+                    .into());
+                };
+
+                let index_value = match index {
+                    ArrayIndex::Positive(idx) => *idx,
+                    ArrayIndex::Negative(idx) => -*idx,
+                };
+
+                Ok(mongodb::bson::Bson::Document(doc! {
+                    "$arrayElemAt": [base_path, index_value]
+                }))
+            }
+            FieldPath::ArraySlice { base, slice } => {
+                // Use $slice aggregation operator
+                let base_path = if let Some(p) = base.to_mongodb_path() {
+                    format!("${}", p)
+                } else {
+                    return Err(ParseError::InvalidCommand(
+                        "Complex array base paths not yet supported".to_string(),
+                    )
+                    .into());
+                };
+
+                Ok(Self::build_slice_expr(&base_path, slice))
+            }
+        }
+    }
+
+    /// Build $slice expression for array slicing
+    fn build_slice_expr(base_path: &str, slice: &ArraySlice) -> mongodb::bson::Bson {
+        let start = match &slice.start {
+            Some(SliceIndex::Positive(n)) => *n,
+            Some(SliceIndex::Negative(n)) => -*n,
+            None => 0,
+        };
+
+        let count = match (&slice.start, &slice.end) {
+            (None, Some(SliceIndex::Positive(end))) => *end,
+            (Some(SliceIndex::Positive(s)), Some(SliceIndex::Positive(e))) => e - s,
+            (None, None) => {
+                // Full slice - return the array as-is
+                return mongodb::bson::Bson::String(base_path.to_string());
+            }
+            _ => {
+                // Complex slice with negative indices - use conditional logic
+                // For now, use a simple approach
+                100000 // Large number to get rest of array
+            }
+        };
+
+        if slice.step.is_some() && slice.step != Some(1) {
+            // Step not equal to 1 requires more complex aggregation
+            // For now, just do basic slice
+            mongodb::bson::Bson::Document(doc! {
+                "$slice": [base_path, start, count]
+            })
+        } else {
+            mongodb::bson::Bson::Document(doc! {
+                "$slice": [base_path, start, count]
+            })
+        }
     }
 }
 
@@ -402,8 +554,8 @@ mod tests {
     #[test]
     fn test_columns_to_projection_fields() {
         let columns = vec![
-            SqlColumn::field("name".to_string()),
-            SqlColumn::field("age".to_string()),
+            SqlColumn::field(FieldPath::simple("name".to_string())),
+            SqlColumn::field(FieldPath::simple("age".to_string())),
         ];
         let projection = SqlExprConverter::columns_to_projection(&columns).unwrap();
         assert!(projection.is_some());
@@ -417,8 +569,8 @@ mod tests {
     #[test]
     fn test_columns_to_projection_with_id() {
         let columns = vec![
-            SqlColumn::field("_id".to_string()),
-            SqlColumn::field("name".to_string()),
+            SqlColumn::field(FieldPath::simple("_id".to_string())),
+            SqlColumn::field(FieldPath::simple("name".to_string())),
         ];
         let projection = SqlExprConverter::columns_to_projection(&columns).unwrap();
         assert!(projection.is_some());
@@ -429,7 +581,7 @@ mod tests {
 
     #[test]
     fn test_binary_op_eq() {
-        let left = SqlExpr::Column("age".to_string());
+        let left = SqlExpr::FieldPath(FieldPath::simple("age".to_string()));
         let right = SqlExpr::Literal(SqlLiteral::Number(18.0));
         let filter =
             SqlExprConverter::binary_op_to_filter(&left, &SqlOperator::Eq, &right).unwrap();
@@ -438,7 +590,7 @@ mod tests {
 
     #[test]
     fn test_binary_op_gt() {
-        let left = SqlExpr::Column("age".to_string());
+        let left = SqlExpr::FieldPath(FieldPath::simple("age".to_string()));
         let right = SqlExpr::Literal(SqlLiteral::Number(18.0));
         let filter =
             SqlExprConverter::binary_op_to_filter(&left, &SqlOperator::Gt, &right).unwrap();
@@ -449,12 +601,12 @@ mod tests {
     #[test]
     fn test_logical_and() {
         let left = SqlExpr::BinaryOp {
-            left: Box::new(SqlExpr::Column("age".to_string())),
+            left: Box::new(SqlExpr::FieldPath(FieldPath::simple("age".to_string()))),
             op: SqlOperator::Gt,
             right: Box::new(SqlExpr::Literal(SqlLiteral::Number(18.0))),
         };
         let right = SqlExpr::BinaryOp {
-            left: Box::new(SqlExpr::Column("status".to_string())),
+            left: Box::new(SqlExpr::FieldPath(FieldPath::simple("status".to_string()))),
             op: SqlOperator::Eq,
             right: Box::new(SqlExpr::Literal(SqlLiteral::String("active".to_string()))),
         };
@@ -466,7 +618,7 @@ mod tests {
 
     #[test]
     fn test_like_to_filter() {
-        let expr = SqlExpr::Column("name".to_string());
+        let expr = SqlExpr::FieldPath(FieldPath::simple("name".to_string()));
         let filter = SqlExprConverter::like_to_filter(&expr, "John%").unwrap();
         let name_doc = filter.get_document("name").unwrap();
         assert!(name_doc.contains_key("$regex"));
@@ -476,9 +628,9 @@ mod tests {
 
     #[test]
     fn test_is_null_to_filter() {
-        let expr = SqlExpr::Column("deleted_at".to_string());
+        let expr = SqlExpr::FieldPath(FieldPath::simple("name".to_string()));
         let filter = SqlExprConverter::is_null_to_filter(&expr, false).unwrap();
-        assert_eq!(filter.get("deleted_at"), Some(&mongodb::bson::Bson::Null));
+        assert_eq!(filter.get("name"), Some(&mongodb::bson::Bson::Null));
     }
 
     #[test]
